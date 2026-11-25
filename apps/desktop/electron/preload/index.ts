@@ -99,6 +99,7 @@ const api: KrApi = {
   assemblerWrite: req => invoke(CHANNELS.assemblerWrite, req),
   assemblerChange: req => invoke(CHANNELS.assemblerChange, req),
   assemblerReveal: req => invoke(CHANNELS.assemblerReveal, req),
+  assemblerPickData: req => invoke(CHANNELS.assemblerPickData, req),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

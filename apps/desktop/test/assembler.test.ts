@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asmTemplate } from '@mimir/core';
 import { AsmStore, changeInFolder, createAsmFolder, inFolder, listFolder, readInFolder, writeInFolder } from '../electron/main/assembler';
-import { asmChangeSchema, asmReadSchema, asmWriteSchema } from '../electron/main/schemas';
+import { asmChangeSchema, asmPickDataSchema, asmReadSchema, asmWriteSchema } from '../electron/main/schemas';
+import { relPath } from '../shared/projects';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-asm-test-'));
 
@@ -80,5 +81,28 @@ describe('the Assembler\'s folder', () => {
       expect(new AsmStore(parent).recent().map(r => r.name)).toEqual(['demo', parent.split(/[\\/]/).pop()]);
       expect(store.forget(parent).map(r => r.dir)).toEqual([dir]);
     } finally { rmSync(parent, { recursive: true, force: true }); }
+  });
+});
+
+describe('a block\'s file (Insert block)', () => {
+  it('is written as bytes, a source as text, never both', async () => {
+    const dir = tmp();
+    try {
+      expect(asmWriteSchema.safeParse({ dir, path: 'sprites/a.spr', bytes: new Uint8Array(64) }).success).toBe(true);
+      expect(asmWriteSchema.safeParse({ dir, path: 'a.asm', text: 'x' }).success).toBe(true);
+      expect(asmWriteSchema.safeParse({ dir, path: 'a.bin', text: 'x', bytes: new Uint8Array(1) }).success).toBe(false);
+      expect(asmWriteSchema.safeParse({ dir, path: 'a.bin' }).success).toBe(false);
+      expect(asmWriteSchema.safeParse({ dir, path: 'a.bin', bytes: new Uint8Array(0x10200) }).success).toBe(false);
+      await writeInFolder(dir, 'sprites/a.spr', Uint8Array.from([1, 2, 255]));
+      expect([...readFileSync(join(dir, 'sprites', 'a.spr'))]).toEqual([1, 2, 255]);
+      expect(asmPickDataSchema.safeParse({ dir, kind: 'music' }).success).toBe(true);
+      expect(asmPickDataSchema.safeParse({ dir, kind: 'code' }).success).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('is named from the source\'s folder', () => {
+    expect(relPath('', 'sprites/a.spr')).toBe('sprites/a.spr');
+    expect(relPath('src', 'src/sprites/a.spr')).toBe('sprites/a.spr');
+    expect(relPath('src/game', 'gfx/a.kla')).toBe('../../gfx/a.kla');
+    expect(relPath('src', 'a.bin')).toBe('../a.bin');
   });
 });

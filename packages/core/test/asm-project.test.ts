@@ -130,13 +130,15 @@ describe('the Assembler: a project of sources', () => {
     expect(f.load).toBe(prg[0] | (prg[1] << 8));
     expect([...f.bytes]).toEqual([...prg.subarray(2)]);
     expect(p.entryPoint).toBe(c.entry);
-    // the code, each instruction the assembler wrote, in ranges; the text and the data are not in them
+    // every byte the sources write is code, the text and the data too (no block is marked), the BASIC line BASIC
     const start = c.names.get('start')!, text = c.names.get('text')!, value = c.names.get('value')!;
     const inCode = (a: number) => p.overrides.some(o => o.type === 'code' && a >= o.start && a < o.end);
     expect(inCode(start)).toBe(true);
     expect(inCode(c.names.get('copy')!)).toBe(true);
-    expect(inCode(text)).toBe(false);
-    expect(inCode(value)).toBe(false);
+    expect(inCode(text)).toBe(true);
+    expect(inCode(value)).toBe(true);
+    expect(p.overrides[0]).toEqual({ start: 0x0801, end: 0x080d, type: 'basic' });
+    expect(p.overrides[1]).toMatchObject({ start: 0x080e, type: 'code' });
     expect(p.labels[c.names.get('copy')!]).toBe('copy');
     expect(p.labels[text]).toBe('text');
     expect(p.labels[value]).toBe('value');

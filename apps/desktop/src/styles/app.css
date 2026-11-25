@@ -2134,6 +2134,31 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 /* ---- the Assembler (spec 10.7): the script editor's layout with the folder's files in place of the library ---- */
 /* (in the project window: the tab stays open behind the other tabs, its files and its debugger with it) */
 .asm-ws.asm-hidden { display: none !important; }
+/* a block marked in the sources (// @block … // @end): a bar in its kind's colour left of the code */
+.monaco-editor .asm-blk { margin-left: 3px; width: 3px !important; border-radius: 1px; background: var(--fg-3); }
+.monaco-editor .asm-blk.g-gfx { background: var(--g-gfx); }
+.monaco-editor .asm-blk.g-music { background: var(--g-music); }
+.monaco-editor .asm-blk.g-text { background: var(--g-text); }
+.monaco-editor .asm-blk.g-table { background: var(--g-table); }
+.monaco-editor .asm-blk.g-data, .monaco-editor .asm-blk.g-fill { background: var(--g-data); }
+/* Insert block */
+.asm-block.modal { width: min(760px, 94vw); }
+.asm-block .modal-body { display: flex; flex-direction: column; gap: 10px; max-height: min(78vh, 760px); overflow: auto; }
+.asm-block .ab-kinds button { display: inline-flex; align-items: center; gap: 6px; }
+.asm-block .ab-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.asm-block .ab-head { color: var(--fg-3); font-size: 12px; min-width: 70px; }
+.asm-block .ab-lib { max-height: 210px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 2px; }
+.asm-block .ab-lib .lib-row { cursor: pointer; }
+.asm-block .ab-none { padding: 10px; margin: 0; }
+.asm-block .ab-what { display: flex; align-items: center; gap: 12px; }
+.asm-block .ab-what canvas { border-radius: 3px; }
+.asm-block .ab-grid { display: flex; align-items: flex-end; gap: 16px; }
+.asm-block .ab-grid .field { flex: 1; margin: 0; }
+.asm-block .ab-mc { padding-bottom: 6px; }
+.asm-block .ab-num { width: 76px; }
+.asm-block input.bad { border-color: var(--err, #e5534b); }
+.asm-block .ab-preview pre { margin: 4px 0 0; padding: 8px 10px; background: var(--editor); border: 1px solid var(--line); border-radius: 6px; max-height: 220px; overflow: auto; white-space: pre; }
+.asm-block .ab-sid { margin: 0; }
 .insp-asm .kv dd .linkish { font-family: var(--mono, ui-monospace, monospace); }
 .asm-home-lead { margin: 0; color: var(--fg-2); font-size: 12.5px; line-height: 1.5; }
 .asm-ws { flex: 1; min-height: 0; }

@@ -418,3 +418,105 @@ test('an Assembler project in the project window: the program its sources make i
   await page.keyboard.press('Escape');
   await closeProject(page, 'sprite');
 });
+
+/** a PSID of `data` loaded at `load` (init there, play 3 bytes on), its load address in the data as most have it */
+const psid = (load: number, data: number[], name: string) => {
+  const h = new Uint8Array(0x7e + data.length);
+  h.set([0x50, 0x53, 0x49, 0x44, 0, 2, 0, 0x7c, 0, 0, load >> 8, load & 0xff, (load + 3) >> 8, (load + 3) & 0xff, 0, 1, 0, 1]);
+  for (let i = 0; i < name.length; i++) h[0x16 + i] = name.charCodeAt(i);
+  h[0x7c] = load & 0xff; h[0x7d] = load >> 8; h.set(data, 0x7e);
+  return h;
+};
+
+test('Insert block in the Assembler: sprites from the library as .byte lines, music from a file the source loads, empty data at an address; the project\'s views show what each is', async ({ workDir: work, userData, app, page }) => {
+  const dir = join(work, 'blocks');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\nstart:\n  rts\n\n');
+  // a sprite in the library, a tune outside the project
+  mkdirSync(join(userData, 'library', 'Sprites'), { recursive: true });
+  const sprite = Uint8Array.from({ length: 64 }, (_, i) => (i < 63 ? [0x00, 0x7e, 0x00, 0x03, 0xff, 0xc0][i % 6] : 0));
+  writeFileSync(join(userData, 'library', 'Sprites', 'Test - spr_2000 ($2000-$203f).spr'), sprite);
+  const tune = join(work, 'tune.sid');
+  writeFileSync(tune, psid(0x1000, [0x60, 0, 0, 0x60, ...Array.from({ length: 60 }, (_, i) => i)], 'Test tune'));
+
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const code = page.locator('.scr-editor .view-lines');
+  const dialog = page.getByRole('dialog', { name: 'Insert block' });
+  const disk = () => readFileSync(join(dir, 'main.asm'), 'utf8');
+
+  // sprites from the library, as .byte lines where the caret is (aligned to 64)
+  await code.click();
+  await page.keyboard.press('Control+End');
+  await page.getByRole('button', { name: 'Insert block' }).click();
+  await expect(dialog.getByRole('radio', { name: 'Sprites', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await dialog.getByRole('radio', { name: 'From the library' }).check();
+  await dialog.getByRole('option', { name: /spr_2000/ }).click();
+  await expect(dialog.getByLabel('Name')).toHaveValue('spr_2000');
+  await expect(dialog.getByLabel('The lines')).toContainText('// @block sprite');
+  await expect(dialog.getByLabel('The lines')).toContainText('.byte %00000000, %01111110, %00000000');
+  await shot(page, '13-insert-sprite');
+  await dialog.getByRole('button', { name: 'Insert' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(disk, { timeout: 5000 }).toContain('// @block sprite');
+  expect(disk()).toContain('        .align $40\n// @block sprite hires\nspr_2000:\n');
+  expect(disk().match(/^ +\.byte %[01]{8}, %[01]{8}, %[01]{8}$/gm)).toHaveLength(21);
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+
+  // music from a file outside the project: a copy goes in the project, Kick Assembler's LoadSid reads it
+  await page.keyboard.press('Control+End');
+  await page.getByRole('button', { name: 'Insert block' }).click();
+  await dialog.getByRole('radio', { name: 'Music', exact: true }).click();
+  await stubDialogs(app, { open: [tune] });
+  await dialog.getByRole('radio', { name: 'From a file…' }).check();
+  await expect(dialog).toContainText('Test tune');
+  await expect(dialog).toContainText('$1000-$103f');
+  await expect(dialog.getByRole('radio', { name: /A file of the project, LoadSid/ })).toBeChecked();
+  await expect(dialog).toContainText('A copy goes in music/tune.sid');
+  await dialog.getByRole('button', { name: 'Insert' }).click();
+  await expect.poll(disk, { timeout: 5000 }).toContain('.var tune = LoadSid("music/tune.sid")');
+  expect(readFileSync(join(dir, 'music', 'tune.sid'))).toEqual(readFileSync(tune));
+  await expect(tree(page).getByRole('treeitem', { name: 'music' })).toBeVisible();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+
+  // empty data at an address, to fill in
+  await page.keyboard.press('Control+End');
+  await page.getByRole('button', { name: 'Insert block' }).click();
+  await dialog.getByRole('radio', { name: 'Data', exact: true }).click();
+  await expect(dialog.getByRole('radio', { name: 'Empty .byte lines to fill in' })).toBeChecked();
+  await dialog.getByLabel('How many').fill('64');
+  await dialog.getByLabel('Name').fill('table');
+  await dialog.getByLabel('Address').fill('$3000');
+  await dialog.getByRole('button', { name: 'Insert' }).click();
+  await expect.poll(disk, { timeout: 5000 }).toContain('        * = $3000 "table"\n// @block data\ntable:\n        .byte $00, $00, $00, $00, $00, $00, $00, $00\n');
+  expect(disk().match(/^ +\.byte \$00, \$00, \$00, \$00, \$00, \$00, \$00, \$00$/gm)).toHaveLength(8);
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  // the editor shows each block with a bar in its kind's colour
+  await expect(page.locator('.scr-editor .asm-blk.g-gfx').first()).toBeVisible();
+  await shot(page, '15-blocks-editor');
+
+  // the project's views: each block what it is, the rest code (the memory map's rows by their addresses)
+  const tabs = page.locator('.main-tabs');
+  await tabs.getByRole('tab', { name: 'Memory' }).click();
+  const side = page.locator('.sidebar');
+  await side.getByRole('button', { name: 'Memory map' }).click();
+  const row = (addr: string) => side.locator('.seg-row', { hasText: addr });
+  await expect(row('$0840')).toContainText('spr_2000', { timeout: 15_000 });
+  await expect(row('$0840').locator('i')).toHaveAttribute('style', /--g-gfx/);
+  await expect(row('$1000').locator('i')).toHaveAttribute('style', /--g-music/);
+  await expect(row('$3000')).toContainText('table');
+  await expect(row('$3000').locator('i')).toHaveAttribute('style', /--g-data/);
+  await expect(row('$080e')).toContainText('start');
+  await expect(row('$080e').locator('i')).toHaveAttribute('style', /--g-code/);
+  await shot(page, '14-blocks-memory');
+
+  // undo takes the last block out again
+  await tabs.getByRole('tab', { name: 'Assembler' }).click();
+  await code.click();
+  await page.keyboard.press('Control+z');
+  await expect.poll(disk, { timeout: 5000 }).not.toContain('* = $3000');
+  expect(disk()).toContain('LoadSid');
+  await closeProject(page, 'blocks');
+});

@@ -10,7 +10,7 @@
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { AsmC64, asmC64Text, asmProgram, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
+import { AsmC64, asmBlockMarks, asmC64Text, asmProgram, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
@@ -26,6 +26,9 @@ import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { ScriptScreenPanel } from './ScriptScreen';
 import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, parentOf, type TreeEdit } from './AsmTree';
 import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmRunKept } from './AsmOutput';
+import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
+import type { LibraryRef } from '../store/library';
+import type { AsmBlockKind } from '@mimir/core';
 
 const kr = window.kr;
 type MonacoNs = typeof Monaco;
@@ -346,6 +349,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       setBins(b => { const n = { ...b }; for (const r of rs) if (r?.[1].bytes) { n[r[0]] = r[1].bytes; binTimes.current[r[0]] = entryOf.get(r[0])?.mtime ?? r[1].mtime; } return n; });
     });
   }, [wanted, bins]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the blocks marked in the sources (// @block sprite … // @end): the project's views show their bytes as what they are
+  const blocks = useMemo(() => asmBlockMarks(Object.entries(quiet).filter(([p]) => ASM_SOURCE.test(p)).map(([path, text]) => ({ path, text }))), [quiet]);
   const check = useMemo<AsmCheck | null>(() => {
     if (!loaded || !main || !(main in quiet)) return null;
     try { return checkAsm({ ...quiet, ...bins }, main, lang); } catch { return null; }
@@ -368,14 +373,14 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     link.set({ assembles: !!check?.ok });
     if (!check?.ok || !main) return;
     const t = setTimeout(() => {
-      const prog = asmProgram(check, main), f = prog.files[0];
+      const prog = asmProgram(check, main, blocks.marks), f = prog.files[0];
       const key = `${f ? `${f.load}:${f.bytes.join(',')}` : ''}|${JSON.stringify(prog.overrides)}|${JSON.stringify(prog.labels)}|${prog.entryPoint}`;
       if (sent.current?.key === key) { useAsmLink.getState().set({ check }); return; }
       sent.current = { key, prog };
       useAsmLink.getState().set({ program: prog, check });
     }, 350);
     return () => clearTimeout(t);
-  }, [check, main]);
+  }, [check, main, blocks]);
 
   /* ---- the editor ---- */
   const host = useRef<HTMLDivElement>(null);
@@ -390,7 +395,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** (`soft`: the debugger's line, scrolled to only when it is out of view, the focus left where it is) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
-  const keys = useRef({ run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
+  const keys = useRef({ block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
 
   useEffect(() => {
     if (!loaded) return;
@@ -433,6 +438,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageDown, () => keys.current.tab(1));
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => keys.current.tab(-1));
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F4, () => keys.current.closeTab());
+      // the editor's menu: a block of sprites, a charset, a bitmap, music … put in where the caret is
+      editor.addAction({ id: 'mimir.insertBlock', label: 'Insert block…', contextMenuGroupId: '1_modification', contextMenuOrder: 0, run: () => keys.current.block() });
       // a click in the gutter left of the line numbers sets or clears a breakpoint
       editor.onMouseDown(ev => { if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber); });
       // a definition in another of the folder's files (F12, Ctrl+click): that file in the editor, at it
@@ -568,12 +575,26 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       monaco.editor.setModelMarkers(m, 'asm-check', (check?.problems ?? []).filter(x => x.file === p && on(x.line)).map(x => ({
         severity: monaco.MarkerSeverity.Error, message: x.msg, source: 'Mimir\'s check', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
       })));
+      monaco.editor.setModelMarkers(m, 'asm-blocks', blocks.warnings.filter(x => x.file === p && on(x.line)).map(x => ({
+        severity: monaco.MarkerSeverity.Warning, message: x.msg, source: 'Mimir', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
+      })));
+      // a block's lines: a bar in its kind's colour beside them, what it is on its mark
+      const lines = m.getLineCount();
+      // (what the block is said on its @block line only: a hover over each of its lines would come with every name's)
+      blockDecos.current[p] = m.deltaDecorations(blockDecos.current[p] ?? [], blocks.marks.filter(x => x.file === p && x.line <= lines).flatMap(x => [{
+        range: new monaco.Range(x.line, 1, Math.min(x.end, lines), 1),
+        options: { isWholeLine: true, linesDecorationsClassName: `asm-blk g-${kindInfo(x.kind).group}` },
+      }, {
+        range: new monaco.Range(x.line, 1, x.line, m.getLineMaxColumn(x.line)),
+        options: { hoverMessage: { value: `A block of ${kindInfo(x.kind).label.toLowerCase()}, lines ${x.line}-${Math.min(x.end, lines)}: Graphics, Memory, the inspector and the Explorer show its bytes as that. The rest of the program is code.` } },
+      }]));
       monaco.editor.setModelMarkers(m, 'asm-build', (build?.problems ?? []).filter(x => x.file === p && on(x.line)).map(x => ({
         severity: x.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning, message: x.msg, source: build!.tool,
         startLineNumber: x.line, startColumn: Math.max(1, x.column || 1), endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
       })));
     }
-  }, [check, build, state, texts]);
+  }, [check, build, state, texts, blocks]);
+  const blockDecos = useRef<Record<string, string[]>>({});
   const problemsOf = useMemo(() => {
     const n = new Map<string, number>();
     for (const p of check?.problems ?? []) if (p.file) n.set(p.file, (n.get(p.file) ?? 0) + 1);
@@ -873,7 +894,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
   };
   const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
-  keys.current = { run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
+  keys.current = { block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
   // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
   // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
   const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
@@ -889,9 +910,39 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => {
     if (!ask || ask.n === seenAsk.current.ask) return;
     seenAsk.current.ask = ask.n;
-    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else void startDebug();
+    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else void startDebug();
   }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
+
+  /* ---- Insert block: sprites, a charset, a bitmap, a screen, music or data, in the source where the caret is ---- */
+  const [blockAsk, setBlockAsk] = useState<{ kind?: AsmBlockKind; lib?: LibraryRef | null } | null>(null);
+  const askBlock = (kind?: AsmBlockKind, lib?: LibraryRef) => {
+    const p = shownRef.current;
+    if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
+    if (!p || !(p in textsRef.current) || !ASM_SOURCE.test(p)) { toast('Open a source to put the block in: it goes where the caret is', 'warn'); return; }
+    setBlockAsk({ kind, lib: lib ?? null });
+  };
+  const insertBlock = async (b: AsmBlockInsert) => {
+    const p = shownRef.current, e = ed.current, monaco = monacoRef.current, m = p ? models.current[p] : null;
+    if (!p || !e || !monaco || !m || e.getModel() !== m) { toast('The source is not open any more', 'warn'); return; }
+    setBlockAsk(null);
+    // its file first (the check reads it), then the lines
+    if (b.file) {
+      const f = b.file;
+      try { const r = await kr!.assemblerWrite({ dir, path: f.path, bytes: f.bytes }); binTimes.current[f.path] = r.mtime; tried.current.add(f.path); setBins(x => ({ ...x, [f.path]: f.bytes })); }
+      catch (err) { toast(`${f.path} was not written: ${errorText(err)}`, 'err'); return; }
+      await relist();
+    }
+    const line = Math.min(e.getPosition()?.lineNumber ?? m.getLineCount(), m.getLineCount());
+    // an empty line before it and after it, where the lines next to it have text
+    const before = line > 1 && m.getLineContent(line - 1).trim() ? '\n' : '', after = m.getLineContent(line).trim() ? '\n' : '';
+    e.pushUndoStop();
+    e.executeEdits('insert-block', [{ range: new monaco.Range(line, 1, line, 1), text: before + b.text + after, forceMoveMarkers: true }]);
+    e.pushUndoStop();
+    const at = line + (before ? 1 : 0) + b.labelLine;
+    e.setPosition({ lineNumber: at, column: 1 }); e.revealLineInCenter(at); e.focus();
+    toast(`Inserted the ${b.what}${b.file ? `, its bytes in ${b.file.path}` : ''}: Graphics and Memory show it once the program assembles`, 'ok');
+  };
   // the code cannot change while it is being debugged
   useEffect(() => { ed.current?.updateOptions({ readOnly: !!dbg }); }, [dbg, state]);
   // the debugger's line, in the file shown; at no line of the sources (the KERNAL's CHROUT, an interrupt, code copied
@@ -988,6 +1039,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           {main && shown !== main && <button className="pill asm-main-pill" onClick={() => openFile(main)} title={`The main file, which Run and Build build: ${main}. A click opens it (right-click a source in the list to make it the main file)`}>
             <Icon name="play" size={10} />{baseName(main)}</button>}
           <span className="grow" />
+          <button className="btn asm-block-btn" aria-label="Insert block" disabled={!!dbg || !shown || !shownText || !ASM_SOURCE.test(shown)} onClick={() => askBlock()}
+            title="Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data, from the library, a file, or empty .byte lines to fill in. Graphics and Memory show its bytes as what they are; the rest of the program is code (also in the editor's right-click menu)">
+            <Icon name="blocks" size={14} /><span className="lbl">Block…</span></button>
           <button className="btn scr-screen-btn" aria-pressed={c64.open} onClick={() => setC64({ open: !c64.open })}
             title={c64.open ? 'Close the C64 screen beside the code' : 'Open a C64 screen beside the code: what the program prints and writes to the screen while it is debugged in Mimir'}>
             <Icon name="screen" size={14} /><span className="lbl">C64 screen</span></button>
@@ -1056,6 +1110,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
             onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} />
         </div>
       </div>
+      {blockAsk && shown && <AsmBlockDialog lang={lang} dir={dir} source={shown} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}
+        onInsert={b => void insertBlock(b)} onClose={() => { setBlockAsk(null); requestAnimationFrame(() => ed.current?.focus()); }} />}
     </div>
   );
 }

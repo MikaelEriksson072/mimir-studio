@@ -109,11 +109,11 @@ export async function readInFolder(dir: string, rel: string, as: 'text' | 'bytes
   return as === 'text' ? { text: bytes.toString('utf8'), size: s.size, mtime: s.mtimeMs } : { bytes: new Uint8Array(bytes), size: s.size, mtime: s.mtimeMs };
 }
 
-/** a source written (its folder made when it is not there) */
-export async function writeInFolder(dir: string, rel: string, text: string): Promise<{ mtime: number }> {
+/** a source written, or a data file's bytes (its folder made when it is not there) */
+export async function writeInFolder(dir: string, rel: string, data: string | Uint8Array): Promise<{ mtime: number }> {
   const full = inFolder(dir, rel);
   await mkdir(dirname(full), { recursive: true });
-  await writeFile(full, text, 'utf8');
+  if (typeof data === 'string') await writeFile(full, data, 'utf8'); else await writeFile(full, data);
   return { mtime: (await stat(full)).mtimeMs };
 }
 

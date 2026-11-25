@@ -5,7 +5,7 @@
  * file is the main one (the one built), the check of the whole program and a debugger's run of it.
  * ===================================================================== */
 import type { Addr, AssembleResult, LoadedFile, Override, ScriptLang, Vfs } from './types';
-import { OPC } from './cpu/opcodes';
+import type { AsmBlockMark } from './asm-blocks';
 import { assembleIn, langIs } from './code-lang';
 import { guessAssembler } from './render/dialect';
 import { parseBasic } from './c64/basic';
@@ -252,8 +252,8 @@ export function asmEndText(r: Pick<ScriptRun, 'end' | 'at' | 'instructions' | 'c
 }
 
 /** What a checked program is to an Assembler project's views (spec 10.7): its bytes as the file the build makes of them
- *  (from its lowest byte to its highest, the gaps as zeros, as KickAss.jar and 64tass write a PRG), each instruction the
- *  assembler wrote marked as code, the sources' labels and where a run starts. The analysis takes these as a project's
+ *  (from its lowest byte to its highest, the gaps as zeros, as KickAss.jar and 64tass write a PRG), what each byte is
+ *  (code, the BASIC line, a block marked in the sources: asm-blocks.ts), the sources' labels and where a run starts. The analysis takes these as a project's
  *  own: Graphics, Memory, the inspector and the Explorer show the program the sources make, with their names. */
 export interface AsmProgram {
   files: LoadedFile[];
@@ -262,20 +262,39 @@ export interface AsmProgram {
   entryPoint: Addr | null;
 }
 
-/** The program `c` (assembled from the main file `main`) as an Assembler project's views take it (AsmProgram). */
-export function asmProgram(c: Pick<AsmCheck, 'asm' | 'entry' | 'check'>, main: string): AsmProgram {
+/** The program `c` (assembled from the main file `main`) as an Assembler project's views take it (AsmProgram): every
+ *  byte the sources write is code, the BASIC line at $0801 BASIC, those of a block marked in the sources (`marks`,
+ *  asmBlockMarks) what the block is. */
+export function asmProgram(c: Pick<AsmCheck, 'asm' | 'entry' | 'check' | 'files' | 'fileOf'>, main: string, marks: readonly AsmBlockMark[] = []): AsmProgram {
   const stem = main.replace(/^.*[\/]/, '').replace(/\.[^.]*$/, '') || 'program';
-  const { mem, written, ops } = c.asm;
+  const { mem, written } = c.asm;
   let lo = -1, hi = -1;
   for (let a = 0; a < 0x10000; a++) if (written[a]) { if (lo < 0) lo = a; hi = a; }
   const files: LoadedFile[] = lo < 0 ? [] : [{ id: `asm-${h4(lo)}`, name: `${stem}.prg`, load: lo, bytes: mem.slice(lo, hi + 1) }];
-  // the code: each instruction's bytes, those next to each other one range
+  // the BASIC line RUN starts it with (BasicUpstart2, or one written byte by byte)
+  let basic: { start: Addr; end: Addr } | null = null;
+  if (written[0x0801]) {
+    const owner = new Int16Array(0x10000).fill(-1);
+    for (let a = 0; a < 0x10000; a++) if (written[a]) owner[a] = 0;
+    const b = parseBasic(mem, owner, 0x0801);
+    if (b && b.sys != null && b.end > b.start) basic = { start: b.start, end: Math.min(b.end, b.sys) };
+  }
+  // each byte as what its line is: in a block, the block's kind; else code. Bytes next to each other alike, one range
+  const byFile = new Map<string, AsmBlockMark[]>();
+  for (const m of marks) byFile.set(m.file, [...(byFile.get(m.file) ?? []), m]);
+  const CODE = { kind: 'code' as const, props: {} }, BASIC = { kind: 'basic' as const, props: {} };
+  const markOf = (a: Addr) => {
+    const f = c.fileOf[a], line = c.asm.lines[a];
+    return (f && line ? byFile.get(c.files[f - 1])?.find(m => line > m.line && line < m.end) : null) ?? CODE;
+  };
   const overrides: Override[] = [];
-  for (let a = 0; a < 0x10000;) {
-    if (!ops[a] || !written[a]) { a++; continue; }
-    const end = Math.min(0x10000, a + OPC[mem[a]].len), last = overrides[overrides.length - 1];
-    if (last && last.end === a) last.end = end; else overrides.push({ start: a, end, type: 'code' });
-    a = end;
+  let lastMark: unknown = null;
+  for (let a = 0; a < 0x10000; a++) {
+    if (!written[a]) { lastMark = null; continue; }
+    const m = basic && a >= basic.start && a < basic.end ? BASIC : markOf(a), last = overrides[overrides.length - 1];
+    if (last && last.end === a && lastMark === m) { last.end = a + 1; continue; }
+    overrides.push({ start: a, end: a + 1, type: m.kind, ...(Object.keys(m.props).length ? { props: { ...m.props } } : {}) });
+    lastMark = m;
   }
   const labels: Record<Addr, string> = {};
   for (const [a, n] of c.check.labels) if (a >= lo && a <= hi) labels[a] = n;

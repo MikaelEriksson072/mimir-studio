@@ -3371,6 +3371,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         { label: `Play in ${other === 'vice' ? 'VICE' : 'DeepSID'}`, run: () => void playLibrary(item, { player: other }) },
         { sep: true },
       ] satisfies MenuItem[] : []),
+      // an Assembler project (spec 10.7): the item as a block of the source the Assembler shows, where its caret is
+      ...(asmMode ? [{ label: 'Insert in the source as a block…', icon: 'blocks', run: () => { setUi({ tab: 'asm' }); useAsmLink.getState().request('block', { lib: { kind: item.kind, file: item.file } }); } }] satisfies MenuItem[] : []),
       { label: 'Show it in the Library tab', icon: 'library', run: () => showLibrary({ kind: item.kind, file: item.file }) },
       { label: 'Show its file', icon: 'folder', run: () => revealLibrary({ kind: item.kind, file: item.file }) },
       { sep: true },
@@ -4301,13 +4303,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'name-known', label: suggested.length ? `Name the ${suggested.length} routine${suggested.length === 1 ? '' : 's'} known from other projects (${suggested.slice(0, 3).map(m => m.name).join(', ')}${suggested.length > 3 ? ' …' : ''})` : 'Name the routines known from other projects (none here)', run: () => nameKnown() },
     { id: 'learn-project', label: `Learn the routines named in this project, so other projects get their names suggested (Mimir knows ${library.length})`, run: learnThisProject },
   ];
-  const asmAsk = (what: 'run' | 'build' | 'debug') => useAsmLink.getState().request(what);
+  const asmAsk = (what: 'run' | 'build' | 'debug' | 'block') => useAsmLink.getState().request(what);
   const asmTool2 = stored.asm?.lang === '64tass' ? '64tass' : 'KickAss.jar';
   const commands: Command[] = asmMode ? [
     { id: 'tab-asm', label: 'Show the Assembler: the project\'s sources, checked as you type', run: () => setUi({ tab: 'asm' }) },
     { id: 'build', label: `Run: build the main file with ${asmTool2} and start it in VICE`, key: 'F5', run: () => asmAsk('run') },
     { id: 'asm-build', label: `Build the main file with ${asmTool2}, without starting it`, run: () => asmAsk('build') },
     { id: 'asm-debug', label: 'Debug the program a step at a time (the Assembler tab: Runs in memory only or the whole C64)', run: () => { setUi({ tab: 'asm' }); asmAsk('debug'); } },
+    { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
     ...allCommands.filter(c => ASM_COMMANDS.has(c.id) || c.id.startsWith('script-run-')),
   ] : allCommands;
   // the dialogs of "The work is not saved" hold the keys too

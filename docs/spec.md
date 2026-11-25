@@ -164,6 +164,7 @@ mimir-studio/
 │     │              Inspector, Heatmap, GfxPreview, BottomPanel, StatusBar,
 │     │              CommandPalette, Settings, ContextMenu}.tsx
 │     ├─ components/{AssemblerView, AsmTree, AsmOutput}.tsx   Assemblern: filerna bredvid koden, Run, Debug (10.7)
+│     ├─ components/AsmBlockDialog.tsx   Insert block: sprites, charset, bitmap, skärm, musik, data i källan (10.7)
 │     ├─ store/asmlink.ts          Assembler-projektet i projektfönstret: programmet till vyerna, visa en rad, Run (10.7)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
 │     └─ styles/{tokens.css, tailwind.css}
@@ -177,6 +178,7 @@ mimir-studio/
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
 │  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
+│  ├─ src/asm-blocks.ts            Assemblerns block: markeringarna i källan, ett nytt blocks rader (Insert block) (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3659,14 +3661,41 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   i övrigt (filer, disketter, band, biblioteket) görs. Sidopanelen saknar Bookmarks och Pack; panelen under har bara
   *Messages* (och bandet).
 - **Programmet i projektets vyer** är det kontrollen assemblerar (`asmProgram`): bytes som bygget skriver dem (från den
-  lägsta till den högsta, luckorna nollor, en fil `<huvudfil>.prg`), varje instruktion assemblern skrev som kod, källans
-  etiketter och var en körning startar. Analysen tar dem som ett projekts egna (`asmView` i `App.tsx`), så Graphics,
-  Memory, inspektorn, Utforskaren och Blocks/Symbols visar programmet med källans namn, och det analysen ser i datan
-  (sprites med en spritepekare, musik, tabeller). Det skickas en stund efter att kontrollen gått igenom och bara när det
+  lägsta till den högsta, luckorna nollor, en fil `<huvudfil>.prg`), vad varje byte är, källans etiketter och var en
+  körning startar. Allt källan skriver räknas som **kod**, BASIC-raden vid $0801 som BASIC, utom bytes i ett **block**
+  som är markerat i källan (nedan, 2026-11-25): de är det blocket är. Analysen tar dem som ett projekts egna (`asmView`
+  i `App.tsx`), så Graphics, Memory, inspektorn, Utforskaren och Blocks/Symbols visar programmet med källans namn. Det skickas en stund efter att kontrollen gått igenom och bara när det
   är ett annat program; den senaste som gick igenom gäller tills nästa. Utforskaren har *Program* (filen, var den börjar,
   diskett, band och minneskartan), inspektorn visar blocket utan att ändra det, med raden i källan som en länk, och
   Graphics och Memory markerar inget. Allt som annars visar en adress i listningen (*Show in the source*, en dubbelklickning
   i Memory, minneskartan, länkarna) öppnar Assembler-fliken på raden som skriver byten (`asmLineAt`).
+- **Block i källan** (`packages/core/src/asm-blocks.ts`, 2026-11-25). Ett block är raderna mellan `// @block <slag>`
+  (`; @block` i 64tass) och `// @end` (utan `@end` till filens slut); bytes som de raderna skriver (också med
+  `.fill`, `.import binary`, `.binary`, ett makro) är blockets. Slagen: `sprite`, `charset`, `bitmap`, `screen`,
+  `music`, `data`, `text`, `words`, `table`, `fill` (`sprites`, `chars`, `font`, `sid`, `bytes` går också).
+  Efter slaget: `multicolor` eller `hires` (hur bilderna ritas), `init=$xxxx play=$xxxx` (musik), `petscii` eller
+  `screen` (text). Det som inte förstås är en varning på sin rad, och blocket blir data. I editorn har ett blocks rader
+  en stapel i slagets färg till vänster, och `@block`-raden säger vad det är när man håller pekaren över den.
+- **Insert block** (`components/AsmBlockDialog.tsx`): knappen *Block…* i verktygsraden, editorns högermeny, paletten och,
+  i bibliotekets meny, *Insert in the source as a block…* lägger ett block där markören står (ovanför dess rad). Slaget
+  väljs (*Sprites*, *Charset*, *Bitmap*, *Screen*, *Music*, *Data*) och bytes kommer **från biblioteket** (dess sprites,
+  tecken, bilder och SID:ar, med bild), **från en fil** (en dialog, `assembler:pickData`: en sprite- eller teckenfil
+  med eller utan laddadress, en bild i Koala-, Advanced Art Studio-, Art Studio- eller Doodle-format eller 8000 råa
+  bytes, en .sid, vad som helst som data) eller är **tomma .byte-rader att fylla i** (antal sprites, tecken eller bytes;
+  en skärm är 1000 mellanslag). Namnet blir etiketten (bibliotekets namn utan källa och adresser, filens namn; aldrig ett
+  som programmet redan har eller en mnemonic). Det skrivs som **.byte-rader formaterade som slaget ritas** (en sprite
+  21 rader med tre bytes binärt och den 64:e byten för sig, ett tecken en rad med sitt nummer, en bitmap 8 bytes en rad
+  med radnumret var 320:e, en skärm 40 en rad, musik 16, data 8) eller som **en fil i projektet** som källan läser
+  (`.import binary`/`.binary` med offset och längd; musik i Kick Assembler med `LoadSid`, `.fill` och variabelns
+  `init`/`play`). En fil utifrån eller ur biblioteket kopieras till en mapp för slaget bredvid källan
+  (`sprites/`, `charsets/`, `bitmaps/`, `screens/`, `music/`, `data/`; en flerfärgsbild som Koala-fil), en fil som
+  redan ligger i projektet läses där den är. Blocket hamnar **vid markören**, linjerat som VIC:en behöver det
+  (`.align`: sprites $40, en teckenuppsättning $800, en bitmap $2000, en skärm $400), eller **på en adress** (`* =`);
+  musik alltid där den spelas från, med `<namn>_init` och `<namn>_play`. En bild ger tre block: bitmappen, skärmen
+  (`<namn>_screen`) och, i flerfärg, färgerna till färg-RAM (`<namn>_colors`) och bakgrunden (`<namn>_bg`).
+  Dialogen visar raderna innan de läggs in; insättningen är ett steg att ångra. KickAss.jar och 64tass bygger varje slag,
+  som .byte-rader och som fil, till samma bytes som Mimirs assembler (`asm-blocks.integration.test.ts`); Mimirs
+  64tass kan `.align` (luckan oskriven, eller fylld med ett värde).
 - **Filerna bredvid koden.** Listan är mappens filer och mappar som ett träd, mapparna först (`.git`, `node_modules` och
   liknande utelämnas; högst 4000 poster). Ett klick öppnar en fil i editorn, en mapp fälls ut och in; piltangenterna och
   Enter går i listan. Huvudfilen är märkt *main*, en fil med ändringar som inte är skrivna har en prick och en fil med
@@ -4418,9 +4447,10 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `assembler:close` | renderer → main | `{ dir }`: mappen bevakas inte längre |
 | `assembler:list` | renderer → main | `{ dir }` → mappens filer och mappar, med storlek och ändringstid |
 | `assembler:read` | renderer → main | `{ dir, path, as? }` → `{ text }` eller `{ bytes }`, `size`, `mtime`: en fil, bara med sin väg i mappen |
-| `assembler:write` | renderer → main | `{ dir, path, text }` → `{ mtime }`: en källfil skrivs (dess mapp görs om den saknas) |
+| `assembler:write` | renderer → main | `{ dir, path, text }` eller `{ dir, path, bytes }` → `{ mtime }`: en källfil, eller en datafil för ett block, skrivs (dess mapp görs om den saknas) |
 | `assembler:change` | renderer → main | `{ dir, op, path, to?, text? }` → mappens innehåll: en ny fil eller mapp, ett namnbyte (eller en flytt i mappen), eller till papperskorgen |
 | `assembler:reveal` | renderer → main | `{ dir, path? }`: filhanteraren vid filen eller mappen |
+| `assembler:pickData` | renderer → main | `{ dir, kind }` → `{ name, path, inside, bytes }` eller `null`: en fil för ett block (Insert block) väljs i en dialog och läses; `inside` är dess väg i mappen när den ligger där |
 
 ### 13.4b Smart attach
 

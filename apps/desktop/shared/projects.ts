@@ -23,3 +23,12 @@ export function projectNameProblem(name: string): string | null {
 
 /** a project's name, from the path of its project file */
 export const projectNameOf = (file: string): string => (file.split(/[\\/]/).pop() ?? file).replace(/\.mimir\.json$/i, '').replace(/\.json$/i, '');
+
+/** `to` (a path in a folder, with /) as a path from the folder `from` (`../` where it goes up): an Assembler source's
+ *  import of a file of its project */
+export function relPath(from: string, to: string): string {
+  const a = from ? from.split('/') : [], b = to.split('/');
+  let i = 0;
+  while (i < a.length && i < b.length - 1 && a[i] === b[i]) i++;
+  return [...a.slice(i).map(() => '..'), ...b.slice(i)].join('/');
+}

@@ -76,6 +76,7 @@ export const CHANNELS = {
   assemblerWrite: 'assembler:write',
   assemblerChange: 'assembler:change',
   assemblerReveal: 'assembler:reveal',
+  assemblerPickData: 'assembler:pickData',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -468,7 +469,12 @@ export interface AsmCreateRequest { name: string; parent: string; files: Record<
 /** a file of the folder, as text or as its bytes */
 export interface AsmReadRequest { dir: string; path: string; as?: 'text' | 'bytes' }
 export interface AsmReadResult { text?: string; bytes?: Uint8Array; size: number; mtime: number }
-export interface AsmWriteRequest { dir: string; path: string; text: string }
+/** a file of the folder written: a source's text, or the bytes of a data file (a block's file: Insert block) */
+export interface AsmWriteRequest { dir: string; path: string; text?: string; bytes?: Uint8Array }
+/** a file picked in a dialog for a block of `kind` (Insert block): its name, where it is, its path inside the folder when
+ *  it is in it (null: outside it, the block takes a copy), and its bytes */
+export interface AsmPickDataRequest { dir: string; kind: 'sprite' | 'charset' | 'bitmap' | 'screen' | 'music' | 'data' }
+export interface AsmPickDataResult { name: string; path: string; inside: string | null; bytes: Uint8Array }
 /** a new file (with its text) or folder, a file or folder renamed (or moved) inside the folder, or one moved to the
  *  Recycle Bin; the answer is the folder's listing after it */
 export type AsmChangeRequest =
@@ -588,4 +594,6 @@ export interface KrApi {
   assemblerChange(req: AsmChangeRequest): Promise<AsmFolder>;
   /** the file manager at a file of the folder, or at the folder */
   assemblerReveal(req: { dir: string; path?: string }): Promise<void>;
+  /** a file for a block picked in a dialog and read (null: cancelled) */
+  assemblerPickData(req: AsmPickDataRequest): Promise<AsmPickDataResult | null>;
 }

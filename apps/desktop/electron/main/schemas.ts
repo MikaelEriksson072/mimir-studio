@@ -383,7 +383,11 @@ export const asmOpenSchema = z.object({ path: asmDir.optional() }).strict();
 export const asmCreateSchema = z.object({ name: z.string().min(1).max(200), parent: asmDir, files: z.record(asmPath, z.string().max(ASM_TEXT_MAX)).refine(f => Object.keys(f).length <= 16, 'too many files') }).strict();
 export const asmDirSchema = z.object({ dir: asmDir }).strict();
 export const asmReadSchema = z.object({ dir: asmDir, path: asmPath, as: z.enum(['text', 'bytes']).optional() }).strict();
-export const asmWriteSchema = z.object({ dir: asmDir, path: asmPath, text: z.string().max(ASM_TEXT_MAX) }).strict();
+export const asmWriteSchema = z.object({ dir: asmDir, path: asmPath, text: z.string().max(ASM_TEXT_MAX).optional(), bytes: z.instanceof(Uint8Array).refine(b => b.length <= ASM_DATA_MAX, 'more bytes than a data file of the Assembler holds').optional() }).strict()
+  .refine(r => (r.text == null) !== (r.bytes == null), 'a text or bytes, one of them');
+/** the most a data file the Assembler writes or reads for a block holds (a .sid of all 64 KB with its header) */
+export const ASM_DATA_MAX = 0x10000 + 0x100;
+export const asmPickDataSchema = z.object({ dir: asmDir, kind: z.enum(['sprite', 'charset', 'bitmap', 'screen', 'music', 'data']) }).strict();
 export const asmChangeSchema = z.discriminatedUnion('op', [
   z.object({ dir: asmDir, op: z.literal('file'), path: asmPath, text: z.string().max(ASM_TEXT_MAX).optional() }).strict(),
   z.object({ dir: asmDir, op: z.literal('folder'), path: asmPath }).strict(),

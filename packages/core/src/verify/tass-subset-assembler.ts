@@ -503,6 +503,16 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (/^\.(here|endlogical)$/.test(s)) { if (!outer.length) { E(`${s} without .logical`, st); continue; } const was = outer.pop()!; pc -= off - was; off = was; continue; }
         if ((m = s.match(/^\.enc\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') enc = v; report(st); continue; }
         if ((m = s.match(/^\.cpu\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') cpu = v === 'default' ? '6502' : v; continue; }
+        // .align n: on to the next multiple of n, the gap not written (as 64tass leaves it); .align n, v fills it with v
+        if ((m = s.match(/^\.align\b\s*(.*)$/))) {
+          const [na, fa] = splitTop(m[1], ',').map(a => a.trim());
+          const n = na ? evn(na) : null;
+          if (n == null || n <= 0) { if (final) E('.align needs a positive number', st); report(st); continue; }
+          if (fa) { const v = ev(P(fa)); while (pc % n) byte(v ?? 0, st); }
+          else pc += (n - (pc % n)) % n;
+          report(st);
+          continue;
+        }
         if ((m = s.match(/^\.(byte|word|text|null|fill|binary)\b\s*(.*)$/))) {
           const dir = m[1], args = splitTop(m[2], ',').filter(a => a !== '');
           if (dir === 'byte') for (const a of args) { const v = ev(P(a)); if (v == null) emit(0, st); else byte(v, st); }

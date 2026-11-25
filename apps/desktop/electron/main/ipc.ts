@@ -5,10 +5,10 @@ import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { guessAssembler, type AssemblerId } from '@mimir/core';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { assertEntryName, type PathPolicy } from './paths';
 import { z, type ZodTypeAny } from 'zod';
-import { CHANNELS, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type LocateResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind, type SmartAttachResult } from '../../shared/ipc';
+import { CHANNELS, type AsmPickDataRequest, type AsmPickDataResult, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type LocateResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind, type SmartAttachResult } from '../../shared/ipc';
 import { SMART_EXTENSIONS, smartPlan } from '../../shared/smart-attach';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
@@ -35,7 +35,7 @@ import type { ScriptStore } from './scripts';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
 import { changeInFolder, createAsmFolder, inFolder, listFolder, readInFolder, writeInFolder, type AsmStore } from './assembler';
-import { asmChangeSchema, asmCreateSchema, asmDirSchema, asmOpenSchema, asmReadSchema, asmRevealSchema, asmWriteSchema } from './schemas';
+import { ASM_DATA_MAX, asmChangeSchema, asmCreateSchema, asmDirSchema, asmOpenSchema, asmPickDataSchema, asmReadSchema, asmRevealSchema, asmWriteSchema } from './schemas';
 
 export interface IpcDeps {
   policy: PathPolicy;
@@ -70,6 +70,16 @@ const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undef
 const SAVE_KINDS: Record<string, string> = {
   prg: 'C64 program', bin: 'Binary data', '64c': 'Charset with load address', kla: 'Koala Painter picture', art: 'Art Studio picture',
   png: 'PNG image', asm: 'Kick Assembler source',
+};
+
+/** the open dialog of Insert block (the Assembler, spec 10.7) for each kind of block: what it is, its files */
+const ASM_PICK: Record<AsmPickDataRequest['kind'], { what: string; name: string; ext: string[] }> = {
+  sprite: { what: 'sprites', name: 'Sprites (raw, with or without a load address)', ext: ['spr', 'bin', 'raw', 'prg'] },
+  charset: { what: 'charset', name: 'Charsets (raw, or .64c with a load address)', ext: ['64c', 'chr', 'bin', 'raw', 'prg'] },
+  bitmap: { what: 'bitmap', name: 'Pictures and bitmaps (Koala, Advanced Art Studio, Art Studio, Doodle, raw)', ext: ['kla', 'koa', 'ocp', 'art', 'dd', 'ddl', 'mpic', 'bin', 'raw', 'prg'] },
+  screen: { what: 'screen', name: 'Screens (1000 bytes)', ext: ['bin', 'scr', 'raw', 'prg'] },
+  music: { what: 'music', name: 'SID music (PSID or RSID)', ext: ['sid'] },
+  data: { what: 'data', name: 'Data', ext: ['bin', 'raw', 'dat', 'prg'] },
 };
 
 /** the open dialog for each of the File menu's choices (`any`: Ctrl+O, Open PRG… elsewhere): a cartridge or a snapshot
@@ -421,7 +431,20 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.assemblerRead, asmReadSchema, req => readInFolder(asmDir(req.dir), req.path, req.as ?? 'text'));
   // (the folder's watcher is not quieted for the Assembler's own writes: it tells them apart by their text, and a change
   // made outside the app a moment after one is still seen)
-  handle(CHANNELS.assemblerWrite, asmWriteSchema, req => writeInFolder(asmDir(req.dir), req.path, req.text));
+  handle(CHANNELS.assemblerWrite, asmWriteSchema, req => writeInFolder(asmDir(req.dir), req.path, req.text ?? req.bytes!));
+  // Insert block: a file for a block picked and read (any folder: only its bytes go back, a copy goes in the project)
+  handle(CHANNELS.assemblerPickData, asmPickDataSchema, async (req, e): Promise<AsmPickDataResult | null> => {
+    const dir = asmDir(req.dir);
+    const [path] = await pick(e, 'asmdata', { title: `Choose a file for the ${ASM_PICK[req.kind].what}`, properties: ['openFile'], filters: [{ name: ASM_PICK[req.kind].name, extensions: ASM_PICK[req.kind].ext.flatMap(x => [x, x.toUpperCase()]) }, { name: 'All files', extensions: ['*'] }] });
+    if (!path) return null;
+    recent.remember('asmdata', dirname(path));
+    const s = statSync(path);
+    if (!s.isFile()) throw new Error(`${basename(path)} is not a file`);
+    if (s.size > ASM_DATA_MAX) throw new Error(`${basename(path)} is ${s.size} bytes: more than a C64 holds`);
+    const rel = relative(dir, path);
+    const inside = rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : null;
+    return { name: basename(path), path, inside, bytes: new Uint8Array(await readFile(path)) };
+  });
   handle(CHANNELS.assemblerChange, asmChangeSchema, async req => {
     const dir = asmDir(req.dir);
     await changeInFolder(dir, req, trash);
