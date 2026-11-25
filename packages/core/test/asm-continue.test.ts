@@ -35,7 +35,7 @@ describe('Continue in the Assembler: the program\'s sources with their blocks ma
       if (!check.ok) { failures.push(`${c.name}: ${check.problems.slice(0, 2).map(x => `${x.file}:${x.line} ${x.msg}`).join('; ')}`); continue; }
       const fi = R(c).fileNames.findIndex(x => `${x}.asm` === s.main), f = A.files[fi];
       const cmp = comparePrg(f, check.asm.prg ?? makePrg(0, new Uint8Array()), R(c).excluded.filter(x => x.file === fi));
-      if (!cmp.ok) { failures.push(`${c.name}: ${cmp.message}`); continue; }
+      if (!cmp.ok) { failures.push(`${c.name}: ${cmp.diffs.length} bytes differ from the program's`); continue; }
       const marks = asmBlockMarks(Object.entries(s.files).filter(([k, v]) => typeof v === 'string' && k.endsWith('.asm')).map(([path, text]) => ({ path, text: text as string }))).marks;
       const prog = asmProgram(check, s.main, marks);
       const typeAt = (a: number) => prog.overrides.find(o => a >= o.start && a < o.end)?.type;

@@ -3,11 +3,16 @@
  * Graphics, Memory, the inspector and the Explorer, show it); the window asks it to show an address's line in the
  * sources, to run or build, and to write what is not written yet before the window closes or the project does. */
 import { create } from 'zustand';
-import type { Addr, AsmBlockKind, AsmCheck, AsmProgram } from '@mimir/core';
+import type { Addr, AsmBlockKind, AsmByteChange, AsmCheck, AsmProgram } from '@mimir/core';
 import type { LibraryRef } from './library';
 
-/** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item */
-export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'block'; n: number; kind?: AsmBlockKind; lib?: LibraryRef }
+/** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
+ *  (a pack's) after the last build's, under Build; `write`: bytes drawn (the enlarged sprite or character) written into
+ *  the lines that write them */
+export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'block' | 'log' | 'write'; n: number; kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[] }
+/** the main file built with KickAss.jar or 64tass (Pack, Release): the PRG's bytes, where it and its labels are, and
+ *  the main file (a path in the project's folder) */
+export interface AsmBuilt { prg: Uint8Array; prgPath: string; vsPath: string | null; main: string }
 
 interface AsmLinkState {
   /** the program the sources make, as the project's views take it: the last check that assembled (null: none yet) */
@@ -22,20 +27,25 @@ interface AsmLinkState {
   ask: AsmAsk | null;
   /** a build is running */
   building: boolean;
+  /** the main file the tab builds (a path in the project's folder; null: none yet) */
+  main: string | null;
   /** what is not written yet, written (the tab sets it) */
   flush: () => Promise<unknown>;
+  /** the main file built (what is not written yet is written first); null: it was not (the tab said why) */
+  buildPrg: () => Promise<AsmBuilt | null>;
   set: (p: Partial<Omit<AsmLinkState, 'set' | 'reset' | 'request' | 'showAddr'>>) => void;
-  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib'>) => void;
+  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes'>) => void;
   showAddr: (addr: Addr) => void;
   /** the project closed: nothing is kept */
   reset: () => void;
 }
 
 const none = () => Promise.resolve();
+const noBuild = () => Promise.resolve(null);
 export const useAsmLink = create<AsmLinkState>(set => ({
-  program: null, check: null, assembles: false, show: null, ask: null, building: false, flush: none,
+  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, flush: none, buildPrg: noBuild,
   set: p => set(p),
   request: (what, o) => set(s => ({ ask: { what, n: (s.ask?.n ?? 0) + 1, ...o } })),
   showAddr: addr => set(s => ({ show: { addr, n: (s.show?.n ?? 0) + 1 } })),
-  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, flush: none }),
+  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, flush: none, buildPrg: noBuild }),
 }));

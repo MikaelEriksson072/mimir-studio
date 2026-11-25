@@ -1,6 +1,6 @@
 /* The Inspector's enlarged character and sprite (src/lib/charzoom.ts): the one a click is on, its pixels, the keys. */
 import { describe, expect, it } from 'vitest';
-import { CHAR_COLS, CHAR_LAST, charBits, charCount, charIndex, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteIndex, spriteNumber, spritePixels, spriteStep } from '../src/lib/charzoom';
+import { CHAR_COLS, CHAR_LAST, charBits, charCount, charIndex, charIndexAt, charNumber, charPixels, charStep, drawPixel, SPRITE_LAST, spriteCols, spriteCount, spriteIndex, spriteNumber, spritePixels, spriteStep } from '../src/lib/charzoom';
 
 describe('the enlarged character', () => {
   it('counts the characters the preview draws: one per 8 bytes, at least one, at most 256', () => {
@@ -189,5 +189,23 @@ describe('the enlarged sprite', () => {
     expect(spriteNumber(0xc000)).toBe(0x00);
     expect(spriteNumber(0x7fc0)).toBe(0xff);
     expect(spriteNumber(0x2008)).toBeNull();
+  });
+});
+
+describe('drawing in the enlarged sprite or character (an Assembler project)', () => {
+  const mem = new Uint8Array(0x10000);
+  mem[0x2000] = 0b00000000; mem[0x2004] = 0b11111111; mem[0x3002] = 0b01010101;
+  const get = (a: number) => mem[a];
+  it('sets or clears a hires pixel in its byte', () => {
+    expect(drawPixel(get, 'sprite', 0x2000, false, 0, 0, 3)).toEqual({ addr: 0x2000, value: 0b10000000 });
+    expect(drawPixel(get, 'sprite', 0x2000, false, 9, 1, 0)).toEqual({ addr: 0x2004, value: 0b10111111 });
+    expect(drawPixel(get, 'sprite', 0x2000, false, 23, 20, 3)).toEqual({ addr: 0x2000 + 62, value: 0b00000001 });
+    expect(drawPixel(get, 'chars', 0x3000, false, 7, 2, 3)).toEqual({ addr: 0x3002, value: 0b01010101 });
+    expect(drawPixel(get, 'chars', 0x3000, false, 1, 2, 3)).toEqual({ addr: 0x3002, value: 0b01010101 | 0b01000000 });
+  });
+  it('sets a multicolour pixel\'s bit pair', () => {
+    expect(drawPixel(get, 'sprite', 0x2000, true, 0, 0, 2)).toEqual({ addr: 0x2000, value: 0b10000000 });
+    expect(drawPixel(get, 'sprite', 0x2000, true, 7, 1, 0)).toEqual({ addr: 0x2004, value: 0b11111100 });
+    expect(drawPixel(get, 'chars', 0x3000, true, 3, 2, 3)).toEqual({ addr: 0x3002, value: 0b01010111 });
   });
 });

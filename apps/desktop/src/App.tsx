@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  assemblerSources, bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  assemblerSources, bankRange, buildScripts, comparePrg, createProject, makeD64, makeTap, programCartridge, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, coversReadyScreen, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, ioSummary, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
@@ -90,7 +90,8 @@ import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
 import { AssemblerTab, ContinueInAssemblerModal, type AsmContinueInfo } from './components/AssemblerView';
-import { useAsmLink } from './store/asmlink';
+import { AsmReleaseModal, type ReleaseChoice } from './components/AsmRelease';
+import { useAsmLink, type AsmBuilt } from './store/asmlink';
 import { AnalysisOverview, type OverviewLinks, type PackCheck, type PackLook } from './components/Overview';
 import { GFX_KIND, snapshotPc } from './lib/overview';
 
@@ -151,10 +152,10 @@ const isDiskScriptTab = (k: BottomTab): k is (typeof DISK_SCRIPT_TABS)[number] =
 const ASM_TABS: readonly EditorTab[] = ['asm', 'gfx', 'mem', 'scripts', 'git', 'spec', 'library'];
 /** the side panel's views an Assembler project has not: its bookmarks would not stay at their lines, and the Pack view
  *  packs a re-assembled build */
-const ASM_HIDDEN_VIEWS: readonly Activity[] = ['bookmarks', 'pack'];
+const ASM_HIDDEN_VIEWS: readonly Activity[] = ['bookmarks'];
 /** an Assembler project's commands: those that are not of the analysis, the re-assembly or the listing (its own Run,
  *  Build and Debug come first) */
-const ASM_COMMANDS = new Set(['mount', 'tape', 'side-panel', 'inspector-show', 'inspector-mode', 'panel', 'library-show', 'library-add', 'save', 'save-copy', 'openproj', 'reveal', 'start-screen', 'settings', 'theme', 'undo', 'redo', 'tab-gfx', 'tab-mem', 'tab-scripts', 'script-full', 'tab-git', 'script-new', 'tab-spec']);
+const ASM_COMMANDS = new Set(['mount', 'tape', 'side-panel', 'inspector-show', 'inspector-mode', 'panel', 'library-show', 'library-add', 'save', 'save-copy', 'openproj', 'reveal', 'start-screen', 'settings', 'theme', 'undo', 'redo', 'tab-gfx', 'tab-mem', 'tab-scripts', 'script-full', 'tab-git', 'script-new', 'tab-spec', 'pack-view', 'pack-run', 'pack-save']);
 
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
 type Note = { text: string; n: number };
@@ -217,7 +218,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** an Assembler project: its Assembler tab, Graphics, Memory, Scripts and Git, none of the analysis, the re-assembly
    *  and the listing */
   const asmMode = !!asmProject;
-  const asmBuilding = useAsmLink(s => s.building);
+  const asmBuilding = useAsmLink(s => s.building), asmMain = useAsmLink(s => s.main);
   const past = useProject(s => s.past), future = useProject(s => s.future), home = useProject(s => s.home);
   const { update, replace, undo, redo, enter, setHome } = useProject.getState();
   /** analysis settings from the project, toolchain paths from the app */
@@ -3975,6 +3976,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (r.dir !== asked.dir) setPack({ ...asked, dir: r.dir }, 'Pack: folder');
       dir = r.dir;
     }
+    // an Assembler project (spec 10.7): what the Assembler builds of its main file, with KickAss.jar or 64tass
+    if (asmMode) {
+      setPackRun({ step: 'verify', since: Date.now(), prefs: asked, before: { title: `Build the main file with ${asmTool2}`, doing: `Building with ${asmTool2}…` } });
+      try { await packAsm(dir); } finally { setPackRun(null); }
+      return;
+    }
     // the Pack view shows the pack under way from here to the end, through building, verifying and packing
     setPackRun({ step: 'verify', since: Date.now(), prefs: asked });
     try { await packVerified(dir); } finally { setPackRun(null); }
@@ -3999,17 +4006,33 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const prefs = { ...(project.pack ?? packDefaults(A, project)), dir };
     const files = R.fileNames.map((n, i) => ({ name: `${n}.prg`, prg: res.kick?.compared[i]?.prg ?? res.V.results[i]?.prg ?? null }));
     if (files.some(f => !f.prg)) { toast('The build gave no PRG to pack', 'err'); return; }
+    await packPrgs(files.map(f => ({ name: f.name, prg: f.prg! })), prefs, R, res.kick?.compared[0] ? `the PRG ${asmTool} built, ${res.kick.compared[0].prgPath}` : 'the PRG the built-in assembler built', dir);
+  };
+  /** the main file of an Assembler project built by its Assembler, then packed (runPack) */
+  const asmBuilt = useRef<AsmBuilt | null>(null);
+  const packAsm = async (dir: string) => {
+    const b = await useAsmLink.getState().buildPrg();
+    if (!b) return;
+    asmBuilt.current = b;
+    const { A, R, project } = latest.current;
+    await packPrgs([{ name: b.prgPath.replace(/^.*[\\/]/, ''), prg: b.prg }], { ...(project.pack ?? packDefaults(A, project)), dir }, R, `the PRG ${asmTool2} built, ${b.prgPath}`, dir);
+  };
+  /** the built PRGs packed as `prefs` say (into `dir` too, when it is set): the result kept, the log, and what it gave */
+  const packPrgs = async (files: { name: string; prg: Uint8Array }[], prefs: PackPrefs, R: RenderResult, from: string, dir: string) => {
+    if (!kr) return;
     const packer = prefs.packer === 'exomizer' ? 'Exomizer' : 'Brokkr';
+    // (an Assembler project's log: under the Assembler's Build, after its build's)
+    const log = (text: string) => { if (asmMode) useAsmLink.getState().request('log', { text }); else setBuild(b => b && { ...b, log: `${b.log}\n\n${text}` }); };
+    const showLog = () => { if (asmMode) useAsmLink.getState().request('log'); else setUi({ bottom: 'build', panelOpen: true }); };
     setPackRun(p => p && { ...p, step: 'pack', prefs });
     try {
       setBuildBusy(`Packing with ${packer}`);
-      const r = await kr.pack({ files: files.map(f => ({ name: f.name, prg: f.prg! })), prefs });
+      const r = await kr.pack({ files, prefs });
       setPackRes({ ...r, key: packKeyOf(prefs, filesKey(R)) });
-      const from = res.kick?.compared[0] ? `the PRG ${asmTool} built, ${res.kick.compared[0].prgPath}` : 'the PRG the built-in assembler built';
       const check = !r.check ? '' : r.check.argv.length ? `\n\n> ${r.check.argv.map(shellWord).join(' ')}\n${r.check.output.trim()}\n${r.check.text}` : `\n${r.check.text}`;
       const commands = (r.commands ?? [r.argv]).map(c => `> ${c.map(shellWord).join(' ')}`).join('\n');
-      setBuild(b => b && { ...b, log: `${b.log}\n\n${commands}\n(in ${r.dir}, from ${from})\n${r.output.trim()}${check}${r.ok ? '' : `\n${r.error}`}` });
-      if (!r.ok) { setUi({ bottom: 'build', panelOpen: true }); toast(`${packer}: ${r.error}`, 'err'); return; }
+      log(`${commands}\n(in ${r.dir}, from ${from})\n${r.output.trim()}${check}${r.ok ? '' : `\n${r.error}`}`);
+      if (!r.ok) { showLog(); toast(`${packer}: ${r.error}`, 'err'); return; }
       const bad = r.check?.status === 'differs';
       // crunched data in a file for each part says how many, and that the decruncher is written with them
       const packed = r.files?.filter(f => f.kind === 'packed') ?? [];
@@ -4023,12 +4046,67 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!kr) return needDesktop();
     if (!packRes?.path) return;
     try {
-      const vs = build?.kick?.compared[0]?.vsPath ?? undefined;
+      const vs = (asmMode ? asmBuilt.current?.vsPath : build?.kick?.compared[0]?.vsPath) ?? undefined;
       const diskPath = (await diskCopy())?.path;
       const { pid } = await kr.run({ prgPath: packRes.path, labelsPath: vs, disk: diskPath });
       setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${packRes.path}` });
       toast(`VICE started with ${packRes.name}`, 'ok');
     } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /* ---- Release (an Assembler project, spec 10.7): the build as a disk image, a tape image, a cartridge or a PRG ---- */
+  const [asmRelease, setAsmRelease] = useState(false);
+  const releaseAsm = async (c: ReleaseChoice) => {
+    if (!kr || !home) return;
+    const b = await useAsmLink.getState().buildPrg();
+    if (!b) return;
+    asmBuilt.current = b;
+    let prg = b.prg, how = `built with ${asmTool2}`;
+    if (c.packed) {
+      const { A, project } = latest.current, prefs = { ...(project.pack ?? packDefaults(A, project)), dir: '' };
+      const packer = prefs.packer === 'exomizer' ? 'Exomizer' : 'Brokkr';
+      if (prefs.packer === 'exomizer' && !toolchain.exomizerPath) { toast('Set Exomizer in Settings → Toolchain first, or choose Brokkr in the Pack view', 'warn'); return; }
+      setBuildBusy(`Packing with ${packer}`);
+      try {
+        const r = await kr.pack({ files: [{ name: b.prgPath.replace(/^.*[\\/]/, ''), prg: b.prg }], prefs });
+        if (!r.ok || !r.prg) { toast(`${packer}: ${r.error ?? 'nothing packed'}`, 'err'); return; }
+        if ((r.files?.filter(f => f.kind === 'packed').length ?? 0) > 1 || r.files?.some(f => f.kind === 'decruncher')) { toast(`The Pack view packs into several files: choose a self-extracting file (SFX) there to release one packed program`, 'warn'); return; }
+        prg = r.prg; how = `packed with ${packer} (${b.prg.length - 2} bytes into ${r.prg.length - 2})`;
+      } catch (e) { toast(errorText(e), 'err'); return; } finally { setBuildBusy(null); }
+    }
+    const load = prg[0] | (prg[1] << 8), data = prg.subarray(2);
+    const stem = b.main.replace(/^.*\//, '').replace(/\.[^.]*$/, '') || 'program', out = `${b.main.includes('/') ? `${b.main.slice(0, b.main.lastIndexOf('/'))}/` : ''}out`;
+    let path: string, bytes: Uint8Array;
+    try {
+      switch (c.kind) {
+        case 'd64': path = `${out}/${stem}.d64`; bytes = makeD64({ name: c.disk, id: c.id, files: [{ name: c.name, data: prg }] }); break;
+        case 'tap': path = `${out}/${stem}.tap`; bytes = makeTap({ files: [{ name: c.name, data, load, basic: load === 0x0801 }], endOfTape: true }); break;
+        case 'crt': path = `${out}/${stem}.crt`; bytes = programCartridge(load, data, { name: c.name }).crt.image(); break;
+        default: path = `${out}/${stem}${c.packed ? '-packed' : ''}.prg`; bytes = prg;
+      }
+      await kr.assemblerWrite({ dir: home.dir, path, bytes });
+    } catch (e) { toast(`Nothing was made: ${errorText(e)}`, 'err'); return; }
+    setAsmRelease(false);
+    const full = `${home.dir.replace(/[\\/]+$/, '')}\\${path.replace(/\//g, '\\')}`;
+    toast(`Made ${path} (${bytes.length} bytes) of ${stem}.prg, ${how}`, 'ok');
+    if (!c.run) return;
+    try {
+      const r = await kr.run({ prgPath: full, ...(b.vsPath ? { labelsPath: b.vsPath } : {}), ...(c.kind === 'crt' ? { cart: true } : {}) });
+      toast(`VICE started ${path}${r.via === 'cart' ? ' as a cartridge' : ''}`, 'ok');
+    } catch (e) { toast(`VICE did not start: ${errorText(e)} (Settings → Toolchain)`, 'err'); }
+  };
+  /** build.bat and build.sh beside the main file: they build it into out\ and start it in VICE, as Run does */
+  const asmScripts = async () => {
+    if (!kr || !home || !stored.asm) return;
+    const at = useAsmLink.getState().main ?? stored.asm.main ?? 'main.asm', dir = at.includes('/') ? `${at.slice(0, at.lastIndexOf('/'))}/` : '', stem = at.replace(/^.*\//, '').replace(/\.[^.]*$/, '');
+    const scripts = buildScripts({ ...S, assembler: stored.asm.lang === '64tass' ? '64tass' : 'kick' }, [stem]);
+    const made: string[] = [], kept: string[] = [];
+    for (const [name, text] of Object.entries(scripts)) {
+      const path = `${dir}${name}`;
+      const there = await kr.assemblerRead({ dir: home.dir, path }).then(() => true, () => false);
+      if (there) { kept.push(path); continue; }
+      await kr.assemblerWrite({ dir: home.dir, path, text }).then(() => made.push(path), (e: unknown) => toast(`${path}: ${errorText(e)}`, 'err'));
+    }
+    toast(made.length ? `Wrote ${made.join(' and ')}: ${made.length === 1 ? 'it builds' : 'they build'} ${stem}.asm into out and ${made.length === 1 ? 'starts' : 'start'} it in VICE${kept.length ? ` (${kept.join(' and ')} ${kept.length === 1 ? 'was' : 'were'} there already and stayed as ${kept.length === 1 ? 'it was' : 'they were'})` : ''}` : `${kept.join(' and ')} are there already: they stay as they are (delete them to have new ones written)`, made.length ? 'ok' : 'info');
   };
   /** the Graphics tab's selection as a file, through a save dialog */
   const saveGraphics = async (name: string, bytes: Uint8Array) => {
@@ -4338,6 +4416,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'build', label: `Run: build the main file with ${asmTool2} and start it in VICE`, key: 'F5', run: () => asmAsk('run') },
     { id: 'asm-build', label: `Build the main file with ${asmTool2}, without starting it`, run: () => asmAsk('build') },
     { id: 'asm-debug', label: 'Debug the program a step at a time (the Assembler tab: Runs in memory only or the whole C64)', run: () => { setUi({ tab: 'asm' }); asmAsk('debug'); } },
+    { id: 'asm-pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'}: build the main file with ${asmTool2} and pack it as the Pack view says`, run: () => { setUi({ activity: 'pack', sidePanel: true }); void runPack(); } },
+    { id: 'asm-release', label: 'Release: make the build into a disk image, a tape image, a cartridge or a PRG, packed or not, and start it in VICE…', run: () => setAsmRelease(true) },
+    { id: 'asm-scripts', label: 'Write build.bat and build.sh beside the main file (they build it and start it in VICE outside Mimir)', run: () => void asmScripts() },
     { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
     ...allCommands.filter(c => ASM_COMMANDS.has(c.id) || c.id.startsWith('script-run-')),
   ] : allCommands;
@@ -4981,9 +5062,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); },
             onPreview: (a, end) => { navigate(a, { center: true, listing: true, noHistory: true, ...(end != null ? { end } : {}) }); showBmArea(a, end); }, onArea: showBmArea,
           } : null}
-          pack={{ A, R, project, cursor, sel, prefs: packPrefs, exomizer: toolchain.exomizerPath, desktop: !!kr, busy: buildBusy, packing: packRun, result: packRes, current: packKey,
+          pack={{ A, R, project, cursor, sel, prefs: packPrefs, exomizer: toolchain.exomizerPath, desktop: !!kr, busy: buildBusy, packing: packRun, result: packRes, current: packKey, asm: asmMode ? asmTool2 : null,
             onChange: setPack, onPack: () => void runPack(), onPickDir: () => void pickPackDir(), onRun: () => void runPacked(), onSave: () => void savePacked(), onSaveFile: f => void savePacked(f), onSettings: () => setModal('settings'),
-            onLog: () => setUi({ bottom: 'build', panelOpen: true }), onNavigate: a => { nav(a); setDrawer(null); } }} />
+            onLog: () => { if (asmMode) { setUi({ tab: 'asm' }); useAsmLink.getState().request('log'); } else setUi({ bottom: 'build', panelOpen: true }); }, onNavigate: a => { nav(a); setDrawer(null); } }} />
       </ErrorBoundary></aside>
       <button className="icon-btn side-collapse" onClick={toggleSide} aria-label="Collapse side panel" title="Collapse the side panel: the listing gets its room (Ctrl+Shift+B). The view's button in the activity bar brings it back"><Icon name="side-hide" size={16} /></button>
       <Splitter dir="v" className="side-split" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, side: Math.max(200, Math.min(480, useUi.getState().sizes.side + d)) } })} />
@@ -5038,7 +5119,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         </div>
         <div className="editor">
           <ErrorBoundary>
-            {asmMode && home && stored.asm && <AssemblerTab key={home.dir} dir={home.dir} name={home.name} info={stored.asm} active={tab === 'asm'} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
+            {asmMode && home && stored.asm && <AssemblerTab key={home.dir} dir={home.dir} name={home.name} info={stored.asm} active={tab === 'asm'} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })} onRelease={() => setAsmRelease(true)}
               onInfo={(label, c) => update(label, d => { if (d.asm) Object.assign(d.asm, c); })} />}
             {tab === 'listing' && !project.files.length && <div className="empty-project">
               <Icon name={home ? 'folder' : 'doc'} size={30} />
@@ -5172,7 +5253,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             : <button className="icon-btn insp-mode" onClick={() => setInspector('auto')} aria-label="Fold in the inspector" title="Fold the inspector into a strip at the right edge: the listing gets its room, and a click on the strip opens it when you need it (Settings → General)"><Icon name="insp-hide" size={16} /></button>}
         </div>
         <ErrorBoundary>
-        <Inspector source={asmMode ? { lineOf: a => { const c = useAsmLink.getState().check, l = c ? asmLineAt(c, a) : null; return l ? `${l.file} line ${l.line}` : null; }, onShow: a => navigate(a, { listing: true }) } : null} A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
+        <Inspector source={asmMode ? { lineOf: a => { const c = useAsmLink.getState().check, l = c ? asmLineAt(c, a) : null; return l ? `${l.file} line ${l.line}` : null; }, onShow: a => navigate(a, { listing: true }), onDraw: changes => useAsmLink.getState().request('write', { changes }) } : null} A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
           onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={openJunkRange} onFormat={setFormat} onSprites={setSprites} onSpriteColors={setSpriteColors} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
@@ -5212,6 +5293,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         fill={t => renderTemplate(templateText(t, S, !!project.cart), S, { names: R.fileNames, cart: cartBuild({ ...project, settings: S }), entry: sfxEntry(project) })}
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
+      {asmRelease && asmMode && <AsmReleaseModal main={asmMain ?? stored.asm?.main ?? 'main.asm'} packer={packPrefs.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} busy={buildBusy}
+        onRelease={c => void releaseAsm(c)} onScripts={() => void asmScripts()} onClose={() => setAsmRelease(false)} />}
       {asmContinue && <ContinueInAssemblerModal info={asmContinue} onCreate={continueInAssembler} onClose={() => setAsmContinue(null)} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {valuesScript && <RunValuesModal script={valuesScript} busy={filesBusy} onRun={(text, rows, then) => void runWithValues(text, rows, then)} onStop={stopScript} onClose={() => setValuesRun(null)} />}

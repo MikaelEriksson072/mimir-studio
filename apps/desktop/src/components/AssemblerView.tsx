@@ -10,7 +10,7 @@
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { AsmC64, asmBlockMarks, asmC64Text, asmProgram, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
+import { AsmC64, asmBlockMarks, asmC64Text, asmProgram, asmWriteBytes, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
@@ -18,7 +18,7 @@ import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx, errorText, fmtBytes } from '../lib/util';
 import { NO_TABS, useAssembler, type AsmMachineKind, type AsmTabs } from '../store/assembler';
-import { useAsmLink } from '../store/asmlink';
+import { useAsmLink, type AsmBuilt } from '../store/asmlink';
 import { runScreenSize, useScripts } from '../store/scripts';
 import { useUi } from '../store/ui';
 import { Splitter } from './Splitter';
@@ -212,6 +212,8 @@ export interface AssemblerTabProps {
   active: boolean;
   toast: ToastFn;
   onMenu: OnMenu;
+  /** Release…: the window's dialog of what the build is made into */
+  onRelease: () => void;
 }
 
 /** The Assembler tab of an Assembler project: its folder opened (listed, watched), then the files and the code. */
@@ -233,7 +235,7 @@ interface WorkspaceProps extends AssemblerTabProps {
   onFolder: (f: AsmFolder) => void;
 }
 
-function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu }: WorkspaceProps) {
+function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease }: WorkspaceProps) {
   const dir = folder.dir;
   const ui = useAssembler();
   const activeRef = useRef(active); activeRef.current = active;
@@ -302,7 +304,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const writeAll = () => Promise.all(Object.keys(timers.current).map(write));
   // the window or the project closing: what is not written yet is written first
   const flushRef = useRef(writeAll); flushRef.current = writeAll;
-  useEffect(() => { useAsmLink.getState().set({ flush: () => flushRef.current() }); }, []);
+  useEffect(() => { useAsmLink.getState().set({ flush: () => flushRef.current(), buildPrg: () => buildRef.current() }); }, []);
+  const buildRef = useRef<() => Promise<AsmBuilt | null>>(() => Promise.resolve(null));
   const schedule = (path: string) => {
     clearTimeout(timers.current[path]);
     timers.current[path] = setTimeout(() => void write(path), WRITE_MS);
@@ -698,7 +701,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const tool = lang === '64tass' ? '64tass' : 'KickAss.jar';
   const building = useRef(false);
   /** the main file built (what is not written yet is first): its PRG and labels, or null (said why) */
-  const doBuild = async (forRun: boolean): Promise<{ prgPath: string; vsPath: string | null } | null> => {
+  const doBuild = async (forRun: boolean): Promise<{ prgPath: string; vsPath: string | null; prg: Uint8Array; main: string } | null> => {
     if (!kr || building.current) return null;
     if (!main) { toast('There is no source to build: + makes one', 'warn'); return null; }
     if (!/\.asm$/i.test(main)) { toast(`${main} is the main file, but ${tool} builds a .asm file here: rename it, or make another the main file`, 'warn'); return null; }
@@ -724,9 +727,10 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         return null;
       }
       if (!forRun) toast(`Built ${baseName(o.prgPath)}: ${fmtBytes(prg!.size)} at $${h4(prg!.load)}`, 'ok');
-      return { prgPath: o.prgPath, vsPath: o.vsPath };
+      return { prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg!, main };
     } finally { building.current = false; }
   };
+  buildRef.current = () => doBuild(true);
   const run = async () => {
     if (dbgRef.current) { contDbg(); return; }
     const b = await doBuild(true);
@@ -929,9 +933,44 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => {
     if (!ask || ask.n === seenAsk.current.ask) return;
     seenAsk.current.ask = ask.n;
-    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else void startDebug();
+    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else if (ask.what === 'write') { if (ask.changes) void writeBytes(ask.changes); } else if (ask.what === 'log') { if (ask.text) setBuild(b => (b ? { ...b, log: `${b.log}\n\n${ask.text}` } : b)); ui.set({ outTab: 'build', outFolded: false }); } else void startDebug();
   }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
+  useEffect(() => { useAsmLink.getState().set({ main }); }, [main]);
+
+  /* ---- bytes drawn in the window (the enlarged sprite or character) written into the lines that write them ---- */
+  const writeBytes = async (changes: { addr: Addr; value: number }[]) => {
+    const c = check ?? useAsmLink.getState().check;
+    if (!c) { toast('The sources do not assemble now: the bytes drawn were not written', 'warn'); return; }
+    if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
+    // (the texts as the editor has them now)
+    const now: Record<string, string> = { ...textsRef.current };
+    for (const [p, m] of Object.entries(models.current)) if (!m.isDisposed()) now[p] = m.getValue();
+    const w = asmWriteBytes(c, { ...now, ...bins }, lang, changes);
+    for (const [p, text] of Object.entries(w.texts)) {
+      const m = models.current[p], monaco = monacoRef.current;
+      if (m && !m.isDisposed() && monaco) {
+        // only the lines that changed, one step to undo in the file
+        const want = text.split('\n'), ops: Monaco.editor.IIdentifiedSingleEditOperation[] = [];
+        for (const { file, line } of w.lines) if (file === p) {
+          const t = (want[line - 1] ?? '').replace(/\r$/, '');
+          if (line <= m.getLineCount() && m.getLineContent(line) !== t) ops.push({ range: new monaco.Range(line, 1, line, m.getLineMaxColumn(line)), text: t });
+        }
+        applying.current = true;
+        m.pushStackElement(); m.pushEditOperations([], ops, () => null); m.pushStackElement();
+        applying.current = false;
+        setTexts(t => ({ ...t, [p]: m.getValue() }));
+      } else setTexts(t => ({ ...t, [p]: text }));
+      schedule(p);
+    }
+    for (const [p, bytes] of Object.entries(w.bins)) {
+      try { const r = await kr!.assemblerWrite({ dir, path: p, bytes }); binTimes.current[p] = r.mtime; setBins(b => ({ ...b, [p]: bytes })); }
+      catch (e) { toast(`${p} was not written: ${errorText(e)}`, 'err'); }
+    }
+    const where = [...new Set(w.lines.map(l => `${l.file} line ${l.line}`))];
+    if (w.problems.length) toast(`${w.problems[0]}${w.problems.length > 1 ? ` (and ${w.problems.length - 1} more)` : ''}`, 'warn');
+    else if (where.length) toast(`Drawn into ${where.slice(0, 3).join(', ')}${where.length > 3 ? ` and ${where.length - 3} more` : ''}${Object.keys(w.bins).length ? ` (${Object.keys(w.bins).join(', ')})` : ''}`, 'ok');
+  };
 
   /* ---- Insert block: sprites, a charset, a bitmap, a screen, music or data, in the source where the caret is ---- */
   const [blockAsk, setBlockAsk] = useState<{ kind?: AsmBlockKind; lib?: LibraryRef | null } | null>(null);
@@ -1078,6 +1117,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
               title={main ? `Build ${main} with ${tool} and start it in VICE (Ctrl+Enter or F5); what is not written yet is written first` : 'There is no source to run'}>
               <Icon name="play" />{build?.running ? 'Building…' : 'Run'}<kbd>Ctrl+Enter</kbd></button>
             <button className="btn asm-build" disabled={!main || !!build?.running} onClick={() => void doBuild(false)} title={main ? `Build ${main} with ${tool}, without starting it (Ctrl+Shift+B): the PRG goes in out\\ beside it` : 'There is no source to build'}>Build</button>
+            <button className="btn asm-release" disabled={!main || !!build?.running} onClick={onRelease} title={main ? `Release: build ${main} and make a disk image (.d64), a tape image (.tap), a cartridge (.crt) or a PRG of it, packed or not, in out\\, and start it in VICE; or write build.bat and build.sh` : 'There is no source to build'}>Release…</button>
             <button className="btn scr-debug-btn" disabled={!check?.ok} onClick={() => void startDebug()}
               title={!check?.ok ? 'The program must assemble in Mimir before it can be debugged: see the problems'
                 : machineKind === 'c64' ? 'Debug in the whole C64: Sindri\'s C64 with VICE\'s ROMs, the VIC, the CIAs and their interrupts. The program is loaded as LOAD does, started with RUN (or SYS) typed at READY and stopped before its first instruction; then an instruction at a time (F8), over a JSR (F6), or on in the C64\'s own time with the screen live (Ctrl+Enter) to a breakpoint (click left of a line number).'

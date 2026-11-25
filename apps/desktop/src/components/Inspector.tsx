@@ -19,7 +19,7 @@ interface InspectorProps {
   A: AnalysisResult; R: RenderResult; project: Project; cursor: Addr | null; sel: Sel | null; colors: CanvasColors;
   /** an Assembler project (spec 10.7): the block is what the sources make, shown and not changed here, with its line in
    *  the sources (`lineOf`, `onShow` goes there); null: another project */
-  source?: { lineOf: (a: Addr) => string | null; onShow: (a: Addr) => void } | null;
+  source?: { lineOf: (a: Addr) => string | null; onShow: (a: Addr) => void; onDraw?: (changes: { addr: Addr; value: number }[]) => void } | null;
   heatMode: HeatMode; setHeatMode: (m: HeatMode) => void;
   onNavigate: (a: Addr) => void; onSelect: (s: Addr, e: Addr) => void;
   onMark: (id: string, range: { start: Addr; end: Addr }) => void; onRename: (a: Addr, name: string) => void;
@@ -243,7 +243,7 @@ export function Inspector({ source, A, R, project, cursor, sel, colors, heatMode
                 title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : blk.type === 'bitmap' ? 'bitmap as a picture' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
               {zoomKind && zoomed != null ? <GfxZoom kind={zoomKind} mem={B.A.mem} start={zStart} addr={zoomed} count={nZoom} mc={mcShown} focus={zoomClicks}
                 colors={zoomKind === 'sprite' ? spritePal : undefined} paint={zoomKind === 'sprite' && spriteBlock && onSpriteColors ? { colors: spriteColors, own: !!ownColors, onChange: paintSprites } : undefined}
-                where={zoomWhere} onPick={pickZoom} onClose={() => setZoom(null)} onGo={zoomGo} />
+                where={zoomWhere} onPick={pickZoom} onClose={() => setZoom(null)} onGo={zoomGo} onDraw={source?.onDraw} />
                 : zoomKind && <p className="muted small">Click a {zoomKind === 'sprite' ? 'sprite' : 'character'} to see it enlarged.</p>}
             </>
           ) : music ? (

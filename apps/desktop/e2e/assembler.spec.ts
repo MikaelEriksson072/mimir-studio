@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { stubDialogs } from './helpers';
+import { openSection, stubDialogs, toast } from './helpers';
 
 test.use({ start: 'none' });
 
@@ -561,4 +561,127 @@ test.describe('from the re-assembler', () => {
     await shot(page, '17-continued-memory');
     await closeProject(page, 'raster-demo-asm');
   });
+});
+
+test('Release and Pack in an Assembler project: the build as a disk, a tape, a cartridge or a packed PRG, started in VICE; build scripts; the Pack view packs what the Assembler builds', async ({ workDir: work, app, page }) => {
+  const kickJar = (await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<{ kickJar: string }> } }).kr.getSettings())).kickJar;
+  test.skip(!kickJar || !existsSync(kickJar), 'KickAss.jar is not installed here');
+  const dir = join(work, 'rel');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\nstart:\n  inc $d020\n  ldx #0\n!:\n  lda #1\n  sta $0400,x\n  inx\n  bne !-\n  jmp start\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  // (a Windows program that ends at once stands in for VICE)
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  const dialog = page.getByRole('dialog', { name: 'Release' });
+  const out = (f: string) => join(dir, 'out', f);
+
+  // a disk image with the program as its first file
+  await page.getByRole('button', { name: 'Release…' }).click();
+  await expect(dialog.getByRole('radio', { name: /Disk image/ })).toBeChecked();
+  await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('MAIN');
+  await dialog.getByLabel('Disk name').fill('my release');
+  await expect(dialog).toContainText('out/main.d64');
+  await shot(page, '18-release');
+  await dialog.getByRole('button', { name: 'Make', exact: true }).click();
+  await expect(dialog).toHaveCount(0, { timeout: 60_000 });
+  const prg = readFileSync(out('main.prg'));
+  const d64 = readFileSync(out('main.d64'));
+  expect(d64.length).toBe(174848);
+  expect(d64.includes(Buffer.from('MY RELEASE'))).toBe(true);
+  expect(d64.includes(Buffer.from([...Buffer.from('MAIN'), 0xa0, 0xa0]))).toBe(true);
+  expect(d64.includes(prg)).toBe(true);
+
+  // a tape image, started in VICE
+  await page.getByRole('button', { name: 'Release…' }).click();
+  await dialog.getByRole('radio', { name: /Tape image/ }).check();
+  await dialog.getByRole('button', { name: 'Make and run in VICE' }).click();
+  await expect(page.locator('.toast-msg', { hasText: 'VICE started out/main.tap' })).toBeVisible({ timeout: 60_000 });
+  expect(readFileSync(out('main.tap')).subarray(0, 12).toString('latin1')).toBe('C64-TAPE-RAW');
+
+  // a cartridge
+  await page.getByRole('button', { name: 'Release…' }).click();
+  await dialog.getByRole('radio', { name: /Cartridge/ }).check();
+  await dialog.getByRole('button', { name: 'Make', exact: true }).click();
+  await expect(dialog).toHaveCount(0, { timeout: 60_000 });
+  expect(readFileSync(out('main.crt')).subarray(0, 16).toString('latin1')).toBe('C64 CARTRIDGE   ');
+
+  // the PRG packed with Brokkr, as the Pack view is set
+  await page.getByRole('button', { name: 'Release…' }).click();
+  await dialog.getByRole('radio', { name: /Program/ }).check();
+  await dialog.getByRole('checkbox', { name: /Packed with Brokkr/ }).check();
+  await expect(dialog).toContainText('out/main-packed.prg');
+  await dialog.getByRole('button', { name: 'Make', exact: true }).click();
+  await expect(dialog).toHaveCount(0, { timeout: 120_000 });
+  const packed = readFileSync(out('main-packed.prg'));
+  expect([packed[0], packed[1]]).toEqual([0x01, 0x08]);
+  expect(packed.equals(prg)).toBe(false);
+
+  // build.bat and build.sh beside the main file; those there stay
+  await page.getByRole('button', { name: 'Release…' }).click();
+  await dialog.getByRole('button', { name: 'Build scripts' }).click();
+  await expect.poll(() => existsSync(join(dir, 'build.bat')), { timeout: 10_000 }).toBe(true);
+  expect(readFileSync(join(dir, 'build.bat'), 'utf8')).toContain('main.asm -odir out');
+  await expect.poll(() => existsSync(join(dir, 'build.sh')), { timeout: 10_000 }).toBe(true);
+  await page.keyboard.press('Escape');
+
+  // the Pack view packs what the Assembler builds, its log under the Assembler's Build
+  await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
+  const view = page.locator('.pack-view');
+  await openSection(page, 'Command');
+  await expect(view).toContainText('Pack builds the main file with KickAss.jar first, as Run does.');
+  await view.getByRole('button', { name: 'Pack', exact: true }).click();
+  await expect(view.getByRole('status', { name: 'Packed file' })).toContainText('main', { timeout: 120_000 });
+  await shot(page, '19-asm-pack');
+  await page.locator('.main-tabs').getByRole('tab', { name: 'Assembler' }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Build' })).toContainText('brokkr', { timeout: 10_000 });
+  await closeProject(page, 'rel');
+});
+
+test('drawing in the enlarged sprite of an Assembler project changes the .byte lines that write it', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'draw');
+  mkdirSync(dir);
+  const rows = Array.from({ length: 21 }, () => '        .byte %00000000, %00000000, %00000000');
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:  rts', '        * = $2000 "sprite"', '// @block sprite hires', 'ship:', ...rows, '        .byte 0', '// @end', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const disk = () => readFileSync(join(dir, 'main.asm'), 'utf8').split('\n');
+
+  // the sprite in the inspector, by its byte in Memory
+  await page.locator('.main-tabs').getByRole('tab', { name: 'Memory' }).click();
+  await page.getByLabel('Monitor command').fill('m 2000');
+  await page.getByLabel('Monitor command').press('Enter');
+  await page.getByLabel('Memory dump').locator('[data-a="8192"].mon-b').click({ timeout: 15_000 });
+  const insp = page.locator('.inspector');
+  const canvas = insp.getByLabel('sprite preview');
+  await expect(canvas).toBeVisible({ timeout: 15_000 });
+  await canvas.click();
+  const zoom = insp.locator('.sprite-zoom');
+  await expect(zoom).toBeVisible();
+  await expect(zoom.getByRole('group', { name: 'Draw' })).toContainText('The lines that write the bytes change in the sources.');
+  const px = (x: number, y: number) => zoom.locator(`.cz-grid i[data-x="${x}"][data-y="${y}"]`);
+
+  // a click sets a pixel: row 0's first byte
+  await px(0, 0).click();
+  await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %10000000, %00000000, %00000000');
+  await expect(toast(page, 'Drawn into main.asm line 6')).toBeVisible();
+  // a drag sets a row of them: row 1's middle byte
+  const box = async (x: number, y: number) => { const b = (await px(x, y).boundingBox())!; return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+  const from = await box(8, 1), to = await box(15, 1);
+  await page.mouse.move(from.x, from.y); await page.mouse.down();
+  for (let x = 9; x <= 15; x++) { const p = await box(x, 1); await page.mouse.move(p.x, p.y); }
+  await page.mouse.move(to.x, to.y); await page.mouse.up();
+  await expect.poll(() => disk()[6], { timeout: 5000 }).toBe('        .byte %00000000, %11111111, %00000000');
+  await shot(page, '20-drawn');
+  // the right button clears
+  await px(0, 0).click({ button: 'right' });
+  await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %00000000, %00000000, %00000000');
+  // the program has the bytes drawn
+  await expect(zoom.locator('.cz-bytes > div').nth(1)).toContainText('2003 00 ff 00', { timeout: 10_000 });
+  await closeProject(page, 'draw');
 });

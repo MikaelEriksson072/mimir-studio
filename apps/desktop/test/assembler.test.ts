@@ -92,7 +92,8 @@ describe('a block\'s file (Insert block)', () => {
       expect(asmWriteSchema.safeParse({ dir, path: 'a.asm', text: 'x' }).success).toBe(true);
       expect(asmWriteSchema.safeParse({ dir, path: 'a.bin', text: 'x', bytes: new Uint8Array(1) }).success).toBe(false);
       expect(asmWriteSchema.safeParse({ dir, path: 'a.bin' }).success).toBe(false);
-      expect(asmWriteSchema.safeParse({ dir, path: 'a.bin', bytes: new Uint8Array(0x10200) }).success).toBe(false);
+      expect(asmWriteSchema.safeParse({ dir, path: 'out/a.d64', bytes: new Uint8Array(174848) }).success).toBe(true);
+      expect(asmWriteSchema.safeParse({ dir, path: 'a.bin', bytes: new Uint8Array(16 * 1024 * 1024 + 1) }).success).toBe(false);
       await writeInFolder(dir, 'sprites/a.spr', Uint8Array.from([1, 2, 255]));
       expect([...readFileSync(join(dir, 'sprites', 'a.spr'))]).toEqual([1, 2, 255]);
       expect(asmPickDataSchema.safeParse({ dir, kind: 'music' }).success).toBe(true);

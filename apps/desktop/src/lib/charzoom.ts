@@ -94,3 +94,13 @@ export const charBits = (b: number, mc: boolean): string => {
   const s = (b & 0xff).toString(2).padStart(8, '0');
   return mc ? s.replace(/(..)(?!$)/g, '$1 ') : s;
 };
+
+/** The byte a pixel drawn in the enlarged sprite or character changes (an Assembler project, spec 10.7): the pixel at
+ *  (x, y) of the one at `addr` (a sprite's 24 or 12 a row, a character's 8 or 4) given the colour index `v` (hires 0 or
+ *  3, as the pixels are drawn: a set bit is 3; multicolour the bit pair 0-3), from the byte as `get` has it now. */
+export function drawPixel(get: (a: number) => number, kind: 'sprite' | 'chars', addr: number, mc: boolean, x: number, y: number, v: number): { addr: number; value: number } {
+  const per = mc ? 4 : 8, a = (addr + (kind === 'sprite' ? y * 3 + Math.floor(x / per) : y)) & 0xffff, i = x % per;
+  const shift = mc ? 6 - 2 * i : 7 - i, mask = mc ? 3 : 1, bits = mc ? v & 3 : v ? 1 : 0;
+  const old = get(a) & 0xff;
+  return { addr: a, value: (old & ~(mask << shift) & 0xff) | (bits << shift) };
+}

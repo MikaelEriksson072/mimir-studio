@@ -165,6 +165,7 @@ mimir-studio/
 │     │              CommandPalette, Settings, ContextMenu}.tsx
 │     ├─ components/{AssemblerView, AsmTree, AsmOutput}.tsx   Assemblern: filerna bredvid koden, Run, Debug (10.7)
 │     ├─ components/AsmBlockDialog.tsx   Insert block: sprites, charset, bitmap, skärm, musik, data i källan (10.7)
+│     ├─ components/AsmRelease.tsx       Release: bygget som D64, TAP, CRT eller PRG, packat eller inte (10.7)
 │     ├─ store/asmlink.ts          Assembler-projektet i projektfönstret: programmet till vyerna, visa en rad, Run (10.7)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
 │     └─ styles/{tokens.css, tailwind.css}
@@ -179,6 +180,7 @@ mimir-studio/
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
 │  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
 │  ├─ src/asm-blocks.ts            Assemblerns block: markeringarna i källan, ett nytt blocks rader (Insert block) (10.7)
+│  ├─ src/asm-write.ts             Assemblern: ändrade bytes tillbaka i raderna som skriver dem (det man ritar) (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3658,7 +3660,7 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   Assemblerns *Run*, *Build* och *Debug* och de kommandon som inte hör till analysen eller listningen. En PRG, en
   snapshot eller en cartridge som öppnas eller släpps tas inte in (det säger ett meddelande); disketter och band
   monteras. Ett skripts ändringar av programmet görs inte, de räknas bara ut som i safe mode, men det skriptet ber om
-  i övrigt (filer, disketter, band, biblioteket) görs. Sidopanelen saknar Bookmarks och Pack; panelen under har bara
+  i övrigt (filer, disketter, band, biblioteket) görs. Sidopanelen saknar Bookmarks; panelen under har bara
   *Messages* (och bandet).
 - **Programmet i projektets vyer** är det kontrollen assemblerar (`asmProgram`): bytes som bygget skriver dem (från den
   lägsta till den högsta, luckorna nollor, en fil `<huvudfil>.prg`), vad varje byte är, källans etiketter och var en
@@ -3746,6 +3748,26 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
   (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
   markeringar och i listan, och editorn öppnar det första felet.
+- **Rita i den förstorade spriten eller tecknet** (2026-11-25). I ett Assembler-projekt ritar man i inspektorns
+  förstorade sprite eller tecken (14.1): ett klick eller ett drag sätter pixlarna (hires: den färg den första pixeln inte
+  hade; flerfärg: pennan, en av de fyra bitparen, som väljs över pixlarna; höger knapp: bakgrunden), och när knappen
+  släpps skrivs de ändrade bytes in i raderna som skriver dem (`asmWriteBytes` i `asm-write.ts`). En `.byte`-rad får det
+  nya värdet där det gamla stod, skrivet som det var (binärt, hex i samma skiftläge, decimalt, lika många siffror); en
+  fil som en rad läser (`.import binary`, `.binary`) får det på den offset raden läser från, och skrivs. Ändringen i en
+  källa är ett steg att ångra i den filen; pixlarna visas som de ritats tills programmet har dem. En byte som skrivs av
+  något annat (ett uttryck, `.fill`, en loop eller ett makro som skriver raden flera gånger, LoadSid) ändras inte, och
+  ett meddelande säger varför och på vilken rad.
+- **Pack och Release** (2026-11-25). Pack-vyn (13.8) finns i ett Assembler-projekt: *Pack* bygger huvudfilen med
+  KickAss.jar eller 64tass som Run gör (`buildPrg` i `store/asmlink.ts`) och packar PRG:n med Brokkr eller Exomizer som
+  vyn är inställd; loggen hamnar under Assemblerns *Build*, *Run in VICE* startar den packade filen med byggets
+  etiketter. **Release…** (bredvid Build, och paletten) bygger huvudfilen och gör den till det som väljs, i `out`
+  bredvid huvudfilen: en **diskavbild** (`.d64`, programmet som diskens första fil, med diskens namn och ID,
+  `makeD64`), en **bandavbild** (`.tap`, KERNAL:s format som SAVE skriver det, typ 1 när programmet laddas vid $0801,
+  `makeTap`), en **cartridge** (`.crt`, Magic Desk, `programCartridge`: den kopierar programmet dit det laddas, stänger
+  av sig och startar det) eller **PRG:n** ensam; *Packed with …* packar programmet först som Pack-vyn är inställd (en
+  självuppackande fil; vyns val att packa i flera filer säger att det inte går). *Make and run in VICE* startar det gjorda
+  (VICE autostartar disken och bandet, en cartridge sätts i). *Build scripts* skriver `build.bat` och `build.sh` bredvid
+  huvudfilen (`buildScripts`: de bygger den i `out` och startar den i VICE utanför Mimir); de som redan finns lämnas.
 - **Debug** (F8) kör programmet i Mimirs 6510 en instruktion i taget (`asmMachine`: skriptens maskin med programmet som
   koden och ett enda minne, så att kod som programmet kopierar någon annanstans och hoppar till ser programmets bytes),
   startat på samma sätt som SYS. Step, Over (F6), Out (Shift+F6), Continue (Ctrl+Enter), Pause och Stop som i
@@ -4459,7 +4481,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `assembler:close` | renderer → main | `{ dir }`: mappen bevakas inte längre |
 | `assembler:list` | renderer → main | `{ dir }` → mappens filer och mappar, med storlek och ändringstid |
 | `assembler:read` | renderer → main | `{ dir, path, as? }` → `{ text }` eller `{ bytes }`, `size`, `mtime`: en fil, bara med sin väg i mappen |
-| `assembler:write` | renderer → main | `{ dir, path, text }` eller `{ dir, path, bytes }` → `{ mtime }`: en källfil, eller en datafil för ett block, skrivs (dess mapp görs om den saknas) |
+| `assembler:write` | renderer → main | `{ dir, path, text }` eller `{ dir, path, bytes }` → `{ mtime }`: en källfil, eller en datafil för ett block eller Releases avbild (högst 16 MB), skrivs (dess mapp görs om den saknas) |
 | `assembler:change` | renderer → main | `{ dir, op, path, to?, text? }` → mappens innehåll: en ny fil eller mapp, ett namnbyte (eller en flytt i mappen), eller till papperskorgen |
 | `assembler:reveal` | renderer → main | `{ dir, path? }`: filhanteraren vid filen eller mappen |
 | `assembler:pickData` | renderer → main | `{ dir, kind }` → `{ name, path, inside, bytes }` eller `null`: en fil för ett block (Insert block) väljs i en dialog och läses; `inside` är dess väg i mappen när den ligger där |

@@ -2159,6 +2159,23 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-block input.bad { border-color: var(--err, #e5534b); }
 .asm-block .ab-preview pre { margin: 4px 0 0; padding: 8px 10px; background: var(--editor); border: 1px solid var(--line); border-radius: 6px; max-height: 220px; overflow: auto; white-space: pre; }
 .asm-block .ab-sid { margin: 0; }
+/* the enlarged sprite or character drawn on (an Assembler project) */
+.cz-grid.draw { cursor: crosshair; user-select: none; }
+.cz-draw { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.cz-draw .cz-pen { width: 18px; height: 18px; border-radius: 3px; border: 1px solid var(--line-2); padding: 0; cursor: pointer; }
+.cz-draw .cz-pen.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Release (the Assembler): what the build is made into */
+.asm-release.modal { width: min(620px, 94vw); }
+.asm-release .modal-body { display: flex; flex-direction: column; gap: 10px; }
+.asm-release .rel-kinds { display: flex; flex-direction: column; gap: 6px; }
+.asm-release .rel-kind { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.asm-release .rel-kind.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.asm-release .rel-kind input { margin-top: 3px; }
+.asm-release .rel-kind span { display: flex; flex-direction: column; gap: 2px; }
+.asm-release .rel-disk { display: flex; gap: 12px; }
+.asm-release .rel-disk .field { flex: 1; margin: 0; }
+.asm-release .rel-disk .rel-id { flex: 0 0 90px; }
+.asm-release .field { margin: 0; }
 .insp-asm .kv dd .linkish { font-family: var(--mono, ui-monospace, monospace); }
 .asm-home-lead { margin: 0; color: var(--fg-2); font-size: 12.5px; line-height: 1.5; }
 .asm-ws { flex: 1; min-height: 0; }

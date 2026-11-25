@@ -6,7 +6,7 @@ import { C64, cx, hexRgb } from '../lib/util';
 import { C64_NAMES } from '../lib/palette';
 import type { GfxColors } from '../lib/gfxview';
 import { Icon } from '../lib/icons';
-import { CHAR_COLS, CHAR_LAST, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteNumber, spritePixels, spriteStep } from '../lib/charzoom';
+import { CHAR_COLS, CHAR_LAST, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, drawPixel, SPRITE_LAST, spriteCols, spriteCount, spriteNumber, spritePixels, spriteStep } from '../lib/charzoom';
 
 export type GfxMode = 'sprite' | 'chars' | 'bitmap';
 
@@ -71,11 +71,15 @@ export function GfxPreview({ mem, start, end, mode, mc, colors, pick, onPick }: 
  *  is on; the frames of an animation often follow a block of one sprite), and `where` then says whose bytes they are.
  *  `start`: where the preview's first one is, `count` how many it shows; `addr`: the one shown; `focus` changes with
  *  each click on one in the preview, which gives it the keys. `colors`: the bit pairs' colours it is drawn in (as
- *  GfxPreview); `paint` (a sprite of a sprite block): its colours, which a row of swatches over the pixels changes. */
-export function GfxZoom({ kind, mem, start, addr, count, mc, colors, paint, focus, where, onPick, onClose, onGo }: {
+ *  GfxPreview); `paint` (a sprite of a sprite block): its colours, which a row of swatches over the pixels changes.
+ *  `onDraw` (an Assembler project, spec 10.7): its pixels are drawn on, a click or a drag (hires: the colour the first
+ *  pixel did not have; multicolour: the pen chosen; the right button: the background), and the bytes changed go to it
+ *  when the button is let go (the sources are changed: the bytes are shown as drawn until the program has them). */
+export function GfxZoom({ kind, mem, start, addr, count, mc, colors, paint, focus, where, onPick, onClose, onGo, onDraw }: {
   kind: 'chars' | 'sprite'; mem: Uint8Array; start: Addr; addr: Addr; count: number; mc: boolean; colors?: GfxColors; focus: number; where?: string | null;
   paint?: SpritePaint;
   onPick: (a: Addr) => void; onClose: () => void; onGo: (a: Addr) => void;
+  onDraw?: (changes: { addr: Addr; value: number }[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = ref.current; if (!el) return; el.focus({ preventScroll: true }); el.scrollIntoView?.({ block: 'nearest' }); }, [focus]);
@@ -90,9 +94,45 @@ export function GfxZoom({ kind, mem, start, addr, count, mc, colors, paint, focu
   const n = sprite ? spriteNumber(addr) : charNumber(addr);
   const what = sprite ? 'sprite' : 'character';
   const name = n != null ? `${sprite ? 'Sprite' : 'Char'} $${h2(n)}` : `${size} bytes`;
-  const px = sprite ? spritePixels(mem, addr, mc) : charPixels(mem, addr, mc);
+  // the bytes drawn, shown over the program's until it has them
+  const [drawn, setDrawn] = useState<ReadonlyMap<Addr, number>>(new Map());
+  useEffect(() => { setDrawn(d => { if (!d.size) return d; const n = new Map([...d].filter(([a, v]) => mem[a] !== v)); return n.size === d.size ? d : n; }); }, [mem]);
+  useEffect(() => { if (!drawn.size) return; const t = setTimeout(() => setDrawn(new Map()), 8000); return () => clearTimeout(t); }, [drawn]);
+  const view = useMemo(() => { if (!drawn.size) return mem; const v = mem.slice(); for (const [a, b] of drawn) v[a] = b; return v; }, [mem, drawn]);
+  const px = sprite ? spritePixels(view, addr, mc) : charPixels(view, addr, mc);
   const w = px[0].length;
-  const byte = (a: number) => mem[a & 0xffff];
+  const byte = (a: number) => view[a & 0xffff];
+  // a drawing: its colour index and the bytes it changed (committed when the button is let go)
+  const [pen, setPen] = useState(3);
+  const stroke = useRef<{ v: number; bytes: Map<Addr, number> } | null>(null);
+  const drawAt = (el: EventTarget, first: boolean, button: number) => {
+    const d = (el as HTMLElement).dataset;
+    if (!onDraw || d.x == null || d.y == null) return;
+    const x = +d.x, y = +d.y, here = px[y]?.[x];
+    if (here == null) return;
+    if (first) stroke.current = { v: button === 2 ? 0 : mc ? pen : here ? 0 : 3, bytes: new Map() };
+    const st = stroke.current;
+    if (!st) return;
+    const get = (a: number) => st.bytes.get(a) ?? view[a];
+    const ch = drawPixel(get, kind, addr, mc, x, y, st.v);
+    if (get(ch.addr) === ch.value) return;
+    st.bytes.set(ch.addr, ch.value);
+    setDrawn(dd => new Map([...dd, [ch.addr, ch.value]]));
+  };
+  useEffect(() => {
+    if (!onDraw) return;
+    const up = () => {
+      const st = stroke.current; stroke.current = null;
+      if (st?.bytes.size) onDraw([...st.bytes].map(([a, v]) => ({ addr: a, value: v })));
+    };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, [onDraw]);
+  const drawing = onDraw ? {
+    onMouseDown: (e: React.MouseEvent) => { if (e.button !== 0 && e.button !== 2) return; e.preventDefault(); drawAt(e.target, true, e.button); },
+    onMouseOver: (e: React.MouseEvent) => { if (stroke.current && e.buttons) drawAt(e.target, false, 0); },
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+  } : {};
   const pal = palOf(colors);
   return (
     <div ref={ref} className={cx('gfx-zoom', sprite ? 'sprite-zoom' : 'char-zoom')} tabIndex={0} role="group" aria-label={`${name} enlarged`}
@@ -115,11 +155,20 @@ export function GfxZoom({ kind, mem, start, addr, count, mc, colors, paint, focu
       </div>
       {where && <div className="cz-where muted small" title={`Home and End go back to the preview's first and last ${what}`}>{where}</div>}
       {sprite && paint && <SpriteColorRow {...paint} mc={mc} />}
+      {onDraw && <div className="cz-draw small" role="group" aria-label="Draw">
+        {mc ? <>
+          <span className="muted">Pen</span>
+          {[0, 1, 2, 3].map(v => <button key={v} type="button" className={cx('cz-pen', pen === v && 'on')} aria-pressed={pen === v} aria-label={`Pen ${v.toString(2).padStart(2, '0')}`}
+            title={`Draw the bit pair ${v.toString(2).padStart(2, '0')}`} style={{ background: pal[v] }} onClick={() => setPen(v)} />)}
+          <span className="muted">· right button: 00</span>
+        </> : <span className="muted">Click or drag to draw: a pixel turns the other colour; the right button clears.</span>}
+        <span className="muted">The lines that write the bytes change in the sources.</span>
+      </div>}
       {sprite ? (
         <div className="cz-body sz-body" onMouseLeave={() => setRow(null)}>
-          <div className={cx('cz-grid', 'sz-grid', mc && 'mc')} role="img" aria-label={`${name}, ${mc ? 'multicolor 12' : '24'} by 21 pixels`}
-            onMouseOver={e => { const y = (e.target as HTMLElement).dataset.y; setRow(y != null ? +y : null); }}>
-            {px.flatMap((r, y) => r.map((c, x) => <i key={y * w + x} data-c={c} data-y={y} className={y === row ? 'on' : undefined} style={{ background: pal[c] }} />))}
+          <div className={cx('cz-grid', 'sz-grid', mc && 'mc', onDraw && 'draw')} role="img" aria-label={`${name}, ${mc ? 'multicolor 12' : '24'} by 21 pixels`} {...drawing}
+            onMouseOver={e => { const y = (e.target as HTMLElement).dataset.y; setRow(y != null ? +y : null); drawing.onMouseOver?.(e); }}>
+            {px.flatMap((r, y) => r.map((c, x) => <i key={y * w + x} data-c={c} data-x={x} data-y={y} className={y === row ? 'on' : undefined} style={{ background: pal[c] }} />))}
           </div>
           {/* the bits go when the inspector is too narrow for them (a container query) */}
           <div className={cx('cz-bytes', 'sz-bytes', 'mono', mc && 'mc')} aria-label="Its bytes">
@@ -139,8 +188,8 @@ export function GfxZoom({ kind, mem, start, addr, count, mc, colors, paint, focu
         </div>
       ) : (
         <div className="cz-body">
-          <div className={cx('cz-grid', mc && 'mc')} role="img" aria-label={`${name}, ${mc ? 'multicolor 4' : '8'} by 8 pixels`}>
-            {px.flatMap((r, y) => r.map((c, x) => <i key={y * w + x} data-c={c} style={{ background: pal[c] }} />))}
+          <div className={cx('cz-grid', mc && 'mc', onDraw && 'draw')} role="img" aria-label={`${name}, ${mc ? 'multicolor 4' : '8'} by 8 pixels`} {...drawing}>
+            {px.flatMap((r, y) => r.map((c, x) => <i key={y * w + x} data-c={c} data-x={x} data-y={y} style={{ background: pal[c] }} />))}
           </div>
           <div className="cz-bytes mono" aria-label="Its bytes">
             {px.map((_, r) => { const b = byte(addr + r); return <div key={r}><span className="muted">{h4(addr + r)}</span> <b>{h2(b)}</b> <span>{mc ? charBits(b, true).split(' ').map((p, k) => <i key={k}>{p}</i>) : charBits(b, false)}</span></div>; })}

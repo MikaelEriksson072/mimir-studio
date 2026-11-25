@@ -41,6 +41,8 @@ export interface PackViewProps {
   /** a dialog for the folder the packed file is written to (`PackPrefs.dir`) */
   onPickDir: () => void;
   onNavigate: (a: Addr) => void;
+  /** an Assembler project (spec 10.7): the assembler its Assembler builds the main file with, which Pack packs */
+  asm?: string | null;
 }
 
 /** what Brokkr's own formats give and cost, measured on the reference corpus against Exomizer 3.1.1 */
@@ -268,7 +270,7 @@ export function PackView(p: PackViewProps) {
 
       <PackSettings prefs={prefs} set={set} files={project.files} fileNames={R.fileNames} entry={A.entry} warning={packWarning(prefs, A)}
         exomizer={p.exomizer} desktop={p.desktop} busy={p.busy} packing={p.packing} result={p.result} current={p.current}
-        before="Pack builds and verifies the program first, like Build & Run." packTitle="Build and verify with Build & Run's toolchain, then pack the result"
+        before={p.asm ? `Pack builds the main file with ${p.asm} first, as Run does.` : 'Pack builds and verifies the program first, like Build & Run.'} packTitle={p.asm ? `Build the main file with ${p.asm}, then pack the PRG it makes` : 'Build and verify with Build & Run\'s toolchain, then pack the result'}
         noDir="Not set: the file stays in the app's pack folder (Save as… copies it)."
         onPack={p.onPack} onRun={p.onRun} onSave={p.onSave} onSaveFile={p.onSaveFile} onLog={p.onLog} onPickDir={p.onPickDir} />
     </div>
