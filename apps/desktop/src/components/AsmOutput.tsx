@@ -1,7 +1,7 @@
 /* The Assembler's output (spec 10.7), under the code as the script editor's is: Problems (what Mimir's check finds as
  * you type, and what the assembler found in the last build), Build (the last build's command and what it wrote) and
  * Last run (how the last run in Mimir's 6510 ended, its registers and what it printed). */
-import { h2, h4, type AsmCheck, type ScriptRun } from '@mimir/core';
+import { h2, h4, type AsmCheck, type ScriptRun, type VicScreen } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, fmtBytes } from '../lib/util';
 import type { AsmOutTab } from '../store/assembler';
@@ -25,7 +25,7 @@ export interface AsmBuild {
   at: number;
 }
 /** a run in Mimir's 6510 that ended (Debug to its end), with how it ended in words */
-export interface AsmRunKept { run: ScriptRun; text: string; ok: boolean; at: number }
+export interface AsmRunKept { run: ScriptRun; text: string; ok: boolean; at: number; /** the whole C64's picture as it was stopped */ picture?: VicScreen }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 

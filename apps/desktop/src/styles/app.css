@@ -2132,8 +2132,9 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .lib-big-bitmap { cursor: default; }
 
 /* ---- the Assembler (spec 10.7): the script editor's layout with the folder's files in place of the library ---- */
-.asm-app { height: 100%; display: flex; flex-direction: column; background: var(--bg); }
-.asm-app > .start { flex: 1; min-height: 0; }
+/* (in the project window: the tab stays open behind the other tabs, its files and its debugger with it) */
+.asm-ws.asm-hidden { display: none !important; }
+.insp-asm .kv dd .linkish { font-family: var(--mono, ui-monospace, monospace); }
 .asm-home-lead { margin: 0; color: var(--fg-2); font-size: 12.5px; line-height: 1.5; }
 .asm-ws { flex: 1; min-height: 0; }
 /* (display: the narrow window hides the window's column edges, not this one) */
@@ -2207,3 +2208,8 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-tab-x.dirty .icon, .asm-tab-x.dirty:hover::before { display: none; }
 .asm-tab-x.dirty:hover .icon { display: inline-block; }
 .asm-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+/* the Assembler's Runs in (memory only, or the whole C64), and the C64's screen taking the keyboard */
+.asm-machine { height: 28px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg-2); font: 12px var(--font-ui); }
+.c64s-body.keys { outline: none; cursor: text; }
+.c64s-body.keys:focus-visible, .c64s-body.keys:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+.c64s-note.c64s-keys { color: var(--fg-3); }

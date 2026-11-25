@@ -1,7 +1,9 @@
-/* The Assembler (spec 10.7), started from the start screen: a folder of sources is the project, its files listed
- * beside the code; the code is checked as it is typed and written to its file; Debug runs the program in Mimir's 6510;
- * Run builds it with KickAss.jar and starts it in VICE (where.exe stands in for VICE). The folders are the test's own. */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+/* The Assembler (spec 10.7): an Assembler project, made or opened from the start screen's Assembler page, is a folder of
+ * sources opened in the project window, its files listed beside the code in the Assembler tab; the code is checked as it
+ * is typed and written to its file; Debug runs the program in Mimir's 6510; Run builds it with KickAss.jar and starts it
+ * in VICE (where.exe stands in for VICE); Graphics, Memory and the Explorer show the program the sources make. The
+ * folders are the test's own. */
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
@@ -12,17 +14,23 @@ test.use({ start: 'none' });
 /** a screenshot for a person looking at the work (MIMIR_E2E_SHOTS: the folder they go in) */
 const shot = async (page: Page, name: string) => { if (process.env.MIMIR_E2E_SHOTS) await page.screenshot({ path: join(process.env.MIMIR_E2E_SHOTS, `${name}.png`) }); };
 const tree = (page: Page) => page.getByRole('tree', { name: 'Files' });
+/** the project closed: the start screen */
+const closeProject = async (page: Page, name: string) => {
+  await page.getByRole('button', { name: `Project ${name}` }).click();
+  await page.getByRole('menuitem', { name: /^Close the project/ }).click();
+  await expect(page.getByRole('button', { name: 'New project…' })).toBeVisible();
+};
 /** the editor's lines as text (Monaco draws only those in view, not in order, and its spaces as no-break spaces) */
 const editorText = (page: Page) => page.locator('.scr-editor .view-lines').evaluate(el => [...el.querySelectorAll<HTMLElement>('.view-line')].sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top)).map(l => (l.textContent ?? '').replace(/ /g, ' ')).join('\n'));
 
-test('the Assembler: a new folder with a program, its files beside the code, checked, debugged in Mimir and built', async ({ workDir: work, app, page }) => {
+test('the Assembler: a new project with a program, its files beside the code, checked, debugged in Mimir and built', async ({ workDir: work, app, page }) => {
   await page.getByRole('button', { name: 'Assembler…' }).click();
   await expect(page.getByRole('heading', { name: 'Assembler' })).toBeVisible();
   await shot(page, '1-home');
 
   // a new folder, in the test's folder
   await page.getByRole('button', { name: 'New…' }).click();
-  const form = page.getByRole('form', { name: 'New folder of sources' });
+  const form = page.getByRole('form', { name: 'New Assembler project' });
   await form.getByRole('textbox').fill('hello');
   await stubDialogs(app, { open: [work] });
   await form.getByRole('button', { name: 'Change…' }).click();
@@ -32,6 +40,10 @@ test('the Assembler: a new folder with a program, its files beside the code, che
   const dir = join(work, 'hello');
   await expect(tree(page).getByRole('treeitem', { name: 'main.asm' })).toBeVisible();
   expect(readFileSync(join(dir, 'main.asm'), 'utf8')).toContain('BasicUpstart2(start)');
+  // a project of its own, in the project window: its project file says it is an Assembler project's
+  expect(JSON.parse(readFileSync(join(dir, 'hello.mimir.json'), 'utf8')).asm).toEqual({ lang: 'kickass', main: 'main.asm' });
+  await expect(page.getByRole('button', { name: 'Project hello' })).toBeVisible();
+  await expect(page.locator('.main-tabs').getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
   // the main file is shown, checked with Mimir's own assembler: it starts at $080e (the SYS of its BASIC line)
   await page.locator('.scr-editor .view-lines').waitFor();
   await expect(page.getByLabel('File name')).toHaveValue('main.asm');
@@ -107,9 +119,9 @@ test('the Assembler: a new folder with a program, its files beside the code, che
   mkdirSync(join(dir, 'gfx'));
   await expect(tree(page).getByRole('treeitem', { name: 'gfx' })).toBeVisible({ timeout: 10_000 });
 
-  // back to the start screen; the folder is offered again
-  await page.getByRole('button', { name: 'Start', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'New project…' })).toBeVisible();
+  // the project closed: it is among the recent projects, and the Assembler page offers its folder again
+  await closeProject(page, 'hello');
+  await expect(page.getByRole('button', { name: 'Continue with the project hello' })).toBeVisible();
   await page.getByRole('button', { name: 'Assembler…' }).click();
   await expect(page.getByRole('region', { name: 'Folders opened before' })).toContainText('hello');
 });
@@ -272,8 +284,123 @@ test('the Assembler: open files as tabs over the code, a preview the list replac
   await tree(page).getByRole('treeitem', { name: 'b.asm' }).dblclick();
   await tree(page).getByRole('treeitem', { name: 'main.asm' }).dblclick();
   await expect.poll(names).toEqual(['b.asm', 'main.asm<']);
-  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  await closeProject(page, 'tabs');
   await page.getByRole('button', { name: 'Assembler…' }).click();
   await page.getByRole('region', { name: 'Folders opened before' }).getByRole('button', { name: /^tabs / }).click();
   await expect.poll(names).toEqual(['b.asm', 'main.asm<']);
+});
+
+test('the Assembler in the whole C64: RUN typed at READY, stopped at the program\'s first instruction, run in the C64\'s own time with its screen, a key typed on the screen, a breakpoint', async ({ workDir: work, app, page }) => {
+  const vice = 'C:\\C64\\VICE';
+  const found = () => { try { return readdirSync(vice).some(d => existsSync(join(vice, d, 'C64'))); } catch { return false; } };
+  test.skip(!process.env.C64_ROMS && !found(), 'needs VICE\'s ROMs');
+  const dir = join(work, 'c64');
+  mkdirSync(dir);
+  // the border black, a key waited for with the KERNAL's GETIN and written to the screen, the background white, back to BASIC
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\nstart:\n  lda #0\n  sta $d020\n!key:\n  jsr $ffe4\n  beq !key-\n  sta $0400\n  lda #1\n  sta $d021\n  rts\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.getByRole('combobox', { name: 'Runs in' }).selectOption('c64');
+
+  // Debug: RUN typed at READY, stopped at the first instruction; the screen beside the code is the VIC's picture
+  await page.getByRole('button', { name: /^Debug/ }).click();
+  const dbgPanel = page.getByRole('complementary', { name: 'Debugger' });
+  await expect(dbgPanel.getByRole('status')).toContainText('main.asm line 3', { timeout: 30_000 });
+  await expect(page.getByRole('note').filter({ hasText: 'RUN was typed at READY' })).toBeVisible();
+  const screen = page.getByRole('region', { name: 'C64 screen' });
+  await expect(screen.getByRole('img')).toBeVisible();
+  await expect(page.getByLabel('Text on the C64 screen')).toContainText('READY.');
+  await expect(dbgPanel.getByRole('table', { name: 'Stack' })).toContainText('the end of the run');
+  /** a pixel of the picture (in the C64's pixels) as rgb */
+  const pixel = (x: number, y: number) => screen.getByRole('img').evaluate((cv: HTMLCanvasElement, at) => { const k = cv.width / 384, d = cv.getContext('2d')!.getImageData(Math.floor(at[0] * k), Math.floor(at[1] * k), 1, 1).data; return [d[0], d[1], d[2]]; }, [x, y]);
+  const lightBlue = await pixel(2, 2);
+  // two steps: the border black (the picture has it below the raster beam at once, the whole frame once the C64 goes on)
+  await page.getByRole('button', { name: /^Step/ }).click();
+  await page.getByRole('button', { name: /^Step/ }).click();
+  await expect(dbgPanel.getByRole('status')).toContainText('main.asm line 6');
+  await expect(screen).toContainText(/Stopped on raster line \d+/);
+  await shot(page, '9-c64-debug');
+
+  // Continue: it waits for a key in the C64's own time; a breakpoint on the store, a key typed on the screen
+  const editor = page.locator('.scr-editor');
+  const box = await editor.locator('.line-numbers', { hasText: /^8$/ }).boundingBox();
+  const glyph = await editor.locator('.glyph-margin').boundingBox();
+  await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);
+  await expect(editor.locator('.scr-bp')).toHaveCount(1);
+  await page.getByRole('button', { name: /^Continue/ }).click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  const keys = screen.getByLabel('The C64: keys typed here go to its keyboard');
+  await keys.click();
+  await page.keyboard.down('q');
+  await expect(dbgPanel).toContainText('Stopped at the breakpoint on main.asm line 8', { timeout: 15_000 });
+  await page.keyboard.up('q');
+  await expect(dbgPanel.getByRole('table', { name: 'Registers' })).toContainText('$51');
+  // frames went by while it waited for the key: the border is black all round
+  expect(await pixel(2, 2)).toEqual([0, 0, 0]);
+  expect(lightBlue).not.toEqual([0, 0, 0]);
+  // on: it returns to BASIC, which says READY again
+  await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);
+  await expect(editor.locator('.scr-bp')).toHaveCount(0);
+  await page.getByRole('button', { name: /^Continue/ }).click();
+  await expect.poll(async () => ((await page.getByLabel('Text on the C64 screen').textContent()) ?? '').split('READY.').length - 1, { timeout: 15_000 }).toBe(2);
+  await shot(page, '10-c64-running');
+  // Pause, then Stop: the run is the last run, its screen kept
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(page.getByRole('button', { name: /^Continue/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Last run' })).toContainText(/Stopped at \$.* s of the C64's time\)\./);
+  await expect(screen.getByRole('img')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Runs in' }).selectOption('memory');
+});
+
+test('an Assembler project in the project window: the program its sources make in the Explorer, Graphics and Memory, back to its line in the sources, no analysis', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'sprite');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\nstart:\n  lda #sprite/64\n  sta $07f8\n  rts\n* = $2000 "sprite"\nsprite:\n  .fill 63, $ff\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  // the folder is an Assembler project now: its project file written into it, not in the list
+  expect(JSON.parse(readFileSync(join(dir, 'sprite.mimir.json'), 'utf8')).asm).toEqual({ lang: 'kickass' });
+  await expect(tree(page).getByRole('treeitem', { name: 'main.asm' })).toBeVisible();
+  await expect(tree(page).getByRole('treeitem', { name: 'sprite.mimir.json' })).toHaveCount(0);
+  // its tabs and title bar: the Assembler first, none of the listing, the re-assembly or the analysis
+  const tabs = page.locator('.main-tabs');
+  await expect(tabs.getByRole('tab')).toHaveText(['Assembler', 'Graphics', 'Memory', 'Scripts', 'Git', 'SPEC.md']);
+  await expect(page.locator('.titlebar').getByRole('button', { name: /Verify/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Analysis overview' })).toHaveCount(0);
+  await expect(page.locator('.titlebar').getByRole('button', { name: /^Run/ })).toBeVisible();
+
+  // Graphics: the program's bytes, the Explorer with its file and memory map (the Assembler tab folded them in)
+  await tabs.getByRole('tab', { name: 'Graphics' }).click();
+  const side = page.locator('.sidebar');
+  await side.getByRole('button', { name: 'Program' }).click();
+  await side.getByRole('button', { name: 'Memory map' }).click();
+  await expect(side.getByText('main.prg')).toBeVisible({ timeout: 15_000 });
+  await expect(side).toContainText('$0801–$203e');
+  await expect(page.getByRole('button', { name: /^Mark as/ })).toHaveCount(0);
+  await shot(page, '11-asm-graphics');
+  // a block of the memory map: its line in the sources, in the Assembler
+  await side.locator('.seg-row', { hasText: 'sprite' }).click();
+  await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('File name')).toHaveValue('main.asm');
+  await expect(page.locator('.scr-editor .line-numbers.active-line-number')).toHaveText('8');
+
+  // a change in the sources is the program the other tabs show
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('more:\n  .byte 1, 2, 3\n');
+  await tabs.getByRole('tab', { name: 'Memory' }).click();
+  await expect(side).toContainText('$0801–$2041', { timeout: 15_000 });
+  await shot(page, '12-asm-memory');
+
+  // a PRG dropped or opened is not taken in: the program is what the sources make
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: /Open PRG/ })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: /Mount disk image/ })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await closeProject(page, 'sprite');
 });

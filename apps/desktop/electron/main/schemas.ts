@@ -165,6 +165,13 @@ const junk = z.array(z.object({ start: at, end: at }).refine(j => j.start < j.en
 /** bytes the listing shows at another address (spec 10.4): loaded at start-end (end excluded), shown at `to` */
 const viewOffsets = z.array(z.object({ start: at, end: at, to: at }).refine(o => o.start < o.end && o.end - o.start <= 0x10000, 'a view offset needs at least one byte')).max(4096);
 
+/** an Assembler project's (Project.asm, spec 10.7): the assembler its sources are written for, and the source Run builds
+ *  (a path inside the project's folder, with /) */
+const asmInfo = z.object({
+  lang: z.enum(['kickass', '64tass']),
+  main: z.string().max(1024).refine(p => !/^[\\/]|(^|[\\/])\.\.([\\/]|$)|:/.test(p), 'a path inside the project\'s folder').nullable().optional(),
+});
+
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */
 export const serializedProjectSchema = z.object({
   format: z.enum(['mimir-project', LEGACY_PROJECT_FORMAT]),
@@ -218,6 +225,8 @@ export const serializedProjectSchema = z.object({
   watches: z.array(at).max(4096).optional(),
   // project files from before cartridges, and those without one, have none
   cart: z.object({ name: fileName, data: z.string() }).optional(),
+  // an Assembler project's (spec 10.7); the others have none
+  asm: asmInfo.optional(),
   settings: settingsSchema.default({}),
 });
 
@@ -254,6 +263,7 @@ export const projectSchema = z.object({
   breakpoints: z.array(at).max(4096).optional(),
   watches: z.array(at).max(4096).optional(),
   cart: z.object({ name: fileName, crt: crtBytes }).nullable().optional(),
+  asm: asmInfo.nullable().optional(),
   settings: settingsSchema,
 });
 

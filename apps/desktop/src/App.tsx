@@ -18,12 +18,12 @@ import {
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
-  debugSources,
+  debugSources, asmLineAt, type AsmProgram,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepDeclinedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
-import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
+import { useUi, type Activity, type BottomTab, type EditorTab, type InspectorMode } from './store/ui';
 import { runScreenSize, useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
@@ -89,6 +89,8 @@ import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, gitNote, Sta
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
+import { AssemblerTab } from './components/AssemblerView';
+import { useAsmLink } from './store/asmlink';
 import { AnalysisOverview, type OverviewLinks, type PackCheck, type PackLook } from './components/Overview';
 import { GFX_KIND, snapshotPc } from './lib/overview';
 
@@ -144,6 +146,16 @@ const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'spark
 const DISK_SCRIPT_TABS = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'paraprotect', 'diskspeed'] as const satisfies readonly (BottomTab & keyof MountedDisk)[];
 const isDiskScriptTab = (k: BottomTab): k is (typeof DISK_SCRIPT_TABS)[number] => (DISK_SCRIPT_TABS as readonly BottomTab[]).includes(k);
 
+/** the tabs of an Assembler project (spec 10.7): its Assembler first, and the views that are not of the analysis, the
+ *  re-assembly or the listing */
+const ASM_TABS: readonly EditorTab[] = ['asm', 'gfx', 'mem', 'scripts', 'git', 'spec', 'library'];
+/** the side panel's views an Assembler project has not: its bookmarks would not stay at their lines, and the Pack view
+ *  packs a re-assembled build */
+const ASM_HIDDEN_VIEWS: readonly Activity[] = ['bookmarks', 'pack'];
+/** an Assembler project's commands: those that are not of the analysis, the re-assembly or the listing (its own Run,
+ *  Build and Debug come first) */
+const ASM_COMMANDS = new Set(['mount', 'tape', 'side-panel', 'inspector-show', 'inspector-mode', 'panel', 'library-show', 'library-add', 'save', 'save-copy', 'openproj', 'reveal', 'start-screen', 'settings', 'theme', 'undo', 'redo', 'tab-gfx', 'tab-mem', 'tab-scripts', 'script-full', 'tab-git', 'script-new', 'tab-spec']);
+
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
 type Note = { text: string; n: number };
 
@@ -158,8 +170,19 @@ export function App() {
   return <Studio note={note} onStartScreen={() => setStartScreen({ resume: false })} />;
 }
 
+/** An Assembler project as its views take it (spec 10.7): the program its sources make in place of files loaded, with its
+ *  code, labels and start, and nothing of a re-assembly's. */
+function asmView(p: Project, prog: AsmProgram | null): Project {
+  return { ...p, files: prog?.files ?? [], overrides: prog?.overrides ?? [], labels: prog?.labels ?? {}, entryPoint: prog?.entryPoint ?? null, entryPort: null, entryIo: null,
+    entries: [], comments: {}, blockComments: {}, notes: {}, blanks: {}, relocs: [], excluded: [], binary: [], junk: [], viewOffsets: [], patches: [], bankZones: [], zpPairs: {}, cart: null };
+}
+
 function Studio({ note, onStartScreen }: { note: Note | null; onStartScreen: () => void }) {
-  const project = useProject(s => s.present);
+  const stored = useProject(s => s.present), home = useProject(s => s.home);
+  // an Assembler project's views show the program its sources make (its Assembler tab puts it in asmlink)
+  const program = useAsmLink(s => s.program);
+  const view = useMemo(() => (stored.asm && home ? asmView(stored, program) : null), [stored, home, program]);
+  const project = view ?? stored;
   const dataAsCode = useUi(s => s.dataAsCode);
   // the listing shows the view offsets (spec 10.4); the files, the export and verify never see them
   const { analysis, error, busy, deepBusy } = useAnalysis(project, { dataAsCode, viewOffsets: true });
@@ -167,7 +190,7 @@ function Studio({ note, onStartScreen }: { note: Note | null; onStartScreen: () 
   useEffect(() => { if (kr) kr.getSettings().then(setToolchain).catch(() => { /* keep project defaults */ }); }, []);
 
   if (!analysis) return <div className="boot">{error ? `Analysis failed: ${error}` : 'Analysing…'}</div>;
-  return <Workspace A={analysis.A} R={analysis.R} aKey={analysis.aKey} renderMs={analysis.renderMs} rProject={analysis.project} final={analysis.final} swaps={analysis.swaps} busy={busy} deepBusy={deepBusy} toolchain={toolchain} setToolchain={setToolchain} note={note} onStartScreen={onStartScreen} />;
+  return <Workspace A={analysis.A} R={analysis.R} aKey={analysis.aKey} renderMs={analysis.renderMs} rProject={analysis.project} final={analysis.final} swaps={analysis.swaps} busy={busy} deepBusy={deepBusy} toolchain={toolchain} setToolchain={setToolchain} note={note} onStartScreen={onStartScreen} asmProject={view} />;
 }
 
 interface WorkspaceProps {
@@ -179,13 +202,22 @@ interface WorkspaceProps {
   note: Note | null;
   /** back to the start screen (the project's work is saved first) */
   onStartScreen: () => void;
+  /** an Assembler project as its views take it (asmView); null: another project */
+  asmProject: Project | null;
 }
 
 /** `p` in `to` instead of `from`, when it is in `from` */
 const rebase = <T extends string | null | undefined>(p: T, from: string, to: string): T => (p && p.startsWith(from) ? `${to}${p.slice(from.length)}` as T : p);
 
-function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBusy, toolchain, setToolchain, note, onStartScreen }: WorkspaceProps) {
-  const project = useProject(s => s.present);
+function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBusy, toolchain, setToolchain, note, onStartScreen, asmProject }: WorkspaceProps) {
+  /** the project as it is kept (its project file), and as the views take it: an Assembler project's is the program its
+   *  sources make (spec 10.7), any other the same */
+  const stored = useProject(s => s.present);
+  const project = asmProject ?? stored;
+  /** an Assembler project: its Assembler tab, Graphics, Memory, Scripts and Git, none of the analysis, the re-assembly
+   *  and the listing */
+  const asmMode = !!asmProject;
+  const asmBuilding = useAsmLink(s => s.building);
   const past = useProject(s => s.past), future = useProject(s => s.future), home = useProject(s => s.home);
   const { update, replace, undo, redo, enter, setHome } = useProject.getState();
   /** analysis settings from the project, toolchain paths from the app */
@@ -359,15 +391,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       return { home: w.home, error: errorText(e) };
     }
   }, [toast]);
-  const seen = useRef({ project, home });
+  const seen = useRef({ project: stored, home });
   useEffect(() => {
     // an edit in the same project (not the project opened, nor the work just moved into one: that is on disk)
     const was = seen.current;
-    seen.current = { project, home };
-    if (!home || was.home !== home || was.project === project) return;
+    seen.current = { project: stored, home };
+    if (!home || was.home !== home || was.project === stored) return;
     clearTimeout(pending.current.timer);
-    pending.current = { project, home, timer: setTimeout(() => void saveNow(), 500) };
-  }, [project, home, saveNow]);
+    pending.current = { project: stored, home, timer: setTimeout(() => void saveNow(), 500) };
+  }, [stored, home, saveNow]);
   useEffect(() => {
     const flush = () => void saveNow();
     window.addEventListener('beforeunload', flush);
@@ -384,7 +416,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return home;
   };
   /** the project's work saved, and the work without a project kept: the start screen offers it as it is now */
-  const toStartScreen = async () => { await saveNow(); keepUnsavedWork(); onStartScreen(); };
+  const toStartScreen = async () => { await useAsmLink.getState().flush().catch(() => null); await saveNow(); keepUnsavedWork(); onStartScreen(); };
 
   /* ---- work without a project, with changes that are in no project, asks before something takes its place: Save makes
      a project of it first ---- */
@@ -418,6 +450,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   closeAskNow.current = closeAsk;
   const tryClose = useCallback(async () => {
     holdClose();
+    // (an Assembler project's files not written yet are first)
+    await useAsmLink.getState().flush().catch(() => null);
     const failed = await saveNow();
     if (failed) { setCloseAsk({ kind: 'failed', ...failed }); return; }
     const s = useProject.getState();
@@ -459,8 +493,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setViewSpace(spaceOf(addr));
     if (!opts.keepSel) setSel(null);
     if (!opts.fromSource) setScrollReq({ addr, center: !!opts.center, n: Date.now(), ...(opts.end != null ? { end: opts.end } : {}) });
-    if (opts.listing && useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
-  }, [A, cursor, toast, setUi, folded]);
+    // (an Assembler project has no listing: its sources are shown at the address's line)
+    if (opts.listing && asmMode) { if (useUi.getState().tab !== 'asm') setUi({ tab: 'asm' }); useAsmLink.getState().showAddr(addr); }
+    else if (opts.listing && useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
+  }, [A, cursor, toast, setUi, folded, asmMode]);
   const goBack = () => { const b = navHist.current.back.pop(); if (b != null && cursor != null) { navHist.current.fwd.push(cursor); navigate(b, { noHistory: true }); } };
   const goFwd = () => { const f = navHist.current.fwd.pop(); if (f != null && cursor != null) { navHist.current.back.push(cursor); navigate(f, { noHistory: true }); } };
   /** the relocated blocks the bytes at `a` run in, the innermost first (where each one is loaded) */
@@ -556,6 +592,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  `gfx`: a file from a loader's script or the tape, whose start Graphics shows (14.6b) */
   const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean; show?: boolean; gfx?: boolean } = {}) => {
     if (!opened.length) return;
+    // an Assembler project's program is what its sources make: nothing is loaded into it (spec 10.7)
+    if (asmMode) { toast(`${opened.map(f => f.name).slice(0, 3).join(', ')} ${opened.length === 1 ? 'was' : 'were'} not opened: an Assembler project's program is what its sources make. Open ${opened.length === 1 ? 'it' : 'them'} in another project (Close the project, then Without a project or a project of its own)`, 'warn'); return; }
     // a cartridge's chips open as a project of their own, with the image (13.9): a project holds one cartridge
     const cart = opened.find(f => f.cart)?.cart;
     const ownCart = !!cart && !(add && project.cart && project.cart.name === cart.name && project.cart.crt.length === cart.crt.length);
@@ -1594,6 +1632,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // a disk and a tape dropped together both stay (else the one dropped takes the other out)
     const both = Array.from(list).some(f => /\.[dg]64$/i.test(f.name)) && Array.from(list).some(f => /\.t(ap|64)$/i.test(f.name));
     for (const f of Array.from(list)) {
+      if (asmMode && !/\.([dg]64|t(ap|64))$/i.test(f.name)) { toast(`${f.name} was not opened: an Assembler project's program is what its sources make. Put the file in the project's folder for a source to load it, or open it in another project`, 'warn'); continue; }
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
         if (/\.json$/i.test(f.name)) {
@@ -1625,7 +1664,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     window.addEventListener('dragover', over); window.addEventListener('dragleave', leave); window.addEventListener('drop', drop);
     return () => { window.removeEventListener('dragover', over); window.removeEventListener('dragleave', leave); window.removeEventListener('drop', drop); };
   });
-  useEffect(() => kr?.onFsChanged(e => toast(`Changed outside the app: ${e.path}`, 'info')), [toast]);
+  // (an Assembler project's folder is watched for its Assembler tab, which reads what changed: nothing to say)
+  useEffect(() => kr?.onFsChanged(e => { if (!useProject.getState().present.asm) toast(`Changed outside the app: ${e.path}`, 'info'); }), [toast]);
 
   /* ---- edits ---- */
   const curLine: ListingLine | null = cursor != null && lineOf[cursor] >= 0 ? view.lines[lineOf[cursor]] : null;
@@ -2645,13 +2685,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const finishScriptRun = (id: string, r: ScriptRun, text: string, write = false, chain = 0) => {
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
     const safe = !!s.safe && !write;
-    const w = safe ? ranSafely(id, r, text) : ranUserScript(id, r, text);
+    // (an Assembler project's program is what its sources make: a script's changes to it are only worked out, as in safe
+    // mode, and said; the rest it asks for, files, disks, tapes, the library, is done)
+    const w = safe || asmMode ? ranSafely(id, r, text) : ranUserScript(id, r, text);
     const st = useScripts.getState();
-    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(w?.acted ? { acted: w.acted } : {}), ...(safe ? { safe: true, would: w?.written ?? [] } : {}) } } });
+    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(w?.acted ? { acted: w.acted } : {}), ...(safe || asmMode ? { safe: true, would: w?.written ?? [] } : {}) } } });
     // the script the Scripts tab shows: the one picked, else its first (as ScriptsView picks it)
     const list = latest.current.project.userScripts ?? [], shown = (list.find(x => x.id === st.selected) ?? list[0])?.id === id;
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
-    if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
+    if (shown) st.set({ change: !w?.written.length ? null : safe || asmMode ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
     if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.snapshot || r.scripts?.length || r.disk || r.tape || r.cartridge || r.error)) st.set({ outTab: 'run', outFolded: false });
     // the export it asked for: written now that the run has ended well and its changes are in the program (a safe run's
@@ -2664,7 +2706,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // what it printed on its C64 screen: the screen is shown
     if (shown && r.screen?.wrote && !st.c64.open) st.setC64({ open: true });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
-    const what = safe
+    const what = asmMode
+      ? (w?.written.length ? ` It would change ${bytes} byte${bytes === 1 ? '' : 's'} of the program, which is not done: an Assembler project's program is what its sources make (Scripts → In the program → Would change).` : '')
+      : safe
       ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → In the program → Would change).` : 'It would change none of the program\'s bytes.'}`
       : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
     const printed = r.prints?.length ? ` It printed ${r.prints.length} line${r.prints.length === 1 ? '' : 's'} (Scripts → Last run): ${r.prints[0].length > 60 ? `${r.prints[0].slice(0, 60)}…` : r.prints[0]}${r.prints.length > 1 ? ' …' : ''}` : '';
@@ -3996,12 +4040,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!home) { setModal('project'); return; }
     clearTimeout(pending.current.timer);
     pending.current = {};
-    try { await kr.saveProject({ project, path: home.file }); toast(`Project saved to ${home.file}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+    try { await kr.saveProject({ project: stored, path: home.file }); toast(`Project saved to ${home.file}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
   /** a copy of the project file wherever the user wants it (the work stays where it is) */
   const saveProjectCopy = async () => {
     if (!kr) return needDesktop();
-    try { const r = await kr.saveProject({ project }); if (r) toast(`A copy of the project saved to ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+    try { const r = await kr.saveProject({ project: stored }); if (r) toast(`A copy of the project saved to ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
   /** what moves into a project created from the work without one */
   const gathered = () => {
@@ -4108,21 +4152,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const scriptsFold = useRef<ScriptsFold | null>(store.get<ScriptsFold | null>(SCRIPTS_FOLD_KEY, null));
   useEffect(() => {
     const u = useUi.getState();
-    if (tab === 'scripts' && !scriptsFold.current) {
+    if ((tab === 'scripts' || tab === 'asm') && !scriptsFold.current) {
       const was: ScriptsFold = { sidePanel: u.sidePanel, panelOpen: u.panelOpen, inspector: u.inspector };
       scriptsFold.current = was; store.set(SCRIPTS_FOLD_KEY, was);
       setDrawer(d => (d === 'insp' || d === 'side' ? null : d));
       setUi({ sidePanel: false, panelOpen: false, inspector: 'auto' });
-    } else if (tab !== 'scripts' && scriptsFold.current) {
+    } else if (tab !== 'scripts' && tab !== 'asm' && scriptsFold.current) {
       const was = scriptsFold.current;
       scriptsFold.current = null; store.set(SCRIPTS_FOLD_KEY, null);
       setUi({ ...(!u.sidePanel ? { sidePanel: was.sidePanel } : {}), ...(!u.panelOpen ? { panelOpen: was.panelOpen } : {}), ...(u.inspector === 'auto' ? { inspector: was.inspector } : {}) });
     }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // an Assembler project shows its own tabs (the Assembler first) and views; another project not the Assembler
+  useEffect(() => {
+    if (asmMode && !ASM_TABS.includes(tab)) setUi({ tab: 'asm' });
+    else if (!asmMode && tab === 'asm') setUi({ tab: 'listing' });
+    if (asmMode && ASM_HIDDEN_VIEWS.includes(activity)) setUi({ activity: 'explorer' });
+  }, [asmMode, tab, activity]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* ---- commands & keys ---- */
   const undoLabel = past.length ? past[past.length - 1].label : null;
-  const commands: Command[] = [
+  const allCommands: Command[] = [
     { id: 'smart', label: 'Smart attach: open any file as its extension says (PRG, snapshot, cartridge, D64, G64, TAP, project; Brokkr packs a .asm)…', run: () => void smartAttach() },
     { id: 'open', label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
     { id: 'add', label: 'Add PRG files to the project…', run: () => void openPrgs(project.files.length > 0, 'add') },
@@ -4250,6 +4301,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'name-known', label: suggested.length ? `Name the ${suggested.length} routine${suggested.length === 1 ? '' : 's'} known from other projects (${suggested.slice(0, 3).map(m => m.name).join(', ')}${suggested.length > 3 ? ' …' : ''})` : 'Name the routines known from other projects (none here)', run: () => nameKnown() },
     { id: 'learn-project', label: `Learn the routines named in this project, so other projects get their names suggested (Mimir knows ${library.length})`, run: learnThisProject },
   ];
+  const asmAsk = (what: 'run' | 'build' | 'debug') => useAsmLink.getState().request(what);
+  const asmTool2 = stored.asm?.lang === '64tass' ? '64tass' : 'KickAss.jar';
+  const commands: Command[] = asmMode ? [
+    { id: 'tab-asm', label: 'Show the Assembler: the project\'s sources, checked as you type', run: () => setUi({ tab: 'asm' }) },
+    { id: 'build', label: `Run: build the main file with ${asmTool2} and start it in VICE`, key: 'F5', run: () => asmAsk('run') },
+    { id: 'asm-build', label: `Build the main file with ${asmTool2}, without starting it`, run: () => asmAsk('build') },
+    { id: 'asm-debug', label: 'Debug the program a step at a time (the Assembler tab: Runs in memory only or the whole C64)', run: () => { setUi({ tab: 'asm' }); asmAsk('debug'); } },
+    ...allCommands.filter(c => ASM_COMMANDS.has(c.id) || c.id.startsWith('script-run-')),
+  ] : allCommands;
   // the dialogs of "The work is not saved" hold the keys too
   const dialog = modal ?? (unsavedAsk || saveFirst || closeAsk ? 'project' : null);
   /** Pack a file over the work (Smart attach gave it a source): the work's keys wait until it goes back */
@@ -4320,8 +4380,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     pickCell(next, extend);
   };
   const closeXref = () => setXrefPick(null);
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref, scriptsFull });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref, scriptsFull };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref, scriptsFull, asm: asmMode });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref, scriptsFull, asm: asmMode };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -4332,6 +4392,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const run = (id: string) => { const c = k.commands.find(x => x.id === id); if (c) { e.preventDefault(); c.run(); } };
       if (ctrl && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setModal('palette'); return; }
       if (e.key === 'F1') { e.preventDefault(); setModal('palette'); return; }
+      // an Assembler project's Assembler tab has keys of its own (the code, Run, Build, Debug): only Settings and the
+      // bottom panel are the window's there
+      if (k.asm && k.tab === 'asm') { if (ctrl && !e.shiftKey && !e.altKey && (e.key === ',' || e.key.toLowerCase() === 'j')) run(e.key === ',' ? 'settings' : 'panel'); return; }
       // Ctrl+F finds in the listing, and in the source and drive code tabs with Monaco's find (in the editor Monaco takes it itself)
       if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source' || k.tab === 'drive') run('find'); return; }
       if (e.key === 'F3' && k.tab === 'listing' && !k.modal) return run(e.shiftKey ? 'find-prev' : 'find-next');
@@ -4715,8 +4778,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers
-  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'dloc' || !!disk?.dloc) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'paraprotect' || !!disk?.paraprotect) && (k !== 'diskspeed' || !!disk?.diskspeed) && (k !== 'tape' || !!tape));
-  const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : 'log';
+  const bottomTabs = BOTTOM_TABS.filter(([k]) => (!asmMode || k === 'messages' || k === 'tape') && (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'dloc' || !!disk?.dloc) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'paraprotect' || !!disk?.paraprotect) && (k !== 'diskspeed' || !!disk?.diskspeed) && (k !== 'tape' || !!tape));
+  const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : asmMode ? 'messages' : 'log';
   /** a tab the mounted disk's own load script fills is marked, and comes in anew (it pulses) with each disk mounted:
    *  the disk's number is in its key */
   const diskScriptTab = (k: BottomTab) => !!disk && isDiskScriptTab(k) && !!disk[k];
@@ -4816,7 +4879,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const fileMenu = (e: ReactMouseEvent<HTMLElement>) => {
     if (menu?.owner === 'file') { setMenu(null); return; }
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ owner: 'file', x: r.left, y: r.bottom + 2, items: [
+    setMenu({ owner: 'file', x: r.left, y: r.bottom + 2, items: asmMode ? [
+      { label: 'Mount disk image (D64, G64)…', run: () => void mountDisk() },
+      { label: 'Insert tape image (TAP, T64)…', run: () => void insertTape() },
+      { sep: true },
+      { label: 'Save project', key: 'Ctrl+S', run: () => void saveProject() },
+    ] : [
       { label: 'Smart attach…', run: () => void smartAttach() },
       { sep: true },
       { label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false, 'prg') },
@@ -4831,11 +4899,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   // (the Library tab once it was opened: the Library view's button opens it, 10.6)
   const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script' | 'git' | 'library', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['git', 'git', 'Git'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md'],
     ...(tab === 'library' || libTabSeen ? [['library', 'library', 'Library']] as [typeof tab, 'library', string][] : [])];
+  // an Assembler project's: the Assembler in place of the listing, the drive code and the generated source
+  if (asmMode) tabs.splice(0, tabs.length, ['asm', 'code', 'Assembler'], ...tabs.filter(([k]) => k !== 'listing' && k !== 'drive' && k !== 'source'));
 
   return (
     <AssemblerContext.Provider value={asm}>
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto', scriptsFull && 'scripts-full')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
-      <TitleBar asmTool={asmTool} projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
+      <TitleBar asm={asmMode ? { tool: asmTool2, building: asmBuilding, onRun: () => asmAsk('run') } : null} asmTool={asmTool} projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onFile={fileMenu} fileOpen={menu?.owner === 'file'} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
         onVerify={() => void runVerify()} onExport={() => void exportProject()} onBuild={() => void runBuild()} onTerminal={() => void openTerminal()}
@@ -4844,7 +4914,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onOverview={() => setModal('overview')} canOverview={project.files.length > 0 || !!project.cart}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
+      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : undefined} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
           // the view shown: its button collapses the side panel; collapsed, any view's button brings it back. The
           // Library's button shows the Library tab too (10.6)
           if (a === 'library' && !(sidePanel && a === activity && !narrow)) { setLibTabSeen(true); setUi({ tab: 'library' }); }
@@ -4852,7 +4922,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
 
       <aside className="sidebar"><ErrorBoundary>
-        <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor}
+        <Sidebar asm={asmMode ? { main: stored.asm?.main ?? null, onShow: a => { navigate(a, { listing: true }); setDrawer(null); } } : null} view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor}
           library={{ desktop: !!kr, playerName: musicPlayerName, onShow: ref => showLibrary(ref), onPlay: i => void playLibrary(i), onMenu: libraryMenu, onReveal: k => revealLibrary(k ? { kind: k } : undefined) }} onNavigate={a => { nav(a); setDrawer(null); }} onLabel={a => { pickLabel(a); setDrawer(null); }}
           onAdd={() => void openPrgs(project.files.length > 0, 'add')} onDemo={() => loadDemo()}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
@@ -4935,6 +5005,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         </div>
         <div className="editor">
           <ErrorBoundary>
+            {asmMode && home && stored.asm && <AssemblerTab key={home.dir} dir={home.dir} name={home.name} info={stored.asm} active={tab === 'asm'} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
+              onInfo={(label, c) => update(label, d => { if (d.asm) Object.assign(d.asm, c); })} />}
             {tab === 'listing' && !project.files.length && <div className="empty-project">
               <Icon name={home ? 'folder' : 'doc'} size={30} />
               <h2>{home ? `${home.name} has no files yet` : 'No files yet'}</h2>
@@ -5002,21 +5074,21 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'library' && <LibraryTab desktop={!!kr} player={toolchain.musicPlayer} onPlay={(i, o) => void playLibrary(i, o)} onReveal={ref => revealLibrary(ref)} onMenu={libraryMenu} toast={toast} />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} lang={codeLang} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onNewJs={() => newUserScript([], [], 'js')} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
-                onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
+                onShow={(s, e) => { if (asmMode) { navigate(s, { listing: true }); return; } setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
                 blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)}
                 loops={cryptLoops} onAddLoop={addCryptScript} fits={scriptFitsHere} userNames={userNames} onRevealLibrary={kr ? () => void kr.scriptsReveal().catch(e => toast(errorText(e), 'err')) : undefined}
                 files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onRunValues={id => setValuesRun(id)} onToProject={padToProject} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
-              {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
+              {tab === 'gfx' && (g => <MemoryGfx source={asmMode} key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r, mc, ps) => (ps && ps.length > 1 ? markPieces(id, ps.map(p => ({ start: g(p.start), end: g(p.end) })), mc) : mark(id, r && { start: g(r.start), end: g(r.end) }, { mc }))} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
                 onMulticolor={(r, view, mc) => setGfxMc({ start: g(r.start), end: g(r.end) }, view, mc)}
                 onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)}
                 onLibrary={(r, kind, mc, cols, bitmap) => startLibraryAdd(null, { start: g(r.start), end: g(r.end), kind, mc, colors: { ...cols }, ...(bitmap ? { bitmap } : {}) })} />)(allGfx ? (a: Addr) => a : inBank)}
-              {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
+              {tab === 'mem' && (g => <MemoryDump source={asmMode} key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
@@ -5067,7 +5139,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             : <button className="icon-btn insp-mode" onClick={() => setInspector('auto')} aria-label="Fold in the inspector" title="Fold the inspector into a strip at the right edge: the listing gets its room, and a click on the strip opens it when you need it (Settings → General)"><Icon name="insp-hide" size={16} /></button>}
         </div>
         <ErrorBoundary>
-        <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
+        <Inspector source={asmMode ? { lineOf: a => { const c = useAsmLink.getState().check, l = c ? asmLineAt(c, a) : null; return l ? `${l.file} line ${l.line}` : null; }, onShow: a => navigate(a, { listing: true }) } : null} A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
           onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={openJunkRange} onFormat={setFormat} onSprites={setSprites} onSpriteColors={setSpriteColors} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
@@ -5077,7 +5149,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {inspector === 'auto' && <button className={cx('insp-rail', drawer === 'insp' && 'on')} onClick={() => (drawer === 'insp' ? closeInspector() : setDrawer('insp'))} aria-label="Inspector" aria-expanded={drawer === 'insp'}
         title={drawer === 'insp' ? 'Fold in the inspector (a click outside it or Esc does too)' : 'Open the inspector: the memory map, the block at the cursor and its preview'}><Icon name="panel" size={16} /><span>Inspector</span></button>}
 
-      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} shown={cursor != null ? shownAddress(R.viewOffsets, cursor) : null} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} deepBusy={deepBusy} cycles={path && path.instructions ? path.total : null}
+      <StatusBar asm={asmMode ? stored.asm?.lang ?? null : null} A={A} fileCount={project.files.length} cursor={cursor} shown={cursor != null ? shownAddress(R.viewOffsets, cursor) : null} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} deepBusy={deepBusy} cycles={path && path.instructions ? path.total : null}
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null}
         messages={{ count: messages.length, errors: messages.filter(m => m.kind === 'err').length }}
         actions={{ onFiles: () => showSection('files'), onGoto: () => setModal('goto'), onLog: () => setUi({ bottom: 'log', panelOpen: true }),

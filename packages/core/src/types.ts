@@ -496,7 +496,20 @@ export interface Project {
   userScripts?: UserScript[];
   /** the cartridge the project was opened from (missing or null: none) */
   cart?: Cartridge | null;
+  /** a project written in the Assembler (spec 10.7): the sources in its folder are the program, and what Mimir's own
+   *  assembler makes of them is what its views show (`files` stays empty: nothing is loaded into it). Missing or null:
+   *  a project of a program to re-assemble */
+  asm?: AsmProjectInfo | null;
   settings: Settings;
+}
+
+/** What an Assembler project (Project.asm) is written for and builds. */
+export interface AsmProjectInfo {
+  /** the assembler its sources are written for, checked as and built with */
+  lang: ScriptLang;
+  /** the source Run and Build build, a path in the project's folder (with `/`); missing or null: the one Mimir finds
+   *  (the source that starts a program and no other imports) */
+  main?: string | null;
 }
 
 /** What `analyze()` and `render()` need; tests and the CLI build these directly. */
@@ -605,6 +618,8 @@ export interface SerializedProject {
   userScripts?: (Omit<UserScript, 'id' | 'pads'> & { id?: string; pads: (Omit<ScriptPad, 'bytes' | 'data'> & { bytes?: string; data?: string })[] })[];
   /** the cartridge image as base64; missing in project files from before cartridges, and without one */
   cart?: { name: string; data: string };
+  /** an Assembler project's (Project.asm); missing in the others */
+  asm?: AsmProjectInfo;
   settings: Partial<Settings>;
 }
 

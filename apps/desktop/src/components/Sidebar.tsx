@@ -25,6 +25,9 @@ interface SidebarProps {
   view: Activity; A: AnalysisResult; R: RenderResult; project: Project; colors: CanvasColors; cursor: Addr | null;
   /** the Library view (spec 10.6) */
   library: LibraryViewProps;
+  /** an Assembler project (spec 10.7): the Explorer shows the program its sources make (its file, the disk, the tape and
+   *  the memory map), none of a re-assembly's; `main`: the main file chosen (null: the one Mimir finds). Null: another */
+  asm?: { main: string | null; onShow: (a: Addr) => void } | null;
   onNavigate: (a: Addr) => void; onDemo: () => void; onRemoveFile: (i: number) => void;
   /** a label picked in Symbols: the listing goes to it with the box of its references (else onNavigate) */
   onLabel?: (a: Addr) => void;
@@ -158,7 +161,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
+export function Sidebar({ asm, view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -168,7 +171,17 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLab
     return (
       <div className="side-inner">
         <div className="side-title">Explorer</div>
-        <SideSection id="files" title="Files" summary={`${project.files.length} file${project.files.length === 1 ? '' : 's'}`}
+        {asm ? <SideSection id="program" title="Program" summary={project.files.length ? `${fmtBytes(project.files[0].bytes.length)} at $${h4(project.files[0].load)}` : 'none yet'}>
+          {project.files.map((f, i) => (
+            <div key={f.id || i} className="file-row" onClick={() => asm.onShow(A.entry ?? f.load)} title="The program's start in the sources">
+              <Icon name="code" size={14} />
+              <div className="file-meta"><div className="file-name">{f.name}</div><div className="muted mono small">${h4(f.load)}–${h4(f.load + f.bytes.length - 1)} · {fmtBytes(f.bytes.length)}{A.entry != null ? ` · starts at $${h4(A.entry)}` : ''}</div></div>
+            </div>
+          ))}
+          <p className="side-hint">{project.files.length
+            ? <>What Mimir's own assembler makes of the sources{asm.main ? <> (<span className="mono">{asm.main}</span>)</> : null} as you type, as the build writes it: Graphics, Memory and the inspector show it with the sources' names, and a click on a block of the memory map shows its line in the sources.</>
+            : 'No program yet: once the sources assemble in Mimir, what they make is here, in Graphics, Memory and the inspector.'}</p>
+        </SideSection> : <SideSection id="files" title="Files" summary={`${project.files.length} file${project.files.length === 1 ? '' : 's'}`}
           actions={<>
             <button className="btn tiny ghost" onClick={onDemo} title="Load the showcase: a C64 intro with one block of every type and a guided tour (F2)">Demo</button>
             <button className="icon-btn" title="Add PRG to this project" aria-label="Add PRG to this project" onClick={onAdd}><Icon name="plus" size={14} /></button>
@@ -189,16 +202,18 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLab
             <button className="btn small" onClick={onAdd} title="Add one or more .prg files to this project, beside the ones in it"><Icon name="plus" size={13} />Add PRG file…</button>
           </div>
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
-        </SideSection>
-        {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
+        </SideSection>}
+        {!asm && cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
         {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onFileMenu={onDiskFileMenu} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowDloc={onShowDloc} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} onShowParaProtect={onShowParaProtect} onShowDiskSpeed={onShowDiskSpeed} />}
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} onFileMenu={onTapeFileMenu} />}
-        <QuicksaveSection {...quicksave} />
-        {patches.list.length > 0 && <PatchesSection {...patches} />}
-        {junk.list.length > 0 && <JunkSection {...junk} A={A} project={project} fileAddr={fileAddr} />}
-        {viewOffsets.list.length > 0 && <ViewOffsetsSection {...viewOffsets} A={A} R={R} />}
-        <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
-        <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
+        {!asm && <>
+          <QuicksaveSection {...quicksave} />
+          {patches.list.length > 0 && <PatchesSection {...patches} />}
+          {junk.list.length > 0 && <JunkSection {...junk} A={A} project={project} fileAddr={fileAddr} />}
+          {viewOffsets.list.length > 0 && <ViewOffsetsSection {...viewOffsets} A={A} R={R} />}
+          <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
+          <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
+        </>}
         <SideSection id="map" title="Memory map" summary={`${segs.length} block${segs.length === 1 ? '' : 's'}`}>
           <div className="mmap">
             <MemoryStrip A={bankView.A} colors={colors} cursor={bankView.cursor} onNavigate={a => onNavigate(bankView.base + a)} />

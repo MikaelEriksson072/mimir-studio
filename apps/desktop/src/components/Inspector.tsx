@@ -17,6 +17,9 @@ import { asmWords, useAssembler } from '../lib/assembler';
 
 interface InspectorProps {
   A: AnalysisResult; R: RenderResult; project: Project; cursor: Addr | null; sel: Sel | null; colors: CanvasColors;
+  /** an Assembler project (spec 10.7): the block is what the sources make, shown and not changed here, with its line in
+   *  the sources (`lineOf`, `onShow` goes there); null: another project */
+  source?: { lineOf: (a: Addr) => string | null; onShow: (a: Addr) => void } | null;
   heatMode: HeatMode; setHeatMode: (m: HeatMode) => void;
   onNavigate: (a: Addr) => void; onSelect: (s: Addr, e: Addr) => void;
   onMark: (id: string, range: { start: Addr; end: Addr }) => void; onRename: (a: Addr, name: string) => void;
@@ -68,7 +71,7 @@ type ZoomKind = 'chars' | 'sprite';
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, onSpriteColors, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice', onAddToLibrary }: InspectorProps) {
+export function Inspector({ source, A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, onSpriteColors, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice', onAddToLibrary }: InspectorProps) {
   const words = asmWords(useAssembler());
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
@@ -87,7 +90,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   const autoMode: GfxMode | null = blk ? (blk.type === 'sprite' ? 'sprite' : blk.type === 'charset' ? 'chars' : blk.type === 'bitmap' ? 'bitmap' : null) : null;
   const mode = view === 'auto' ? autoMode : view;
   // a graphics block shown as what it is: multicolour as set for it (the listing's pictures draw it so too)
-  const blockMcOn = !!blk && view === 'auto' && autoMode != null && (sel == null || !sel.multi || (sel.start === blk.start && sel.end === blk.end));
+  const blockMcOn = !source && !!blk && view === 'auto' && autoMode != null && (sel == null || !sel.multi || (sel.start === blk.start && sel.end === blk.end));
   const mcShown = blockMcOn && blk ? blockMc(A, blk) : mc;
   // sprites in the colours the listing draws them in: a sprite block's own (set in its enlarged sprite), else the
   // Graphics tab's. One just picked is shown before the analysis has it (the palette is clicked through quickly)
@@ -164,7 +167,19 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
         <label className="check small"><input id="heat-fit" type="checkbox" checked={fit} onChange={e => setUi({ heatFit: e.target.checked })} /> Zoom to the loaded pages (off shows all 64 KB)</label>
         <p className="muted small">Click to jump, drag to select a range. The wheel zooms in and out, a right-drag moves the map. Each row is one 256-byte page.</p>
       </section>
-      {zpVar != null ? <ZpSection a={zpVar} A={A} R={R} project={project} onRename={onRename} onNote={onZpNote} onComment={onZpComment} onPair={onZpPair} onNavigate={onNavigate} /> : blk ? (
+      {source && blk ? (
+        <section className="insp-sec insp-asm">
+          <div className="sec-head"><span>Block</span><span className="pill">{kindInfo(blk.type).label}</span></div>
+          <dl className="kv">
+            <dt>Range</dt><dd className="mono">${h4(blk.start)}–${h4(blk.end - 1)} <span className="muted">· {blk.end - blk.start} bytes</span></dd>
+            {lb && <><dt>Label</dt><dd className="mono">{lb.name}</dd></>}
+            <dt>Source</dt><dd>{(at => { const l = source.lineOf(at); return l ? <button className="linkish" title="Show the line in the Assembler" onClick={() => source.onShow(at)}>{l}</button> : <span className="muted">no line (not written by the sources)</span>; })(cursor != null && cursor >= blk.start && cursor < blk.end ? cursor : blk.start)}</dd>
+            <dt>Refs in</dt><dd>{xin}</dd>
+            {blk.type !== 'code' && <><dt>Seen as</dt><dd>{blk.reason || '—'}</dd></>}
+          </dl>
+          <p className="muted small">The program the sources make: its code is the code they write, the rest is what the analysis sees in its bytes. It is changed in the sources.</p>
+        </section>
+      ) : zpVar != null ? <ZpSection a={zpVar} A={A} R={R} project={project} onRename={onRename} onNote={onZpNote} onComment={onZpComment} onPair={onZpPair} onNavigate={onNavigate} /> : blk ? (
         <section className="insp-sec">
           <div className="sec-head"><span>Block</span>{blk.user ? <span className="pill user">set by you</span> : <span className={cx('pill', blk.conf >= 0.85 ? 'hi' : blk.conf >= 0.6 ? 'mid' : 'lo')}>{blk.conf >= 0.85 ? 'high' : blk.conf >= 0.6 ? 'medium' : 'low'} confidence</span>}</div>
           <dl className="kv">
@@ -224,7 +239,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                 {blk.props.mc != null ? <button className="linkish small" onClick={() => onFormat(blk, { mc: null })} title="Draw it as the VIC registers say ($d01c for sprites, $d016 for a charset or bitmap)">as the VIC registers say</button>
                   : <span className="muted small">as the VIC registers say</span>}
               </div> : <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>}
-              {blockMcOn && blk && onAddToLibrary && libraryKindOf(blk.type) && <div className="merge-row"><button className="btn small" onClick={() => onAddToLibrary(blk.start)}
+              {(blockMcOn || (source && view === 'auto')) && blk && onAddToLibrary && libraryKindOf(blk.type) && <div className="merge-row"><button className="btn small" onClick={() => onAddToLibrary(blk.start)}
                 title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : blk.type === 'bitmap' ? 'bitmap as a picture' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
               {zoomKind && zoomed != null ? <GfxZoom kind={zoomKind} mem={B.A.mem} start={zStart} addr={zoomed} count={nZoom} mc={mcShown} focus={zoomClicks}
                 colors={zoomKind === 'sprite' ? spritePal : undefined} paint={zoomKind === 'sprite' && spriteBlock && onSpriteColors ? { colors: spriteColors, own: !!ownColors, onChange: paintSprites } : undefined}

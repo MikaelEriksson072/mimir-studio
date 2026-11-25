@@ -2,13 +2,16 @@
  * 6510's registers and flags (those the last step changed are marked), the instructions from the program counter on,
  * the watch list as the run has it now (what the last step changed marked), and the stack from its top down to the
  * stack pointer, with the return addresses said. */
-import { disassembleBytes, h2, h4, type Addr, type ScriptMachine, type StackEntry } from '@mimir/core';
+import { disassembleBytes, h2, h4, type Addr, type ScriptCheck, type ScriptMachine, type StackEntry } from '@mimir/core';
 import { cx } from '../lib/util';
 
 /** the registers as they were before the last step, to mark what it changed */
 export interface DebugRegs { pc: number; a: number; x: number; y: number; s: number; p: number }
 
-export const regsOf = (m: ScriptMachine): DebugRegs => ({ pc: m.cpu.pc, a: m.cpu.a, x: m.cpu.x, y: m.cpu.y, s: m.cpu.s, p: m.cpu.p });
+/** what the panel shows of a machine: a script's (ScriptMachine), or the Assembler's in the whole C64 (AsmC64) */
+export type DebugMachine = Pick<ScriptMachine, 'inScript' | 'lineAt' | 'callLine' | 'peek' | 'stack' | 'instructions' | 'cycles'> & { cpu: Pick<ScriptMachine['cpu'], 'pc' | 'a' | 'x' | 'y' | 's' | 'p'>; check: Pick<ScriptCheck, 'labels'> };
+
+export const regsOf = (m: DebugMachine): DebugRegs => ({ pc: m.cpu.pc, a: m.cpu.a, x: m.cpu.x, y: m.cpu.y, s: m.cpu.s, p: m.cpu.p });
 
 const $2 = (v: number) => '$' + h2(v), $4 = (v: number) => '$' + h4(v);
 const FLAGS: [string, number, string][] = [['N', 0x80, 'negative'], ['V', 0x40, 'overflow'], ['-', 0x20, 'always set'], ['B', 0x10, 'break'], ['D', 0x08, 'decimal mode'], ['I', 0x04, 'interrupts off'], ['Z', 0x02, 'zero'], ['C', 0x01, 'carry']];
@@ -18,7 +21,7 @@ const named = (a: Addr, names: ReadonlyMap<Addr, string>) => names.get(a) ?? $4(
 
 /** Where the run is, in words: the script's line, or the program's code with the line of the script that called it.
  *  `lineOf` (the Assembler's): an address's file and line, for a run whose code is the sources'. */
-export function whereText(m: ScriptMachine, names: ReadonlyMap<Addr, string>, lineOf?: (a: Addr) => string | null): string {
+export function whereText(m: DebugMachine, names: ReadonlyMap<Addr, string>, lineOf?: (a: Addr) => string | null): string {
   const pc = m.cpu.pc, line = m.lineAt();
   if (lineOf) { const l = lineOf(pc); return l ? `${l} (${$4(pc)})` : `At ${named(pc, names)}${names.has(pc) ? ` (${$4(pc)})` : ''}, where no line of the sources is`; }
   if (m.inScript) return line ? `Line ${line} ($${h4(pc)})` : `The script's memory at ${$4(pc)}`;
@@ -47,7 +50,7 @@ function StackRow({ e, top, names, lineAt, lineOf }: { e: StackEntry; top: boole
 
 /** `lineOf`: an address's file and line (the Assembler's run, whose code is the sources'); `atBp` then names the
  *  breakpoint's file and line */
-export function DebugPanel({ m, prev, names: program, busy, atBp = null, watch = null, lineOf }: { m: ScriptMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | string | null; watch?: React.ReactNode; lineOf?: (a: Addr) => string | null }) {
+export function DebugPanel({ m, prev, names: program, busy, atBp = null, watch = null, lineOf }: { m: DebugMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | string | null; watch?: React.ReactNode; lineOf?: (a: Addr) => string | null }) {
   const r = regsOf(m);
   // the script's code names its own addresses by its own labels, the program's code by the program's names
   const names = m.inScript && m.check.labels.size ? new Map([...program, ...m.check.labels]) : program;

@@ -19,6 +19,8 @@ interface StatusBarProps {
   /** the deep analysis is still running (the normal one is shown meanwhile) */
   deepBusy?: boolean;
   verify: { ok: boolean; kick: boolean | null } | null;
+  /** an Assembler project (spec 10.7): what its sources are written for; it has no round-trip to verify. Null: another */
+  asm?: 'kickass' | '64tass' | null;
   /** cycle counting on: the cycles of the counted range on its path */
   cycles?: number | null;
   /** the cartridge bank the cursor is in (13.9b); null without banks */
@@ -34,9 +36,9 @@ interface StatusBarProps {
 const Item = ({ onClick, title, className, children }: { onClick: () => void; title: string; className?: string; children: ReactNode }) =>
   <button type="button" className={cx('sb-item sb-btn', className)} title={title} onClick={onClick}>{children}</button>;
 
-export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, deepBusy, verify, cycles, bank, shown, messages, actions }: StatusBarProps) {
-  // the project's assembler (spec 11.8)
-  const tass = useAssembler() === '64tass';
+export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, deepBusy, verify, cycles, bank, shown, messages, actions, asm }: StatusBarProps) {
+  // the project's assembler (spec 11.8; an Assembler project's own, 10.7)
+  const own = useAssembler() === '64tass', tass = asm ? asm === '64tass' : own;
   // the memory configuration the instruction at the cursor runs with
   const port = cursor != null && A.mcfg ? A.mcfg.port[A.codeOwner[cursor] >= 0 ? A.codeOwner[cursor] : cursor] : 0;
   return (
@@ -51,9 +53,9 @@ export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, 
       {messages.count > 0 && <Item className={cx('hide-narrow', messages.errors > 0 && 'sb-err')} title={`Show the messages of this run (${messages.count}${messages.errors ? `, ${messages.errors} error${messages.errors === 1 ? '' : 's'}` : ''}) in the Messages tab`} onClick={actions.onMessages}>
         <Icon name={messages.errors ? 'err' : 'info'} size={12} />{messages.count}</Item>}
       <Item className="hide-narrow" title="Show the Analysis log" onClick={actions.onLog}>{busy ? 'analysing…' : `analysis ${A.stats.ms.toFixed(1)} ms · render ${renderMs.toFixed(1)} ms (worker)${deepBusy ? ' · deep analysis…' : ''}`}</Item>
-      <Item className={cx(verify && (verify.ok ? 'ok' : 'bad'))} title="Verify the round-trip: assemble the source and compare it with the files (F7)" onClick={actions.onVerify}>
+      {!asm && <Item className={cx(verify && (verify.ok ? 'ok' : 'bad'))} title="Verify the round-trip: assemble the source and compare it with the files (F7)" onClick={actions.onVerify}>
         {verify ? (verify.ok ? `✓ round-trip verified${verify.kick ? ` with ${tass ? '64tass' : 'KickAss.jar'}` : ''}` : '✗ round-trip failed') : 'round-trip not verified'}
-      </Item>
+      </Item>}
       <Item className="hide-narrow" title={tass ? 'Settings: the toolchain (64tass, VICE) and the assembler (Assembler output)' : 'Settings: the toolchain (Java, KickAss.jar, VICE) and the assembler (Assembler output)'} onClick={actions.onSettings}>{tass ? '64tass 1.57' : 'Kick Assembler 5.x'}</Item>
     </footer>
   );

@@ -26,6 +26,9 @@ interface TitleBarProps {
   onToggleSide: () => void; onToggleInspector: () => void;
   /** the Analysis overview (14.1b) opened again, as after a load; without files to analyse there is none */
   onOverview: () => void; canOverview: boolean;
+  /** an Assembler project (spec 10.7): no overview, verify, export or external editor, and Run builds its main file with
+   *  KickAss.jar or 64tass (`tool`) and starts it in VICE; null: another project */
+  asm?: { tool: string; building: boolean; onRun: () => void } | null;
 }
 
 export function TitleBar(p: TitleBarProps) {
@@ -40,13 +43,19 @@ export function TitleBar(p: TitleBarProps) {
         <Icon name={p.home ? 'folder' : 'doc'} size={14} /><span>{p.home ?? 'No project'}</span>{!p.home && p.changed && <span className="proj-dot" aria-hidden="true" />}<Icon name="down" size={12} />
       </button>
       <div className="tb-group hide-narrow">
-        <button className="btn ghost" onMouseDown={e => e.stopPropagation()} onClick={p.onFile} aria-haspopup="menu" aria-expanded={p.fileOpen} title="Open PRG files (Ctrl+O), a cartridge or a VICE snapshot, mount a D64, and save the project (Ctrl+S): what is opened is shown in the Explorer">File<Icon name="down" size={12} /></button>
+        <button className="btn ghost" onMouseDown={e => e.stopPropagation()} onClick={p.onFile} aria-haspopup="menu" aria-expanded={p.fileOpen} title={p.asm ? 'Mount a D64, insert a TAP, and save the project (Ctrl+S): what is mounted is shown in the Explorer' : 'Open PRG files (Ctrl+O), a cartridge or a VICE snapshot, mount a D64, and save the project (Ctrl+S): what is opened is shown in the Explorer'}>File<Icon name="down" size={12} /></button>
         <button className="icon-btn" onClick={p.onUndo} disabled={!p.undoLabel} title={p.undoLabel ? `Undo: ${p.undoLabel} (Ctrl+Z)` : 'Nothing to undo'} aria-label="Undo"><Icon name="undo" /></button>
         <button className="icon-btn" onClick={p.onRedo} disabled={!p.canRedo} title="Redo (Ctrl+Y)" aria-label="Redo"><Icon name="redo" /></button>
       </div>
       <button className="cmd-search hide-narrow" onClick={p.onPalette}><Icon name="search" size={14} /><span>{p.projectName}</span><kbd>Ctrl+Shift+P</kbd></button>
       <span className="grow" />
-      <div className="tb-group">
+      {p.asm ? <div className="tb-group">
+        <button className="btn" onClick={p.onTerminal} aria-label="Terminal" title="Open a terminal in the project folder: VICE (x64sc) is on PATH and kickass <file.asm> runs Kick Assembler"><Icon name="prompt" /><span className="hide-narrow hide-mid">Terminal</span></button>
+        <button className="btn primary" onClick={p.asm.onRun} disabled={p.asm.building} title={`Run: build the main file with ${p.asm.tool} and start it in VICE (F5); what is not written yet is written first`}><Icon name="play" /><span className="hide-narrow">{p.asm.building ? 'Building…' : 'Run'}</span></button>
+        <button className="icon-btn" onClick={p.onTheme} aria-label="Toggle theme" title="Toggle light/dark theme"><Icon name={p.theme === 'dark' ? 'sun' : 'moon'} /></button>
+        <button className="icon-btn" onClick={p.onSettings} aria-label="Settings" title="Settings (Ctrl+,)"><Icon name="sliders" /></button>
+        <button className="icon-btn only-narrow" aria-label="Toggle inspector" onClick={p.onToggleInspector}><Icon name="panel" /></button>
+      </div> : <div className="tb-group">
         <button className="icon-btn" onClick={p.onOverview} disabled={!p.canOverview} aria-label="Analysis overview"
           title={p.canOverview ? 'Analysis overview: what the analysis found, with links to each part (the window that opens after a load)' : 'Analysis overview: open a file first'}><Icon name="overview" /></button>
         <button className={cx('btn', p.verifyState === 'ok' ? 'okish' : p.verifyState === 'bad' ? 'badish' : '')} onClick={p.onVerify} disabled={p.busy} title="Re-assemble and compare byte by byte (F7)"><Icon name={p.verifyState === 'ok' ? 'ok' : 'check'} /><span className="hide-narrow">Verify</span></button>
@@ -57,7 +66,7 @@ export function TitleBar(p: TitleBarProps) {
         <button className="icon-btn" onClick={p.onTheme} aria-label="Toggle theme" title="Toggle light/dark theme"><Icon name={p.theme === 'dark' ? 'sun' : 'moon'} /></button>
         <button className="icon-btn" onClick={p.onSettings} aria-label="Settings" title="Settings (Ctrl+,)"><Icon name="sliders" /></button>
         <button className="icon-btn only-narrow" aria-label="Toggle inspector" onClick={p.onToggleInspector}><Icon name="panel" /></button>
-      </div>
+      </div>}
     </header>
   );
 }

@@ -7,7 +7,7 @@
  * script is debugged it shows the screen as the run has it now. */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { C64_BACKGROUND, C64_BORDER, C64_TEXT, SCREEN_C64, screenRowText, screenSize, type ScreenSize, type ScriptScreen } from '@mimir/core';
+import { C64_BACKGROUND, C64_BORDER, C64_TEXT, SCREEN_C64, screenRowText, screenSize, type ScreenSize, type ScriptScreen, type VicScreen } from '@mimir/core';
 import { charRom } from '../lib/charrom';
 import { builtinFont } from '../lib/gfxview';
 import { Icon } from '../lib/icons';
@@ -39,6 +39,12 @@ export interface ScriptScreenProps {
   onSize: (s: ScreenSize) => void;
   onCopy: (text: string, what?: string) => void;
   onClose: () => void;
+  /** the whole C64's picture, as its VIC draws it (the Assembler's run in the whole C64): shown in place of the text
+   *  screen, which is then only its text (to copy); `frame` tells one picture from the next */
+  picture?: VicScreen | null;
+  frame?: number;
+  /** the keys typed with the screen in focus go to a C64 (down, then up); `hint` says so under it */
+  keys?: { onKey: (e: React.KeyboardEvent, down: boolean) => void; onBlur: () => void; hint: string } | null;
 }
 
 /** the display's pixels a C64 pixel takes at a size in CSS pixels: whole ones, so that the letters stay sharp */
@@ -120,7 +126,9 @@ function Picture({ base, cursor, scale, dpr, label }: { base: HTMLCanvasElement;
   );
 }
 
-export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onExtended, onZoom, onMag, onSize, onCopy, onClose }: ScriptScreenProps) {
+export function ScriptScreenPanel({ screen, extended: wantExtended, zoom, mag, size, live, onExtended, onZoom, onMag, onSize, onCopy, onClose, picture = null, frame = 0, keys = null }: ScriptScreenProps) {
+  // (a C64's picture is the VIC's: never extended)
+  const extended = wantExtended && !picture;
   const [font, setFont] = useState<FontState>({ rom: null, state: null });
   useEffect(() => { let on = true; void charRom().then(r => { if (on) setFont({ rom: r?.found ? r.bytes : null, state: r?.found ? 'rom' : 'none' }); }); return () => { on = false; }; }, []);
   const lower = !!screen?.lower;
@@ -138,7 +146,7 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
   }, [extended, zoom, room]);
   useEffect(() => { if (extended && room.w && (grid.cols !== size.cols || grid.rows !== size.rows)) onSize(grid); }, [extended, room.w, grid, size, onSize]);
 
-  const pw = grid.cols * 8 + 2 * BX, ph = grid.rows * 8 + 2 * BY;
+  const pw = picture ? picture.width : grid.cols * 8 + 2 * BX, ph = picture ? picture.height : grid.rows * 8 + 2 * BY;
   // CSS pixels to a C64 pixel: in extended mode the size picked (smaller only when 40×25 does not fit); else the zoom
   // picked, or (Fit) as big as the panel has room for
   const fit = room.w ? fitScale(room.w, room.h, pw, ph, room.dpr) : 1;
@@ -154,6 +162,13 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
     const ctx = cv.getContext('2d');
     if (!ctx) return cv;
     const img = ctx.createImageData(pw, ph), px = img.data;
+    // the VIC's picture, a colour a pixel
+    if (picture) {
+      const pal = C64.map(hexRgb);
+      for (let i = 0; i < picture.pixels.length; i++) { const [r, g, b] = pal[picture.pixels[i] & 15], o = i * 4; px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255; }
+      ctx.putImageData(img, 0, 0);
+      return cv;
+    }
     const rgb = C64.map(hexRgb), [br, bgc, bb] = rgb[border & 15], bg = rgb[background & 15];
     for (let o = 0; o < px.length; o += 4) { px[o] = br; px[o + 1] = bgc; px[o + 2] = bb; px[o + 3] = 255; }
     for (let r = 0; r < grid.rows; r++) for (let c = 0; c < grid.cols; c++) {
@@ -169,10 +184,10 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
     }
     ctx.putImageData(img, 0, 0);
     return cv;
-  }, [screen, glyphs, grid, pw, ph, border, background]);
+  }, [screen, glyphs, grid, pw, ph, border, background, picture, frame]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the cursor: the character under it inverse, in the cursor's colour, blinking (none on a whole C64's screen)
-  const cur = screen ? screen.cursor : { col: 0, row: 0, color: C64_TEXT };
+  const cur = picture ? null : screen ? screen.cursor : { col: 0, row: 0, color: C64_TEXT };
   const cursorGlyph = useMemo(() => {
     if (!cur) return null;
     const cv = document.createElement('canvas');
@@ -268,7 +283,7 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
         {live && <span className="pill c64s-live" title="Debugging: the screen as the run has it now">now</span>}
         <span className="grow" />
         <label className={cx('c64s-ext', extended && 'on')} title="Extended mode: the screen gets more columns and rows than the C64's 40×25, as many as the panel has room for at the size of a C64 pixel picked beside it (never fewer than 40×25). Drag the panel's edge for more">
-          <input type="checkbox" role="switch" className="switch" aria-label="Extended mode" checked={extended} onChange={e => onExtended(e.target.checked)} />
+          <input type="checkbox" role="switch" className="switch" aria-label="Extended mode" checked={extended} disabled={!!picture} onChange={e => onExtended(e.target.checked)} />
           <span className="lbl">Extended</span>
         </label>
         {extended
@@ -284,7 +299,8 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
           onClick={() => { if (!screen) return; const l = [...lines]; while (l.length && !l[l.length - 1]) l.pop(); onCopy(l.join('\n'), 'the screen\'s text'); }}><Icon name="copy" size={13} /></button>
         <button className="icon-btn" aria-label="Close the C64 screen" title="Close the C64 screen (what the run printed is kept: open it again to see it)" onClick={onClose}><Icon name="x" size={13} /></button>
       </div>
-      <div className={cx('c64s-body', zoomed && 'zoomed', scrolls && 'pan')} ref={setBody}
+      <div className={cx('c64s-body', zoomed && 'zoomed', scrolls && 'pan', keys && 'keys')} ref={setBody}
+        {...(keys ? { tabIndex: 0, 'aria-label': 'The C64: keys typed here go to its keyboard', onKeyDown: (e: React.KeyboardEvent) => keys.onKey(e, true), onKeyUp: (e: React.KeyboardEvent) => keys.onKey(e, false), onBlur: keys.onBlur } : {})}
         onPointerDown={e => {
           if (!scrolls || e.button !== 0 || !body) return;
           pan.current = { x: e.clientX, y: e.clientY, left: body.scrollLeft, top: body.scrollTop };
@@ -296,6 +312,7 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
         <Picture base={base} cursor={cursor} scale={scale} dpr={room.dpr} label={label} />
       </div>
       <pre className="sr-only" aria-label="Text on the C64 screen">{lines.join('\n')}</pre>
+      {keys && <p className="c64s-note c64s-keys">{keys.hint}</p>}
       {!screen ? <p className="c64s-note">Nothing printed yet. In JavaScript: <code>screen.print("HELLO")</code>; in assembler: <code>lda #'H'</code> <code>jsr $ffd2</code>, or a screen code into <code>$0400</code> and its colour into <code>$d800</code>, as on a C64.{font.state === 'none' ? ' The letters are Mimir\'s own: VICE\'s character ROM was not found (Settings → Toolchain → VICE).' : ''}</p>
         : other ? <p className="c64s-note">Printed on {screen.cols}×{screen.rows}{screen.c64 ? ' (the whole C64\'s screen)' : ''}: shown from its top left. The next run gets {sizeText}.</p>
         : font.state === 'none' && !screen.font ? <p className="c64s-note">The letters are Mimir's own, without the graphics: VICE's character ROM was not found (Settings → Toolchain → VICE).</p> : null}

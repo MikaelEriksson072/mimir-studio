@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { asmAddrOf, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, importsOf, mainFile, sourceLang } from '../src/asm-project';
+import { asmAddrOf, asmEndText, asmLineAt, asmMachine, asmProgram, checkAsm, dataFiles, importsOf, mainFile, sourceLang } from '../src/asm-project';
 import { assemble } from '../src/verify/kick-subset-assembler';
 
 const MAIN = `BasicUpstart2(start)
@@ -116,5 +116,46 @@ describe('a new folder\'s first source', () => {
     expect(r.end).toBe('rts');
     // HELLO in screen codes at the top left (the screen was cleared first)
     expect(Array.from(r.screen!.codes.slice(0, 5))).toEqual([8, 5, 12, 12, 15]);
+  });
+});
+
+describe('the Assembler: a project of sources', () => {
+  it('gives the project views the program as the build writes it: one file, its code as code, its labels, its start', () => {
+    const c = checkAsm({ 'main.asm': MAIN, 'lib/print.asm': LIB, 'lib/data.asm': DATA }, 'main.asm', 'kickass');
+    expect(c.ok).toBe(true);
+    const p = asmProgram(c, 'main.asm');
+    expect(p.files).toHaveLength(1);
+    const f = p.files[0], prg = c.asm.prg!;
+    expect(f.name).toBe('main.prg');
+    expect(f.load).toBe(prg[0] | (prg[1] << 8));
+    expect([...f.bytes]).toEqual([...prg.subarray(2)]);
+    expect(p.entryPoint).toBe(c.entry);
+    // the code, each instruction the assembler wrote, in ranges; the text and the data are not in them
+    const start = c.names.get('start')!, text = c.names.get('text')!, value = c.names.get('value')!;
+    const inCode = (a: number) => p.overrides.some(o => o.type === 'code' && a >= o.start && a < o.end);
+    expect(inCode(start)).toBe(true);
+    expect(inCode(c.names.get('copy')!)).toBe(true);
+    expect(inCode(text)).toBe(false);
+    expect(inCode(value)).toBe(false);
+    expect(p.labels[c.names.get('copy')!]).toBe('copy');
+    expect(p.labels[text]).toBe('text');
+    expect(p.labels[value]).toBe('value');
+  });
+  it('has no file for a program without bytes', () => {
+    const c = checkAsm({ 'main.asm': '.const X = 1\n' }, 'main.asm', 'kickass');
+    expect(asmProgram(c, 'main.asm').files).toEqual([]);
+  });
+});
+
+describe('the Assembler: its project file', () => {
+  it('keeps what an Assembler project is written for and builds, and no files', async () => {
+    const { createProject, serializeProject, deserializeProject } = await import('../src/project');
+    const p = createProject({ name: 'intro', files: [], asm: { lang: '64tass', main: 'src/main.asm' } });
+    const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(p))));
+    expect(back.asm).toEqual({ lang: '64tass', main: 'src/main.asm' });
+    expect(back.files).toEqual([]);
+    const plain = deserializeProject(JSON.parse(JSON.stringify(serializeProject(createProject({ name: 'game', files: [] })))));
+    expect(plain.asm).toBeUndefined();
+    expect(serializeProject(createProject({ name: 'x', files: [], asm: { lang: 'kickass' } })).asm).toEqual({ lang: 'kickass' });
   });
 });

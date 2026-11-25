@@ -1,21 +1,26 @@
-/* The Assembler (spec 10.7): the script editor (10.3) as an assembler, started from the start screen. A folder of Kick
- * Assembler or 64tass sources is the project: its files are listed beside the code in place of the script editor's
- * library and templates. A file opened there is written in the same editor (highlighting, suggestions and hovers of the
- * program's names, go to a definition in any of the folder's files), checked as it is typed with Mimir's own assembler,
- * and written to its file a moment after the last key, as everything in Mimir is kept as it is made. Run builds the main
- * file with KickAss.jar or 64tass and starts it in VICE; Debug runs it in Mimir's 6510 an instruction at a time, with
- * breakpoints, the registers, the stack and the C64 screen; under the code the problems, the last build and the last run. */
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+/* The Assembler (spec 10.7): the script editor (10.3) as an assembler, in the project window. An Assembler project is a
+ * folder of Kick Assembler or 64tass sources with its project file: its files are listed beside the code in place of
+ * the script editor's library and templates. A file opened there is written in the same editor (highlighting,
+ * suggestions and hovers of the program's names, go to a definition in any of the folder's files), checked as it is
+ * typed with Mimir's own assembler, and written to its file a moment after the last key, as everything in Mimir is kept
+ * as it is made. What the check assembles is the program the project's other views show (Graphics, Memory, the
+ * inspector, the Explorer: store/asmlink.ts). Run builds the main file with KickAss.jar or 64tass and starts it in VICE;
+ * Debug runs it in Mimir's 6510 (or the whole C64) an instruction at a time, with breakpoints, the registers, the stack
+ * and the C64 screen; under the code the problems, the last build and the last run. The start screen's Assembler page
+ * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmEndText, asmLineAt, asmMachine, asmTemplate, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, sourceLang, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
-import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult } from '../../shared/ipc';
-import { projectNameProblem } from '../../shared/projects';
-import type { ContextMenuState, MenuItem } from '../lib/types';
-import { Icon, LVL_ICON } from '../lib/icons';
+import { AsmC64, asmC64Text, asmProgram, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
+import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
+import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
+import { projectFileName, projectNameProblem } from '../../shared/projects';
+import type { MenuItem } from '../lib/types';
+import { Icon } from '../lib/icons';
 import { cx, errorText, fmtBytes } from '../lib/util';
-import { NO_TABS, useAssembler, type AsmTabs } from '../store/assembler';
+import { NO_TABS, useAssembler, type AsmMachineKind, type AsmTabs } from '../store/assembler';
+import { useAsmLink } from '../store/asmlink';
 import { runScreenSize, useScripts } from '../store/scripts';
-import { ContextMenu } from './ContextMenu';
+import { useUi } from '../store/ui';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { ScriptScreenPanel } from './ScriptScreen';
@@ -56,37 +61,22 @@ const pathOfUri = (uri: Monaco.Uri) => (uri.scheme === 'asm' ? uri.path.replace(
 /** whether `full` is the folder `dir` or in it */
 const inside = (dir: string, full: string) => { const d = dir.replace(/[\\/]+$/, '').toLowerCase(), f = full.toLowerCase(); return f === d || f.startsWith(`${d}\\`) || f.startsWith(`${d}/`); };
 const joinDir = (dir: string, sub: string) => `${dir.replace(/[\\/]+$/, '')}${dir.includes('\\') ? '\\' : '/'}${dir.includes('\\') ? sub.replace(/\//g, '\\') : sub}`;
-
-export function AssemblerView({ onBack }: { onBack: () => void }) {
-  const [folder, setFolder] = useState<AsmFolder | null>(null);
-  const [toasts, setToasts] = useState<{ id: number; msg: string; kind: ToastKind }[]>([]);
-  const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const toast = useCallback<ToastFn>((msg, kind = 'info') => {
-    const id = Date.now() + Math.random();
-    setToasts(t => [...t.slice(-3), { id, msg, kind }]);
-    if (kind !== 'err') setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), Math.min(9000, Math.max(4200, msg.length * 40)));
-  }, []);
-  const onMenu = useCallback<OnMenu>((x, y, items) => setMenu({ x, y, items }), []);
-  /** what the window does before it closes: the files written (AsmWorkspace sets it) */
-  const beforeClose = useRef<() => Promise<unknown>>(() => Promise.resolve());
-  // the window closing (its X, Alt+F4): what is not written yet is written first
-  useEffect(() => kr?.onCloseAsked(() => { void beforeClose.current().catch(() => null).then(() => kr.answerClose({ close: true })); }), []);
-  return (
-    <div className="asm-app">
-      {folder ? <AsmWorkspace key={folder.dir} folder={folder} onFolder={setFolder} toast={toast} onMenu={onMenu} beforeClose={beforeClose}
-        onLeave={to => { if (to === 'start') onBack(); else setFolder(null); }} />
-        : <AsmHome onOpened={setFolder} onBack={onBack} />}
-      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} /><span className="toast-msg">{t.msg}</span>
-        {t.kind === 'err' && <button className="icon-btn toast-x" aria-label="Dismiss the message" onClick={() => setToasts(x => x.filter(y => y.id !== t.id))}><Icon name="x" size={13} /></button>}</div>)}</div>
-    </div>
-  );
-}
+/** the folder's listing without the project's own project file (Mimir writes it as the project changes: not a file to
+ *  open in the editor) */
+const withoutProjectFile = (f: AsmFolder, name: string): AsmFolder => {
+  const own = projectFileName(name).toLowerCase();
+  return { ...f, entries: f.entries.filter(e => e.dir || e.path.toLowerCase() !== own) };
+};
 
 /* ---------------------------------------------------------------------------------------------------------------- */
 
-/** Before a folder is open: open one (a dialog, or one opened before), or make a new one with a first source. */
-function AsmHome({ onOpened, onBack }: { onOpened: (f: AsmFolder) => void; onBack: () => void }) {
+/** The start screen's Assembler page: a new Assembler project (a folder with a first source), or a folder of sources
+ *  opened as one (a dialog, or one opened before): `onCreate` and `onOpen` make the project and open it in the window. */
+export function AssemblerHome({ onBack, onCreate, onOpen }: {
+  onBack: () => void;
+  onCreate: (name: string, parent: string, lang: ScriptLang, git: boolean) => Promise<void>;
+  onOpen: (path?: string) => Promise<void>;
+}) {
   const [info, setInfo] = useState<AsmStartInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -97,7 +87,7 @@ function AsmHome({ onOpened, onBack }: { onOpened: (f: AsmFolder) => void; onBac
     setBusy(true); setError(null);
     try { await fn(); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
-  const open = (path?: string) => run(async () => { const f = await kr?.assemblerOpen(path ? { path } : {}); if (f) onOpened(f); });
+  const open = (path?: string) => run(() => onOpen(path));
   const forget = (dir: string) => run(async () => { const recent = await kr!.assemblerForget({ dir }); setInfo(i => i && { ...i, recent }); });
   const recent = info?.recent ?? [];
   return (
@@ -108,9 +98,9 @@ function AsmHome({ onOpened, onBack }: { onOpened: (f: AsmFolder) => void; onBac
           <h1>Assembler</h1>
           <span className="muted">Kick Assembler or 64tass sources, as in the script editor</span>
         </div>
-        <p className="asm-home-lead">A folder of sources is the project: its files are listed beside the code. What you type is checked as you type and written to its file at once; <b>Run</b> builds the main file with KickAss.jar or 64tass and starts it in VICE, <b>Debug</b> goes through it in Mimir's 6510 a step at a time.</p>
+        <p className="asm-home-lead">An Assembler project is a folder of sources with its project file, opened in Mimir's window as any project is: the <b>Assembler</b> tab lists its files beside the code, checks what you type as you type it and writes it to its file at once; <b>Run</b> builds the main file with KickAss.jar or 64tass and starts it in VICE, <b>Debug</b> goes through it a step at a time. Graphics, Memory, the inspector and the Explorer show the program the sources make, and the Git tab its folder. <b>Open folder…</b> makes a folder of sources an Assembler project (its project file is written into it), or opens the project in it.</p>
         {creating && info
-          ? <NewFolderForm parent={info.parent} onCreate={async (name, parent, lang) => { const f = await kr!.assemblerCreate({ name, parent, files: { 'main.asm': asmTemplate(lang, name) } }); onOpened(f); }} onCancel={() => setCreating(false)} />
+          ? <NewFolderForm parent={info.parent} onCreate={onCreate} onCancel={() => setCreating(false)} />
           : <div className="start-actions">
             <button className="btn primary" autoFocus disabled={busy} onClick={() => void open()}><Icon name="folder" size={14} />Open folder…</button>
             <button className="btn" disabled={busy || !info} onClick={() => setCreating(true)}><Icon name="plus" size={14} />New…</button>
@@ -132,23 +122,28 @@ function AsmHome({ onOpened, onBack }: { onOpened: (f: AsmFolder) => void; onBac
   );
 }
 
-/** A new folder for the Assembler: its name, where it goes and the assembler its first source is written for. */
-function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string; onCreate: (name: string, parent: string, lang: ScriptLang) => Promise<void>; onCancel: () => void }) {
+/** A new Assembler project: its name, where its folder goes, the assembler its first source is written for, and a git
+ *  repository or none (the box as it was ticked last, as in New project). */
+function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string; onCreate: (name: string, parent: string, lang: ScriptLang, git: boolean) => Promise<void>; onCancel: () => void }) {
   const [name, setName] = useState('');
   const [parent, setParent] = useState(parent0);
   const [lang, setLang] = useState<ScriptLang>('kickass');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const git = useUi(s => s.newProjectGit);
+  const [gitFound, setGitFound] = useState<GitVersion | null | undefined>(kr ? undefined : null);
+  useEffect(() => { let gone = false; kr?.gitVersion().then(v => { if (!gone) setGitFound(v); }, () => { if (!gone) setGitFound(null); }); return () => { gone = true; }; }, []);
+  const withGit = git && !!gitFound;
   const n = name.trim(), problem = projectNameProblem(name);
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (problem || busy) return;
     setBusy(true); setError(null);
-    try { await onCreate(n, parent, lang); } catch (err) { setError(errorText(err)); setBusy(false); }
+    try { await onCreate(n, parent, lang, withGit); } catch (err) { setError(errorText(err)); setBusy(false); }
   };
   const where = `${parent.replace(/[\\/]+$/, '')}${parent.includes('/') && !parent.includes('\\') ? '/' : '\\'}${n}`;
   return (
-    <form className="new-project" onSubmit={submit} aria-label="New folder of sources">
+    <form className="new-project" onSubmit={submit} aria-label="New Assembler project">
       <label className="field"><span>Name</span>
         <input autoFocus value={name} onChange={e => { setName(e.target.value); setError(null); }} placeholder="my-intro" spellCheck={false} className={cx(!!n && problem && 'bad')} aria-invalid={!!n && !!problem} />
       </label>
@@ -161,8 +156,16 @@ function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string
           <option value="kickass">Kick Assembler (KickAss.jar)</option><option value="64tass">64tass</option>
         </select>
       </label>
+      <label className={cx('check np-git', gitFound === null && 'off')} title={gitFound ? `${gitFound.path} (git ${gitFound.version})` : undefined}>
+        <input type="checkbox" checked={withGit} disabled={!gitFound} onChange={e => useUi.getState().set({ newProjectGit: e.target.checked })} />
+        <span>Create a git repository (.git) in the folder
+          <small className="muted">{gitFound === null
+            ? ' — git is not installed: Mimir found no git.exe on PATH or in Program Files (Git for Windows, git-scm.com)'
+            : <> — with a <span className="mono">.gitignore</span> that leaves out what the builds write (<span className="mono">out</span>, <span className="mono">build</span>). The Git tab stages, commits and pushes.</>}</small>
+        </span>
+      </label>
       <div className="np-where">{n && !problem
-        ? <>Creates <span className="mono">{where}</span> with <span className="mono">main.asm</span> in it: a program that prints a line, to start from.</>
+        ? <>Creates <span className="mono">{where}</span> with its project file and <span className="mono">main.asm</span> in it: a program that prints a line, to start from.</>
         : <span className={cx(n && 'bad')}>{problem}</span>}</div>
       {error && <div className="np-error" role="alert">{error}</div>}
       <div className="np-foot"><span className="grow" /><button type="button" className="btn" onClick={onCancel}>Cancel</button><button type="submit" className="btn primary" disabled={!!problem || busy}>{busy ? 'Creating…' : 'Create'}</button></div>
@@ -172,22 +175,45 @@ function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string
 
 /* ---------------------------------------------------------------------------------------------------------------- */
 
-/** a run of the program in Mimir's 6510, going an instruction at a time: its machine and check, the registers before
- *  the last step (what it changed is marked) */
-interface Debugging { m: ScriptMachine; c: AsmCheck; prev: DebugRegs | null }
+/** a run of the program going an instruction at a time, in Mimir's 6510 (memory only) or in the whole C64 (AsmC64):
+ *  its machine and check, the registers before the last step (what it changed is marked) */
+interface Debugging { m: ScriptMachine | AsmC64; c: AsmCheck; prev: DebugRegs | null }
 
-interface WorkspaceProps {
-  folder: AsmFolder;
-  onFolder: (f: AsmFolder) => void;
-  onLeave: (to: 'home' | 'start') => void;
+export interface AssemblerTabProps {
+  /** the project's folder, its name */
+  dir: string; name: string;
+  /** what the project is written for and builds (Project.asm), and a change to it (an undoable step of the project) */
+  info: AsmProjectInfo;
+  onInfo: (label: string, change: Partial<AsmProjectInfo>) => void;
+  /** the tab is shown: its keys work only then (it stays open behind the other tabs, its debugger running) */
+  active: boolean;
   toast: ToastFn;
   onMenu: OnMenu;
-  beforeClose: { current: () => Promise<unknown> };
 }
 
-function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }: WorkspaceProps) {
+/** The Assembler tab of an Assembler project: its folder opened (listed, watched), then the files and the code. */
+export function AssemblerTab(p: AssemblerTabProps) {
+  const [folder, setFolder] = useState<AsmFolder | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { dir, toast } = p;
+  useEffect(() => {
+    let gone = false;
+    kr?.assemblerOpen({ path: dir }).then(f => { if (!gone && f) setFolder(withoutProjectFile(f, p.name)); }, (e: unknown) => { if (!gone) { setError(errorText(e)); toast(`The project's folder could not be opened: ${errorText(e)}`, 'err'); } });
+    return () => { gone = true; void kr?.assemblerClose({ dir }).catch(() => null); useAsmLink.getState().reset(); };
+  }, [dir]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!folder) return <div className={cx('scripts asm-ws', !p.active && 'asm-hidden')}><p className={cx('muted small asm-out-p', error && 'err-text')}>{error ?? 'Reading the project\'s folder…'}</p></div>;
+  return <AsmWorkspace {...p} folder={folder} onFolder={setFolder} />;
+}
+
+interface WorkspaceProps extends AssemblerTabProps {
+  folder: AsmFolder;
+  onFolder: (f: AsmFolder) => void;
+}
+
+function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu }: WorkspaceProps) {
   const dir = folder.dir;
   const ui = useAssembler();
+  const activeRef = useRef(active); activeRef.current = active;
   const { c64, setC64 } = useScripts();
   const files = useMemo(() => folder.entries.filter(e => !e.dir), [folder.entries]);
   const paths = useMemo(() => new Set(files.map(f => f.path)), [files]);
@@ -251,7 +277,9 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     done();
   };
   const writeAll = () => Promise.all(Object.keys(timers.current).map(write));
-  beforeClose.current = writeAll;
+  // the window or the project closing: what is not written yet is written first
+  const flushRef = useRef(writeAll); flushRef.current = writeAll;
+  useEffect(() => { useAsmLink.getState().set({ flush: () => flushRef.current() }); }, []);
   const schedule = (path: string) => {
     clearTimeout(timers.current[path]);
     timers.current[path] = setTimeout(() => void write(path), WRITE_MS);
@@ -290,7 +318,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   const relistTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const relist = async () => {
     let f: AsmFolder;
-    try { f = await kr!.assemblerList({ dir }); } catch { return; }
+    try { f = withoutProjectFile(await kr!.assemblerList({ dir }), name); } catch { return; }
     onFolder(f);
     await takeListing(f);
   };
@@ -303,9 +331,9 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   const [quiet, setQuiet] = useState(texts);
   useEffect(() => { const t = setTimeout(() => setQuiet(texts), 180); return () => clearTimeout(t); }, [texts]);
   const guessed = useMemo(() => mainFile(Object.entries(quiet).map(([path, text]) => ({ path, text }))), [quiet]);
-  const chosen = ui.mains[dir];
+  const chosen = info.main ?? null;
   const main = chosen && paths.has(chosen) ? chosen : guessed;
-  const lang: ScriptLang = ui.langs[dir] ?? (main ? sourceLang(quiet[main] ?? '') : 'kickass');
+  const lang: ScriptLang = info.lang;
   const binTimes = useRef<Record<string, number>>({});
   const tried = useRef(new Set<string>());
   const wanted = useMemo(() => dataFiles(Object.entries(quiet).filter(([p]) => ASM_SOURCE.test(p)).map(([path, text]) => ({ path, text })), paths), [quiet, paths]);
@@ -331,6 +359,22 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     }
     void import('../monaco/providers').then(({ asmContext }) => { asmContext.names = check.names; asmContext.kinds = kinds; });
   }, [check]);
+  // the program the sources make, to the project's views (Graphics, Memory, the inspector, the Explorer): the last check
+  // that assembled, a moment after it (the analysis of it runs in its worker), and only when it is another program
+  const sent = useRef<{ key: string; prog: AsmProgram } | null>(null);
+  useEffect(() => {
+    const link = useAsmLink.getState();
+    link.set({ assembles: !!check?.ok });
+    if (!check?.ok || !main) return;
+    const t = setTimeout(() => {
+      const prog = asmProgram(check, main), f = prog.files[0];
+      const key = `${f ? `${f.load}:${f.bytes.join(',')}` : ''}|${JSON.stringify(prog.overrides)}|${JSON.stringify(prog.labels)}|${prog.entryPoint}`;
+      if (sent.current?.key === key) { useAsmLink.getState().set({ check }); return; }
+      sent.current = { key, prog };
+      useAsmLink.getState().set({ program: prog, check });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [check, main]);
 
   /* ---- the editor ---- */
   const host = useRef<HTMLDivElement>(null);
@@ -504,7 +548,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
       { label: 'Close all', run: () => closeTabs(t.open) },
       ...(t.preview === path ? [{ label: 'Keep it open', icon: 'pin' as const, run: () => setTabs({ ...t, preview: null }) }] : []),
       { sep: true },
-      ...(source ? [{ label: 'Main file: Run and Build build it', checked: path === main, run: () => { ui.setMain(dir, path); toast(`${path} is the main file: Run and Build build it`, 'ok'); } }] : []),
+      ...(source ? [{ label: 'Main file: Run and Build build it', checked: path === main, run: () => { onInfo('Main file', { main: path }); toast(`${path} is the main file: Run and Build build it`, 'ok'); } }] : []),
       { label: 'Show in the list', icon: 'files', run: () => { openFile(path); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.asm-tree [data-path="${CSS.escape(path)}"]`)?.focus()); } },
       { label: 'Show in folder', icon: 'folder', run: () => void kr?.assemblerReveal({ dir, path }).catch((err: unknown) => toast(errorText(err), 'err')) },
       { label: 'Copy path', icon: 'copy', run: () => { const full = joinDir(dir, path); void navigator.clipboard.writeText(full).then(() => toast(`Copied ${full}`, 'ok')); } },
@@ -537,7 +581,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
 
   /* ---- the files' changes from the list: new, renamed, deleted ---- */
   const change = async (req: AsmChangeRequest, done?: string): Promise<boolean> => {
-    try { const f = await kr!.assemblerChange(req); onFolder(f); await takeListing(f); if (done) toast(done, 'ok'); return true; }
+    try { const f = withoutProjectFile(await kr!.assemblerChange(req), name); onFolder(f); await takeListing(f); if (done) toast(done, 'ok'); return true; }
     catch (e) { toast(errorText(e), 'err'); return false; }
   };
   /** what a menu's New goes into: a folder's own path, a file's folder */
@@ -575,7 +619,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     moves.current = p => (under(p) ? moved(p) : null);
     for (const p of Object.keys(views.current)) if (under(p)) views.current[moved(p)] = views.current[p];
     try { if (!await change({ dir, op: 'rename', path: from, to }, `${from} is ${to} now`)) return; } finally { moves.current = null; }
-    if (chosen && under(chosen)) ui.setMain(dir, moved(chosen));
+    if (chosen && under(chosen)) onInfo('Main file', { main: moved(chosen) });
     ui.setExpanded(dir, [...expanded].map(p => (under(p) ? moved(p) : p)));
   };
   const remove = async (e: AsmEntry) => {
@@ -583,14 +627,14 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     for (const p of Object.keys(timers.current).filter(under)) { clearTimeout(timers.current[p]); delete timers.current[p]; }
     // (its tabs are closed as the listing no longer has it: fixTabs)
     if (!await change({ dir, op: 'remove', path: e.path }, `${e.path} is in the Recycle Bin`)) return;
-    if (chosen && under(chosen)) ui.setMain(dir, null);
+    if (chosen && under(chosen)) onInfo('Main file', { main: null });
   };
   const rowMenu = (x: number, y: number, e: AsmEntry | null) => {
     const source = !!e && !e.dir && ASM_SOURCE.test(e.path);
     const full = e ? joinDir(dir, e.path) : dir;
     const items: MenuItem[] = [
       ...(e && !e.dir ? [{ label: 'Open', icon: 'doc' as const, run: () => openFile(e.path, { keep: true }) }] : []),
-      ...(source ? [{ label: 'Main file: Run and Build build it', checked: e!.path === main, run: () => { ui.setMain(dir, e!.path); toast(`${e!.path} is the main file: Run and Build build it`, 'ok'); } }] : []),
+      ...(source ? [{ label: 'Main file: Run and Build build it', checked: e!.path === main, run: () => { onInfo('Main file', { main: e!.path }); toast(`${e!.path} is the main file: Run and Build build it`, 'ok'); } }] : []),
       ...(e ? [{ sep: true } as const] : []),
       { label: 'New file…', icon: 'plus', run: () => newIn(folderOf(e), 'file') },
       { label: 'New folder…', icon: 'folder', run: () => newIn(folderOf(e), 'folder') },
@@ -602,17 +646,8 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     ];
     onMenu(x, y, items);
   };
-  const leave = async (to: 'home' | 'start') => {
-    if (dbgRef.current) stopDbg(true);
-    await writeAll();
-    void kr?.assemblerClose({ dir }).catch(() => null);
-    onLeave(to);
-  };
   const folderMenu = (x: number, y: number) => onMenu(x, y, [
     { header: folder.name },
-    { label: 'Open another folder…', icon: 'folder', run: () => void (async () => { await writeAll(); const f = await kr?.assemblerOpen({}).catch((e: unknown) => { toast(errorText(e), 'err'); return null; }); if (f) onFolder(f); })() },
-    { label: 'Close the folder', icon: 'x', run: () => void leave('home') },
-    { sep: true },
     { label: 'Show in folder', icon: 'folder', run: () => void kr?.assemblerReveal({ dir }) },
     { label: 'Read the files again', icon: 'refresh', run: () => void relist() },
   ]);
@@ -642,7 +677,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
       if (!ok) {
         ui.set({ outTab: problems.some(p => p.file) ? 'problems' : 'build', outFolded: false });
         const p = problems.find(x => x.severity === 'error');
-        toast(!o ? `${p?.msg ?? `${tool} is not set`}${/not set|not found|missing/i.test(p?.msg ?? '') ? ' (Settings → Toolchain in Mimir\'s main window)' : ''}` : `${tool} could not build ${main}${p ? `: ${p.file}${p.line ? `:${p.line}` : ''} ${p.msg}` : ''}`, 'err');
+        toast(!o ? `${p?.msg ?? `${tool} is not set`}${/not set|not found|missing/i.test(p?.msg ?? '') ? ' (Settings → Toolchain)' : ''}` : `${tool} could not build ${main}${p ? `: ${p.file}${p.line ? `:${p.line}` : ''} ${p.msg}` : ''}`, 'err');
         if (p?.file && paths.has(p.file)) openFile(p.file, { line: p.line, col: p.column || 1 });
         return null;
       }
@@ -661,18 +696,24 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
       toast(`VICE started ${baseName(b.prgPath)} ${how}${b.vsPath ? ', its labels in the monitor' : ''}`.trim(), 'ok');
     } catch (e) {
       setBuild(x => x && { ...x, vice: `VICE did not start: ${errorText(e)}` });
-      toast(`VICE did not start: ${errorText(e)} (Settings → Toolchain in Mimir's main window)`, 'err');
+      toast(`VICE did not start: ${errorText(e)} (Settings → Toolchain)`, 'err');
     }
   };
 
-  /* ---- the debugger: the program in Mimir's 6510, an instruction at a time ---- */
+  /* ---- the debugger: the program in Mimir's 6510 (memory only) or in the whole C64 (Sindri), an instruction at a time ---- */
+  const machineKind: AsmMachineKind = ui.machines[dir] ?? 'memory';
   const [dbg, setDbg] = useState<Debugging | null>(null);
   const dbgRef = useRef(dbg); dbgRef.current = dbg;
   const [, setTick] = useState(0);
   const [dbgBusy, setDbgBusy] = useState(false);
-  const busyRef = useRef(false), pauseReq = useRef(false);
+  const busyRef = useRef(false), pauseReq = useRef(false), starting = useRef(false);
   const [kept, setKept] = useState<AsmRunKept | null>(null);
   useEffect(() => () => { pauseReq.current = true; }, []);
+  /** VICE's ROMs for the whole C64 (asked for once; null: there are none) */
+  const roms = useRef<Roms | null | undefined>(undefined);
+  /** the whole C64's picture shown, and a count that tells one from the next */
+  const [pic, setPic] = useState<{ p: VicScreen; n: number } | null>(null);
+  const showPic = (m: AsmC64, now: boolean) => setPic(x => ({ p: m.picture(now), n: (x?.n ?? 0) + 1 }));
   /** an address's file and line, in words */
   const lineText = (c: AsmCheck, a: Addr): string | null => { const l = asmLineAt(c, a); return l ? `${l.file} line ${l.line}` : null; };
   // the breakpoints of each file, as decorations (they move with the lines as the code is edited)
@@ -704,55 +745,98 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     for (const p of Object.keys(models.current)) for (const l of bpLines(p)) { const a = asmAddrOf(c, p, l); if (a != null) out.add(a); }
     return out;
   };
-  /** the debugger stopped somewhere: its line shown (in its file); at the end of the run, it is the last run */
+  /** the debugger stopped somewhere: its line shown (in its file), the C64's picture as it stands; at the end of the run
+   *  (memory only: the program returned; the whole C64: a JAM), it is the last run */
   const stopped = (d: Debugging) => {
     if (dbgRef.current !== d) return;
     if (d.m.end) { finishDbg(d); return; }
     setTick(t => t + 1);
+    if (d.m instanceof AsmC64) showPic(d.m, true);
     const l = asmLineAt(d.c, d.m.cpu.pc);
     if (l) openFile(l.file, { line: l.line, col: 1, soft: true });
   };
+  /** the run kept as the last run: how it ended (or where it was stopped), its registers, its screen */
+  const keepRun = (d: Debugging) => {
+    const r = d.m.result();
+    if (d.m instanceof AsmC64) {
+      const text = asmC64Text(d.m, a => lineText(d.c, a));
+      setKept({ run: r, text, ok: !d.m.end, at: Date.now(), picture: d.m.picture(true) });
+      return { text, ok: !d.m.end };
+    }
+    const ok = endedWell(r.end), text = asmEndText(r, a => lineText(d.c, a), a => !!d.c.asm.written[a]);
+    setKept({ run: r, text, ok, at: Date.now() });
+    return { text, ok };
+  };
   const finishDbg = (d: Debugging) => {
     setDbg(null); dbgRef.current = null;
-    const r = d.m.result(), ok = endedWell(r.end);
-    const text = asmEndText(r, a => lineText(d.c, a), a => !!d.c.asm.written[a]);
-    setKept({ run: r, text, ok, at: Date.now() });
+    const { text, ok } = keepRun(d);
     ui.set({ outTab: 'run', outFolded: false });
     toast(text, ok ? 'ok' : 'warn');
   };
-  const startDebug = () => {
-    if (dbgRef.current || building.current) return;
+  const startDebug = async (andGo = false) => {
+    if (dbgRef.current || building.current || starting.current) return;
     if (!check) { toast('There is no main file to debug: + makes a source', 'warn'); return; }
     if (!check.ok) { const p = check.problems[0]; toast(`The program does not assemble in Mimir${p ? `: ${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}` : ''}`, 'warn'); if (p?.file && p.line) openFile(p.file, { line: p.line }); return; }
-    let m: ScriptMachine;
-    try { m = asmMachine(check, lang, runScreenSize()); } catch (e) { toast(errorText(e), 'err'); return; }
-    const d: Debugging = { m, c: check, prev: null };
+    let m: ScriptMachine | AsmC64;
+    const c = check;
+    if (machineKind === 'c64') {
+      starting.current = true;
+      try {
+        if (roms.current === undefined) roms.current = (await kr?.c64Roms().catch(() => null)) ?? null;
+        if (!roms.current) { toast('A run in the whole C64 needs the ROMs of VICE: set VICE in Settings → Toolchain, or run in memory only', 'err'); return; }
+        // started as from READY (RUN or SYS typed), stopped at its first instruction; the screen beside the code shows it
+        m = new AsmC64(c, { roms: roms.current });
+        setC64({ open: true });
+      } catch (e) { toast(errorText(e), 'err'); return; } finally { starting.current = false; }
+    } else {
+      try { m = asmMachine(c, lang, runScreenSize()); } catch (e) { toast(errorText(e), 'err'); return; }
+    }
+    const d: Debugging = { m, c, prev: null };
     setDbg(d); dbgRef.current = d;
     stopped(d);
+    if (andGo) go(null);
   };
-  /** on until `stop` holds, a breakpoint's line is next, or the run ends; in parts, so the window keeps drawing */
-  const go = (stop: ((m: ScriptMachine) => boolean) | null, keepPrev = false) => {
+  /** on until `stop` holds, a breakpoint's line is next, or the run ends; in parts, so the window keeps drawing (the
+   *  whole C64 with `live`: in the C64's own time, a frame of it an animation frame, its picture drawn each time) */
+  const go = (stop: ((m: Pick<ScriptMachine, 'cpu'>) => boolean) | null, keepPrev = false, live = false) => {
     const d = dbgRef.current; if (!d || busyRef.current) return;
     const bps = bpAddrs(d.c);
-    const at = (m: ScriptMachine) => (stop ? stop(m) : false) || (bps.size > 0 && bps.has(m.cpu.pc));
+    const at = (m: Pick<ScriptMachine, 'cpu'>) => (stop ? stop(m) : false) || (bps.size > 0 && bps.has(m.cpu.pc));
     if (!keepPrev) d.prev = regsOf(d.m);
     pauseReq.current = false; busyRef.current = true; setDbgBusy(true);
+    const done = () => { busyRef.current = false; setDbgBusy(false); stopped(d); };
+    const c64m = d.m instanceof AsmC64 ? d.m : null;
+    if (c64m && live) {
+      let last = performance.now();
+      const frame = (t: number) => {
+        if (dbgRef.current !== d) return;
+        if (pauseReq.current) { done(); return; }
+        // the C64's time since the last frame (at most three of its frames: a window that was busy does not race on)
+        const cycles = Math.min(3 * FRAME_CYCLES, Math.max(LINE_CYCLES, Math.round((t - last) * PAL_CLOCK / 1000)));
+        last = t;
+        const r = c64m.runFor(cycles, at);
+        showPic(c64m, false); setTick(n => n + 1);
+        if (r === 'more') { requestAnimationFrame(frame); return; }
+        done();
+      };
+      requestAnimationFrame(frame);
+      return;
+    }
     const part = () => {
       if (dbgRef.current !== d) return;
       const r = pauseReq.current ? 'stopped' : d.m.runUntil(at, DEBUG_SLICE);
-      if (r === 'more') { setTick(t => t + 1); setTimeout(part, 0); return; }
-      busyRef.current = false; setDbgBusy(false);
-      stopped(d);
+      if (r === 'more') { if (c64m) showPic(c64m, false); setTick(t => t + 1); setTimeout(part, 0); return; }
+      done();
     };
     setTimeout(part, 0);
   };
   const stepDbg = () => {
-    const d = dbgRef.current; if (!d) { startDebug(); return; }
+    const d = dbgRef.current; if (!d) { void startDebug(); return; }
     if (busyRef.current) return;
     d.prev = regsOf(d.m); d.m.step(); stopped(d);
   };
   const overDbg = () => {
-    const d = dbgRef.current; if (!d) { startDebug(); return; }
+    const d = dbgRef.current; if (!d) { void startDebug(); return; }
     if (busyRef.current) return;
     const m = d.m;
     if (m.peek(m.cpu.pc) !== 0x20) { stepDbg(); return; }
@@ -762,14 +846,49 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     go(x => x.cpu.s === s0 && x.cpu.pc === back, true);
   };
   const outDbg = () => { const d = dbgRef.current; if (!d || busyRef.current) return; const s0 = d.m.cpu.s; go(x => x.cpu.lastOp === 0x60 && x.cpu.s > s0); };
-  const contDbg = () => { if (!dbgRef.current) startDebug(); else go(null); };
+  /** Continue: on to a breakpoint (the whole C64: in its own time, the screen live); not debugging, Debug and on */
+  const contDbg = () => { const d = dbgRef.current; if (!d) void startDebug(true); else go(null, false, d.m instanceof AsmC64); };
+  /** stop debugging where it is (`quiet`: leaving; the whole C64's run is kept as the last run, with its screen) */
   const stopDbg = (quiet = false) => {
     pauseReq.current = true;
-    if (!dbgRef.current) return;
-    setDbg(null); dbgRef.current = null; busyRef.current = false; setDbgBusy(false);
-    if (!quiet) toast('Debugging stopped', 'info');
+    const d = dbgRef.current;
+    if (!d) return;
+    setDbg(null); dbgRef.current = null; busyRef.current = false; setDbgBusy(false); heldKeys.current.clear();
+    if (quiet) return;
+    if (d.m instanceof AsmC64) { const { text } = keepRun(d); ui.set({ outTab: 'run', outFolded: false }); toast(text, 'info'); return; }
+    toast('Debugging stopped', 'info');
   };
+  // the keys typed on the C64's screen go into its keyboard matrix (the PC's held, each where it is on the C64)
+  const heldKeys = useRef(new Map<string, C64Key>());
+  const c64Keys = (e: React.KeyboardEvent, down: boolean) => {
+    const m = dbgRef.current?.m;
+    if (!(m instanceof AsmC64) || e.ctrlKey && e.code !== 'ControlLeft' && e.code !== 'ControlRight' && !/^Key|^Digit/.test(e.code)) return;
+    const k = c64Key(e.code, e.key);
+    if (!k) return;
+    e.preventDefault(); e.stopPropagation();
+    if (down) heldKeys.current.set(e.code, k); else heldKeys.current.delete(e.code);
+    m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
+  };
+  const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
   keys.current = { run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
+  // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
+  // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
+  const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
+  const seenAsk = useRef({ show: show?.n ?? 0, ask: ask?.n ?? 0 });
+  useEffect(() => {
+    if (!show || show.n === seenAsk.current.show || !loaded) return;
+    seenAsk.current.show = show.n;
+    const c = dbgRef.current?.c ?? check ?? useAsmLink.getState().check;
+    const l = c ? asmLineAt(c, show.addr) : null;
+    if (l && paths.has(l.file)) openFile(l.file, { line: l.line, col: 1 });
+    else toast(`$${h4(show.addr)} has no line in the sources: ${c?.asm.written[show.addr & 0xffff] ? 'its bytes are written by a directive of an import Mimir does not follow' : 'the program does not write it'}`, 'info');
+  }, [show, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!ask || ask.n === seenAsk.current.ask) return;
+    seenAsk.current.ask = ask.n;
+    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else void startDebug();
+  }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
   // the code cannot change while it is being debugged
   useEffect(() => { ed.current?.updateOptions({ readOnly: !!dbg }); }, [dbg, state]);
   // the debugger's line, in the file shown
@@ -786,12 +905,13 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
       : { isWholeLine: true, className: 'scr-pc-line', glyphMarginClassName: 'scr-pc-glyph' } }]);
   });
   // starting and stopping change the editor's size: laid out again once drawn (or the line numbers stay a line off)
-  useEffect(() => { const e = ed.current; if (!e) return; const id = requestAnimationFrame(() => e.layout()); return () => cancelAnimationFrame(id); }, [!!dbg, state, ui.outFolded, c64.open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const e = ed.current; if (!e) return; const id = requestAnimationFrame(() => e.layout()); return () => cancelAnimationFrame(id); }, [!!dbg, state, ui.outFolded, c64.open, active]); // eslint-disable-line react-hooks/exhaustive-deps
   // the keys outside the editor: F5 runs, Ctrl+Shift+B builds, F8 / F6 / Shift+F6 step, Ctrl+S writes; the tabs'
   // Ctrl+Tab (Ctrl+PageDown), Ctrl+Shift+Tab (Ctrl+PageUp) and Ctrl+F4 also in the list and the output
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement | null)?.closest?.('.monaco-editor, textarea')) return;
+      if (!activeRef.current || document.querySelector('[role="dialog"]')) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.monaco-editor, textarea, .c64s-body.keys')) return;
       const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && !e.altKey && (e.key === 'Tab' || e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); keys.current.tab(e.key === 'PageUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1); return; }
       if (ctrl && !e.altKey && !e.shiftKey && e.key === 'F4') { e.preventDefault(); keys.current.closeTab(); return; }
@@ -815,21 +935,22 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   const chip = !check ? (main ? 'Checking…' : 'No source') : check.ok
     ? `Ready · ${plural(check.bytes, 'byte')}${check.entry != null ? `, starts at $${h4(check.entry)}` : ''}`
     : `${errors.length > 1 ? `${plural(errors.length, 'problem')} · ` : ''}${first.file !== shown ? `${first.file} ` : ''}${first.line ? `line ${first.line}: ` : ''}${first.msg}`;
-  const names = useMemo(() => (dbg ? dbg.c.check.labels : check?.check.labels) ?? new Map<Addr, string>(), [dbg, check]);
+  const names = useMemo(() => {
+    const own = (dbg ? dbg.c.check.labels : check?.check.labels) ?? new Map<Addr, string>();
+    return dbg?.m instanceof AsmC64 ? new Map<Addr, string>([...[...SYM.exact.values()].map(x => [x.addr, x.name] as [Addr, string]), ...own]) : own;
+  }, [dbg, check]);
   const listW = ui.listW;
   return (
-    <div className="scripts asm-ws">
+    <div className={cx('scripts asm-ws', !active && 'asm-hidden')}>
       {ui.listFolded
         ? <div className="scr-list folded" role="navigation" aria-label="Files, folded in">
-          <button className="icon-btn" onClick={() => void leave('start')} aria-label="Start" title="Back to the start screen (what is not written yet is written first)"><Icon name="left" size={15} /></button>
           <button className="icon-btn" onClick={() => ui.set({ listFolded: false })} aria-label="Unfold the file list" title="Unfold the list of the folder's files"><Icon name="side-show" size={16} /></button>
           <button className="icon-btn" onClick={() => newIn(shown ? parentOf(shown) : '', 'file')} aria-label="New file" title="New file"><Icon name="plus" size={15} /></button>
         </div>
         : <div className="scr-list asm-list" style={{ width: listW }}>
           <div className="asm-top">
-            <button className="icon-btn" onClick={() => void leave('start')} aria-label="Start" title="Back to the start screen (what is not written yet is written first)"><Icon name="left" size={15} /></button>
             <span className="asm-folder" title={dir}><Icon name="folder" size={13} />{folder.name}</span>
-            <button className="icon-btn" aria-label="The folder" title="Open another folder, close this one, show it in the file manager" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); folderMenu(r.left, r.bottom + 2); }}><Icon name="more" size={15} /></button>
+            <button className="icon-btn" aria-label="The folder" title="The project's folder: show it in the file manager, read its files again" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); folderMenu(r.left, r.bottom + 2); }}><Icon name="more" size={15} /></button>
           </div>
           <div className="scr-list-head"><span>Files</span><span className="grow" />
             <button className="icon-btn" onClick={() => newIn(shown && entryOf.get(shown)?.dir ? shown : shown ? parentOf(shown) : '', 'file')} aria-label="New file" title="New file (a name without an extension is a .asm source)"><Icon name="plus" size={15} /></button>
@@ -849,8 +970,8 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
           {check && <span className={cx('pill scr-check', check.ok ? 'hi' : 'lo')} role="status" onClick={() => { if (first?.file && first.line) openFile(first.file, { line: first.line }); }}
             title={[...errors.map(p => `${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}`), check.ok ? `Mimir's own assembler assembles the program: ${check.ranges.slice(0, 4).map(r => `$${h4(r.start)}-$${h4(r.end - 1)}`).join(', ')}${check.entry != null ? `; a run starts at $${h4(check.entry)}` : ''}.` : 'What Mimir\'s own assembler finds as you type. It knows most of Kick Assembler and 64tass, not all: Run builds with the real one all the same.'].join('\n')}>
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}</span>}
-          <button className="pill scr-lang asm-lang" aria-label="Language" onClick={() => ui.setLang(dir, lang === '64tass' ? 'kickass' : '64tass')}
-            title={`The folder's sources are ${LANG_TITLE[lang]}'s${ui.langs[dir] ? ' (you chose it)' : ' (the main file looks written for it)'}: checked as that and built with ${tool}. A click makes them ${lang === '64tass' ? 'Kick Assembler' : '64tass'}`}>{LANG_TITLE[lang]}</button>
+          <button className="pill scr-lang asm-lang" aria-label="Language" onClick={() => onInfo('Language', { lang: lang === '64tass' ? 'kickass' : '64tass' })}
+            title={`The project's sources are ${LANG_TITLE[lang]}'s: checked as that and built with ${tool}. A click makes them ${lang === '64tass' ? 'Kick Assembler' : '64tass'} (the project file keeps it)`}>{LANG_TITLE[lang]}</button>
           {main && shown !== main && <button className="pill asm-main-pill" onClick={() => openFile(main)} title={`The main file, which Run and Build build: ${main}. A click opens it (right-click a source in the list to make it the main file)`}>
             <Icon name="play" size={10} />{baseName(main)}</button>}
           <span className="grow" />
@@ -861,7 +982,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
           {dbg ? <div className="scr-dbg-tools" role="group" aria-label="Debugging">
             {dbgBusy
               ? <button className="btn" onClick={() => { pauseReq.current = true; }} title="Stop where it is now, and go on debugging from there">Pause</button>
-              : <button className="btn primary" onClick={contDbg} title="Go on to the end of the run, or to the next breakpoint (Ctrl+Enter)"><Icon name="play" />Continue<kbd>Ctrl+Enter</kbd></button>}
+              : <button className="btn primary" onClick={contDbg} title={dbg?.m instanceof AsmC64 ? 'Go on in the C64\'s own time, the screen beside the code live, to the next breakpoint or until Pause (Ctrl+Enter)' : 'Go on to the end of the run, or to the next breakpoint (Ctrl+Enter)'}><Icon name="play" />Continue<kbd>Ctrl+Enter</kbd></button>}
             <button className="btn" disabled={dbgBusy} onClick={stepDbg} title="Run the next instruction; into a JSR (F8)">Step<kbd>F8</kbd></button>
             <button className="btn" disabled={dbgBusy} onClick={overDbg} title="Run the next instruction; a JSR runs until it returns (F6)">Over<kbd>F6</kbd></button>
             <button className="btn" disabled={dbgBusy} onClick={outDbg} title="Run until the routine it is in returns (Shift+F6)">Out<kbd>Shift+F6</kbd></button>
@@ -871,11 +992,20 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
               title={main ? `Build ${main} with ${tool} and start it in VICE (Ctrl+Enter or F5); what is not written yet is written first` : 'There is no source to run'}>
               <Icon name="play" />{build?.running ? 'Building…' : 'Run'}<kbd>Ctrl+Enter</kbd></button>
             <button className="btn asm-build" disabled={!main || !!build?.running} onClick={() => void doBuild(false)} title={main ? `Build ${main} with ${tool}, without starting it (Ctrl+Shift+B): the PRG goes in out\\ beside it` : 'There is no source to build'}>Build</button>
-            <button className="btn scr-debug-btn" disabled={!check?.ok} onClick={startDebug}
-              title={check?.ok ? 'Debug: start the program in Mimir\'s 6510 and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). Mimir\'s 6510 has no ROMs or I/O: the KERNAL\'s printing routines are done on the C64 screen, the rest runs in VICE' : 'The program must assemble in Mimir before it can be debugged: see the problems'}>Debug<kbd>F8</kbd></button>
+            <button className="btn scr-debug-btn" disabled={!check?.ok} onClick={() => void startDebug()}
+              title={!check?.ok ? 'The program must assemble in Mimir before it can be debugged: see the problems'
+                : machineKind === 'c64' ? 'Debug in the whole C64: Sindri\'s C64 with VICE\'s ROMs, the VIC, the CIAs and their interrupts. The program is loaded as LOAD does, started with RUN (or SYS) typed at READY and stopped before its first instruction; then an instruction at a time (F8), over a JSR (F6), or on in the C64\'s own time with the screen live (Ctrl+Enter) to a breakpoint (click left of a line number).'
+                : 'Debug: start the program in Mimir\'s 6510 and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). Memory only: no ROMs or I/O, the KERNAL\'s printing routines are done on the C64 screen (Runs in: Whole C64 has the rest)'}>Debug<kbd>F8</kbd></button>
+            <select className="asm-machine" aria-label="Runs in" value={machineKind} onChange={e => ui.setMachine(dir, e.target.value === 'c64' ? 'c64' : 'memory')}
+              title="What Debug runs the program in: Mimir's 6510 with the program's memory only (fast, the KERNAL's printing routines done on the C64 screen), or the whole C64 (Sindri, with VICE's ROMs: BASIC, the KERNAL, the VIC, the CIAs, interrupts, the keyboard; the screen as the VIC draws it, live)">
+              <option value="memory">Memory only</option>
+              <option value="c64">Whole C64</option>
+            </select>
           </>}
         </div>
-        {dbg && <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in Mimir's 6510: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. It has no ROMs or I/O: the KERNAL's printing routines are done on the C64 screen.</span></p>}
+        {dbg && (dbg.m instanceof AsmC64
+          ? <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in the whole C64 (Sindri, VICE's ROMs): {dbg.m.typed} was typed at READY and the program stopped at its first instruction. <b>Continue</b> runs it in the C64's own time with the screen live; click the screen and type to use the C64's keyboard. The code cannot be changed until you stop; a click left of a line number sets a breakpoint.</span></p>
+          : <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in Mimir's 6510: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. It has no ROMs or I/O: the KERNAL's printing routines are done on the C64 screen.</span></p>)}
         <div className="scr-body">
           <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf}
             onShow={p => setShown(p)} onKeep={p => placeTab(p, true)} onClose={closeTabs} onMove={moveTab} onMenu={tabMenu} />
@@ -896,7 +1026,9 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
                 setC64({ width: Math.max(240, Math.min(rowW - other, useScripts.getState().c64.width - d)) });
               }} />
               <div className="scr-screen-col" style={{ width: c64.width }}>
-                <ScriptScreenPanel screen={dbg ? dbg.m.screen.state() : kept?.run.screen ?? null} live={!!dbg} extended={c64.extended} zoom={c64.zoom} mag={c64.mag} size={c64.size}
+                <ScriptScreenPanel screen={dbg ? (dbg.m instanceof AsmC64 ? dbg.m.text() : dbg.m.screen.state()) : kept?.run.screen ?? null} live={!!dbg} extended={c64.extended} zoom={c64.zoom} mag={c64.mag} size={c64.size}
+                  picture={dbg ? (dbg.m instanceof AsmC64 ? pic?.p ?? null : null) : kept?.picture ?? null} frame={pic?.n ?? 0}
+                  keys={dbg?.m instanceof AsmC64 ? { onKey: c64Keys, onBlur: c64Release, hint: dbgBusy ? 'Click the screen and type: the keys go to the C64\'s keyboard (Esc is RUN/STOP, Alt is C=, Tab is CTRL).' : `Stopped on raster line ${dbg.m.m.vic.line}, cycle ${dbg.m.m.vic.lineCycle}: the picture down to that line is this frame's, below it the VIC's registers as they are now. Continue (Ctrl+Enter) runs the C64; click the screen and type for its keyboard.` } : null}
                   onExtended={v => setC64({ extended: v })} onZoom={z => setC64({ zoom: z })} onMag={m => setC64({ mag: m })} onSize={sz => setC64({ size: sz })}
                   onCopy={t => void navigator.clipboard.writeText(t).then(() => toast('Copied the screen\'s text', 'ok'))} onClose={() => setC64({ open: false })} />
               </div>

@@ -164,6 +164,7 @@ mimir-studio/
 │     │              Inspector, Heatmap, GfxPreview, BottomPanel, StatusBar,
 │     │              CommandPalette, Settings, ContextMenu}.tsx
 │     ├─ components/{AssemblerView, AsmTree, AsmOutput}.tsx   Assemblern: filerna bredvid koden, Run, Debug (10.7)
+│     ├─ store/asmlink.ts          Assembler-projektet i projektfönstret: programmet till vyerna, visa en rad, Run (10.7)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
 │     └─ styles/{tokens.css, tailwind.css}
 ├─ packages/core/
@@ -175,6 +176,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
+│  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3627,18 +3629,44 @@ från listningen och Graphics-fliken med skärmen $6000 och färg-RAM från `log
 
 ### 10.7 Assemblern
 
-Med skripteditorn (10.3) har Mimir i princip en assembler. Assemblern är den editorn för att skriva egna C64-program:
-den startas från startfönstret (**Assembler…**) och tar hela fönstret, som *Pack a file* gör, med *Start* tillbaka.
-Där skripteditorn har biblioteket och mallarna har Assemblern projektets filstruktur; editorn i övrigt är skripteditorns.
-Det rena står i `packages/core/src/asm-project.ts`; mappen läses och skrivs bara av huvudprocessen
-(`apps/desktop/electron/main/assembler.ts`), och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`,
-`AsmOutput.tsx`, `store/assembler.ts`).
+Med skripteditorn (10.3) har Mimir i princip en assembler. Assemblern är den editorn för att skriva egna C64-program,
+i projektfönstret som re-assemblern (2026-11-25): ett **Assembler-projekt** är ett Mimir-projekt vars källkod är
+programmet, och det har projektets delar (projektfilen, Git-fliken, Graphics, Memory, Utforskaren, inspektorn,
+skripten, biblioteket) men inget av analysen, re-assembleringen eller listningen. Där skripteditorn har biblioteket och
+mallarna har Assemblern projektets filstruktur; editorn i övrigt är skripteditorns. Det rena står i
+`packages/core/src/asm-project.ts`; mappen läses och skrivs bara av huvudprocessen (`apps/desktop/electron/main/assembler.ts`),
+och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.tsx`, `store/assembler.ts`,
+`store/asmlink.ts`).
 
-- **Projektet är en mapp.** *Open folder…* öppnar vilken mapp som helst med källkod (också ett Mimir-projekts mapp);
-  *New…* gör en ny mapp (namn, var den hamnar, Kick Assembler eller 64tass) med `main.asm` i: ett program som tömmer
-  skärmen, skriver en rad och går tillbaka till BASIC (`asmTemplate`; Mimirs egen assembler, KickAss.jar och 64tass ger
-  samma bytes, testat i `kickass.integration.test.ts`). Mapparna som öppnats listas under *Opened before*
+- **Projektet är en mapp med sin projektfil.** `Project.asm` (`{ lang, main }`, i `<namn>.mimir.json` som `asm`) gör ett
+  projekt till ett Assembler-projekt; dess `files` är tomma, inget laddas in i det. Startfönstrets **Assembler…** öppnar
+  Assemblerns sida: *New…* gör ett nytt projekt (namn, var mappen hamnar, Kick Assembler eller 64tass, git eller inte, som
+  *New project*) med projektfilen och `main.asm` i: ett program som tömmer skärmen, skriver en rad och går tillbaka till
+  BASIC (`asmTemplate`; Mimirs egen assembler, KickAss.jar och 64tass ger samma bytes, testat i
+  `kickass.integration.test.ts`); med git lämnar `.gitignore` också `out` utanför. *Open folder…* öppnar en mapp med
+  källkod: har den en projektfil öppnas det projektet (vilket slags det än är), annars blir mappen ett Assembler-projekt
+  (projektfilen skrivs i den, språket är huvudfilens). Mapparna som öppnats listas under *Opened before*
   (`assembler.json` i användarmappen) och öppnas igen utan dialog; en mapp som inte finns längre är överstruken.
+  Projektet står också bland *Recent projects* och öppnas där som vilket projekt som helst; projektmenyn stänger det.
+- **I projektfönstret** är flikarna *Assembler* (först), *Graphics*, *Memory*, *Scripts*, *Git* och *SPEC.md* (och
+  *Library*); *Listing*, *Drive code* och den genererade källan finns inte. Assembler-fliken tar fönstret som
+  Scripts-fliken gör (sidopanelen, panelen under och inspektorn fälls in och kommer tillbaka på en annan flik) och står
+  öppen bakom de andra flikarna, med sina filer och sin debugger. Titelraden har *Terminal* och *Run* (F5 på vilken flik
+  som helst), inte översikten, Verify, Export eller Editor; *File* monterar en D64 och sätter i en TAP. Kommandopaletten har
+  Assemblerns *Run*, *Build* och *Debug* och de kommandon som inte hör till analysen eller listningen. En PRG, en
+  snapshot eller en cartridge som öppnas eller släpps tas inte in (det säger ett meddelande); disketter och band
+  monteras. Ett skripts ändringar av programmet görs inte, de räknas bara ut som i safe mode, men det skriptet ber om
+  i övrigt (filer, disketter, band, biblioteket) görs. Sidopanelen saknar Bookmarks och Pack; panelen under har bara
+  *Messages* (och bandet).
+- **Programmet i projektets vyer** är det kontrollen assemblerar (`asmProgram`): bytes som bygget skriver dem (från den
+  lägsta till den högsta, luckorna nollor, en fil `<huvudfil>.prg`), varje instruktion assemblern skrev som kod, källans
+  etiketter och var en körning startar. Analysen tar dem som ett projekts egna (`asmView` i `App.tsx`), så Graphics,
+  Memory, inspektorn, Utforskaren och Blocks/Symbols visar programmet med källans namn, och det analysen ser i datan
+  (sprites med en spritepekare, musik, tabeller). Det skickas en stund efter att kontrollen gått igenom och bara när det
+  är ett annat program; den senaste som gick igenom gäller tills nästa. Utforskaren har *Program* (filen, var den börjar,
+  diskett, band och minneskartan), inspektorn visar blocket utan att ändra det, med raden i källan som en länk, och
+  Graphics och Memory markerar inget. Allt som annars visar en adress i listningen (*Show in the source*, en dubbelklickning
+  i Memory, minneskartan, länkarna) öppnar Assembler-fliken på raden som skriver byten (`asmLineAt`).
 - **Filerna bredvid koden.** Listan är mappens filer och mappar som ett träd, mapparna först (`.git`, `node_modules` och
   liknande utelämnas; högst 4000 poster). Ett klick öppnar en fil i editorn, en mapp fälls ut och in; piltangenterna och
   Enter går i listan. Huvudfilen är märkt *main*, en fil med ändringar som inte är skrivna har en prick och en fil med
@@ -3658,13 +3686,14 @@ Det rena står i `packages/core/src/asm-project.ts`; mappen läses och skrivs ba
   (`kr.asmTabs`) och är kvar när mappen öppnas igen; utan flikar visas *No file open*.
 - **Huvudfilen** är den som byggs: den källfil som startar ett program (BasicUpstart, `* =`, `.pc =`) och som ingen annan
   importerar, sedan en som heter main, sedan den närmast mappens topp (`mainFile`). *Main file* i menyn väljer en annan,
-  och valet sparas per mapp. Språket är huvudfilens (`guessAssembler`), och knappen *Language* byter mellan Kick
-  Assembler och 64tass (sparas per mapp).
+  och valet sparas i projektfilen (`asm.main`, ett steg att ångra). Språket står i projektfilen (`asm.lang`; en mapp som
+  blir ett projekt får huvudfilens, `guessAssembler`), och knappen *Language* byter mellan Kick Assembler och 64tass.
+  Projektfilen visas inte i listan.
 - **Editorn** är skripteditorns Monaco: färgningen för språket, förslag på programmets namn (etiketter och konstanter
   som kontrollen hittade, `asmContext` i `monaco/providers.ts`), hover med adressen och var etiketten står, och
   go to definition (F12, Ctrl+klick) i alla mappens källfiler, som då öppnas. Det man skriver skrivs till filen en halv
-  sekund efter sista tangenten (Ctrl+S skriver direkt), och allt skrivs innan man lämnar Assemblern eller stänger
-  fönstret. En fil som ändras utanför appen läses in igen (huvudprocessen bevakar mappen, `fs:changed`); har filen egna
+  sekund efter sista tangenten (Ctrl+S skriver direkt), och allt skrivs innan projektet stängs eller fönstret stängs
+  (`flush` i `store/asmlink.ts`). En fil som ändras utanför appen läses in igen (huvudprocessen bevakar mappen, `fs:changed`); har filen egna
   ändringar som inte är skrivna behåller den dem. En fil som inte är text visas med sin storlek och *Show in folder*.
 - **Kontrollen** sker medan man skriver, med Mimirs egen assembler på hela programmet: huvudfilen, det den importerar
   (`#import`, `.include`, från den importerande filens mapp först, som KickAss gör) och data den laddar (`LoadSid`,
@@ -3683,6 +3712,21 @@ Det rena står i `packages/core/src/asm-project.ts`; mappen läses och skrivs ba
   körningen stannar. Panelen bredvid koden säger fil och rad, registren, stacken och nästa instruktioner. Maskinen har
   inga ROM eller I/O: KERNAL:s och BASIC:s utskriftsrutiner görs på C64-skärmen (10.3), ett anrop till något annat i
   ROM:en stoppar körningen och säger det.
+- **Runs in: Whole C64** (`asm-c64.ts`, `AsmC64`, 2026-11-24): valet bredvid Debug (*Memory only* / *Whole C64*, sparas per
+  mapp i `kr.asmMachine`). I hela C64:an kör Debug programmet i Sindris C64 med VICE:s ROM (BASIC, KERNAL, VIC, CIA,
+  avbrott, tangentbordet): programmet läggs i RAM som LOAD gör (PRG:n assemblern gör, och ett BASIC-programs slut där RUN
+  har sina variabler), `RUN` (eller `SYS` och starten) skrivs i tangentbordsbufferten vid READY, och maskinen stannar där
+  programmets första instruktion ska köras; startens återhopp till BASIC står överst på stacken. Step, Over, Out och
+  brytpunkter som annars; *Continue* kör i C64:ans egen takt (PAL, 985 248 cykler i sekunden, en bild i taget, högst tre
+  bilder per bildruta i fönstret) med skärmen levande, tills en brytpunkt, *Pause* eller *Stop*. Körningen slutar inte av
+  sig själv (ett program som går tillbaka hamnar i BASIC och READY, som på en C64), bara en JAM stoppar den; *Stop*
+  sparar den som *Last run* med skärmen. Debuggern namnger ROM:ens rutiner och kretsarnas register (`SYM`).
+- **C64-skärmen i hela C64:an** är VIC:ens bild som VICE ritar den (`vicScreen`, 384 × 272), rad för rad med
+  registren varje rasterrad började med (rasterstaplar och delningar syns; `vicScreen` tar `lineOf`). När körningen står
+  still är bilden den här bildens rader ned till strålen och registren som de är nu under den, och raden under skärmen
+  säger vilken rasterrad och cykel den stannade på. Klickar man på skärmen och skriver går tangenterna till C64:ans
+  tangentbordsmatris (`c64Key`, `c64Held`: bokstäver, siffror och tangenter efter platsen, skiljetecken efter tecknet; Esc
+  är RUN/STOP, Alt C=, Tab CTRL, F2 SHIFT och F1, uppåt och vänster SHIFT och nedåt och höger).
 - **Under koden** flikarna *Problems* (kontrollens problem medan man skriver, det senaste byggets, och vad `.print`
   skrev), *Build* (kommandoraden och vad assemblern skrev) och *Last run* (hur den senaste körningen i Mimir slutade,
   registren); raden till höger säger det senaste bygget och om VICE startades.

@@ -5,7 +5,7 @@ import { store } from '../lib/util';
 import { bitmapWindowOf, spriteColsOf } from '../lib/gfxview';
 
 export type Theme = 'dark' | 'light';
-export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem' | 'scripts' | 'git' | 'library';
+export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem' | 'scripts' | 'git' | 'library' | 'asm';
 export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'krill' | 'iffl' | 'covert' | 'dloc' | 'pirateslayer' | 'paraprotect' | 'diskspeed' | 'tape' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'scripts' | 'pack' | 'library';
 export interface Sizes { side: number; insp: number; bottom: number }

@@ -1,5 +1,5 @@
 /* Project creation and the on-disk `.mimir.json` format (file bytes as base64). */
-import { LEGACY_PROJECT_FORMAT, type Cartridge, type FileInput, type LoadedFile, type Project, type SerializedProject, type Settings } from './types';
+import { LEGACY_PROJECT_FORMAT, type AsmProjectInfo, type Cartridge, type FileInput, type LoadedFile, type Project, type SerializedProject, type Settings } from './types';
 import { DEFAULT_SETTINGS } from './model';
 import { makeDemo } from './demo';
 import { parsePrg } from './c64/prg';
@@ -22,16 +22,19 @@ export const projectNameFor = (fileName: string): string => safeStem(fileName.re
 export const withId = (f: FileInput): LoadedFile => ({ id: f.id || newId(), name: f.name, load: f.load, bytes: f.bytes, ...(f.vsf ? { vsf: f.vsf } : {}), ...(f.chip != null ? { chip: f.chip } : {}) });
 
 /** `cart`: the cartridge image the files are chips of (spec 13.9) */
-export function createProject(init: { name?: string; files: FileInput[]; settings?: Partial<Settings>; cart?: Cartridge | null }): Project {
+export function createProject(init: { name?: string; files: FileInput[]; settings?: Partial<Settings>; cart?: Cartridge | null; asm?: AsmProjectInfo | null }): Project {
   return {
     format: 'mimir-project', version: 1,
     name: init.name || (init.cart ? projectNameFor(init.cart.name) : init.files[0] ? projectNameFor(init.files[0].name) : 'project'),
     files: init.files.map(withId),
     overrides: [], entries: [], entryPoint: null, labels: {}, comments: {}, blockComments: {}, notes: {}, bankZones: [], relocs: [], excluded: [], binary: [], bookmarks: {}, scripts: {}, patches: [],
     cart: init.cart ?? null,
+    ...(init.asm ? { asm: { lang: init.asm.lang, main: init.asm.main ?? null } } : {}),
     settings: Object.assign({}, DEFAULT_SETTINGS, init.settings || {}),
   };
 }
+/** an Assembler project's info as it is kept: the language one of the two, the main file a path or nothing */
+const asmInfo = (a: AsmProjectInfo): AsmProjectInfo => ({ lang: a.lang === '64tass' ? '64tass' : 'kickass', main: a.main || null });
 
 export function demoProject(settings?: Partial<Settings>): Project {
   const d = makeDemo();
@@ -53,6 +56,7 @@ export function serializeProject(p: Project): SerializedProject {
     ...(p.patches?.length ? { patches: p.patches.map(({ id: _, bytes, old, ...q }) => ({ ...q, bytes: b64enc(bytes), old: b64enc(old) })) } : {}),
     ...(p.userScripts?.length ? { userScripts: p.userScripts.map(({ pads, ...u }) => ({ ...u, pads: pads.map(({ bytes, data, ...d }) => ({ ...d, ...(bytes ? { bytes: b64enc(bytes) } : {}), ...(data ? { data: b64enc(data) } : {}) })) })) } : {}),
     ...(p.cart ? { cart: { name: p.cart.name, data: b64enc(p.cart.crt) } } : {}),
+    ...(p.asm ? { asm: (({ lang, main }) => ({ lang, ...(main ? { main } : {}) }))(asmInfo(p.asm)) } : {}),
     settings: p.settings,
   };
 }
@@ -74,6 +78,7 @@ export function deserializeProject(o: SerializedProject): Project {
     patches: (o.patches || []).map(q => ({ ...q, id: newId(), bytes: b64dec(q.bytes), old: b64dec(q.old) })),
     ...(o.userScripts?.length ? { userScripts: o.userScripts.map(u => ({ ...u, id: u.id || newId(), pads: u.pads.map(({ bytes, data, ...d }) => ({ ...d, ...(bytes != null ? { bytes: b64dec(bytes) } : {}), ...(data != null ? { data: b64dec(data) } : {}) })) })) } : {}),
     cart: o.cart ? { name: o.cart.name, crt: b64dec(o.cart.data) } : null,
+    ...(o.asm ? { asm: asmInfo(o.asm) } : {}),
     settings: Object.assign({}, DEFAULT_SETTINGS, o.settings || {}),
   };
 }

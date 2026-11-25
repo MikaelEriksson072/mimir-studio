@@ -3,7 +3,7 @@
  * Assembler (AssemblerView). A project is a folder of its own: its project file and what Mimir writes for it (the Kick Assembler source,
  * the build, the packed file) go there. The New project form is the one "Create a project from this work" shows too. */
 import { useEffect, useState, type FormEvent } from 'react';
-import { createProject, demoProject, type Project } from '@mimir/core';
+import { ASM_SOURCE, asmTemplate, createProject, demoProject, mainFile, sourceLang, type Project, type ScriptLang } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
 import { forgetUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from '../store/project';
@@ -13,7 +13,7 @@ import type { GitVersion, ProjectCreateResult, ProjectStartInfo, RecentProject }
 import { Logo } from './Logo';
 import { Modal } from './Modal';
 import { QuickPack } from './QuickPack';
-import { AssemblerView } from './AssemblerView';
+import { AssemblerHome } from './AssemblerView';
 
 const kr = window.kr;
 
@@ -35,6 +35,18 @@ export function gitNote(r: ProjectCreateResult): { text: string; bad: boolean } 
   if (!g) return { text: '', bad: false };
   if (!g.ok) return { text: `. The git repository was not made: ${g.message}`, bad: true };
   return { text: `, as a git repository${g.nested ? ` of its own inside the repository ${g.nested}` : ''} (the Git tab stages, commits and pushes)`, bad: false };
+}
+
+/** an Assembler project's analysis settings: the normal analysis (the program is known: its code is the code the sources
+ *  write), not the deep one a program to re-assemble starts with */
+const ASM_SETTINGS = { deepAnalysis: false } as const;
+/** the folder's .gitignore leaves out what the Assembler's builds write (out, beside the main file) too */
+async function ignoreOut(dir: string): Promise<void> {
+  if (!kr) return;
+  const r = await kr.assemblerRead({ dir, path: '.gitignore' }).catch(() => null);
+  const text = r?.text ?? '';
+  if (/^\/?out\/?\s*$/m.test(text)) return;
+  await kr.assemblerWrite({ dir, path: '.gitignore', text: `${text}${text && !text.endsWith('\n') ? '\n' : ''}# Mimir: the Assembler's builds (Run, Build) write the program here\nout/\n` }).catch(() => null);
 }
 
 /** `parent` and `name` joined as Windows (or the folder's own separators) writes them */
@@ -270,6 +282,40 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
     enter(project, r.home);
     onStarted(`Created the project ${r.home.name} in ${r.home.dir}${gitNote(r).text}: open a PRG, a snapshot or a cartridge to start`);
   };
+  /** a new Assembler project (spec 10.7): its folder with the project file and a main.asm that prints a line (and a
+   *  repository, whose .gitignore leaves out what the builds write) */
+  const asmCreate = async (name: string, parent: string, lang: ScriptLang, git: boolean) => {
+    if (!kr) return;
+    const project = createProject({ name, files: [], settings: { ...settings(), ...ASM_SETTINGS }, asm: { lang, main: 'main.asm' } });
+    const r = await kr.createProject({ name, parent, project, git });
+    await kr.assemblerWrite({ dir: r.home.dir, path: 'main.asm', text: asmTemplate(lang, name) });
+    if (r.git?.ok) await ignoreOut(r.home.dir);
+    enter(project, r.home);
+    onStarted(`Created the Assembler project ${r.home.name} in ${r.home.dir}${gitNote(r).text}: its main.asm prints a line, Run (F5) builds it and starts it in VICE`);
+  };
+  /** a folder of sources opened as an Assembler project: the project in it (its project file), or one made of it, its
+   *  project file written into the folder (written for the assembler its main file looks written for) */
+  const asmOpen = async (path?: string) => {
+    if (!kr) return;
+    const f = await kr.assemblerOpen(path ? { path } : {});
+    if (!f) return;
+    const own = f.entries.filter(e => !e.dir && !e.path.includes('/') && /\.mimir\.json$/i.test(e.path));
+    const there = own.find(e => e.path.toLowerCase() === projectFileName(f.name).toLowerCase()) ?? own[0];
+    const file = joinPath(f.dir, there ? there.path : projectFileName(f.name));
+    if (!there) {
+      const problem = projectNameProblem(f.name);
+      if (problem) throw new Error(`${f.name} cannot be a project's name (${problem}): rename the folder`);
+      const sources = f.entries.filter(e => !e.dir && ASM_SOURCE.test(e.path) && e.size <= 1 << 20).slice(0, 200);
+      const texts = await Promise.all(sources.map(e => kr.assemblerRead({ dir: f.dir, path: e.path }).then(r => ({ path: e.path, text: r.text ?? '' }), () => ({ path: e.path, text: '' }))));
+      const main = mainFile(texts), lang = main ? sourceLang(texts.find(t => t.path === main)?.text ?? '') : 'kickass';
+      const project = createProject({ name: f.name, files: [], settings: { ...settings(), ...ASM_SETTINGS }, asm: { lang, main: null } });
+      await kr.saveProject({ project, path: file });
+    }
+    const r = await kr.openProject({ path: file });
+    if (!r) return;
+    enter(r.project, r.home);
+    onStarted(there ? `Opened the project ${r.home.name} (${r.home.dir})` : `${r.home.name} is an Assembler project now: ${projectFileName(r.home.name)} is written in its folder (${r.home.dir})`);
+  };
   const forget = async (r: RecentProject) => {
     if (!kr || !info) return;
     try { const recent = await kr.forgetProject({ file: r.file }); setInfo({ ...info, recent, last: info.last?.kind === 'project' && info.last.home.file === r.file ? null : info.last }); } catch (e) { setError(errorText(e)); }
@@ -308,7 +354,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   // until it is known whether there is a start screen to show
   if (!info && !error) return <div className="boot">Opening…</div>;
   if (packing) return <QuickPack onBack={() => setPacking(false)} />;
-  if (assembling) return <AssemblerView onBack={() => setAssembling(false)} />;
+  if (assembling) return <AssemblerHome onBack={() => setAssembling(false)} onCreate={asmCreate} onOpen={asmOpen} />;
   return (
     <div className="start">
       <div className="start-box">
@@ -335,7 +381,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
               {!unsaved && <button className="btn ghost" disabled={busy} onClick={() => void run(withoutProject)} title="Work as before: open PRG files right away, and create a project from the work when you want to keep it">Without a project</button>}
               <button className="btn ghost" disabled={busy} onClick={startQuickWork} title="An empty Mimir without a project: no files, no project folder, neither the demo nor the work kept from last time. It is the work without a project Mimir keeps from then on"><Icon name="play" size={14} />Quick work</button>
               <button className="btn ghost" disabled={busy} onClick={() => setPacking(true)} title="Pack PRG files or a Kick Assembler source with Brokkr or Exomizer as they are: no project, no analysis"><Icon name="pack" size={14} />Pack a file…</button>
-              <button className="btn ghost" disabled={busy} onClick={() => setAssembling(true)} title="Write a C64 program in Kick Assembler or 64tass: a folder of sources beside the code, checked as you type, built and started in VICE, debugged a step at a time in Mimir"><Icon name="code" size={14} />Assembler…</button>
+              <button className="btn ghost" disabled={busy} onClick={() => setAssembling(true)} title="Write a C64 program in Kick Assembler or 64tass: an Assembler project, a folder of sources opened in Mimir's window with the files beside the code, checked as you type, built and started in VICE, debugged a step at a time in Mimir, the program shown in Graphics and Memory"><Icon name="code" size={14} />Assembler…</button>
             </div>}
           {recent.length > 0 && <section className="start-recent" aria-label="Recent projects">
             <h2>Recent projects</h2>

@@ -91,26 +91,32 @@ export interface VicScreen {
 
 /**
  * The picture `st` makes of `ram` and `colorRam`, as VICE draws it (VIC_SCREEN). `chars` is the character ROM (4 KB),
- * which the VIC sees at $1000-$1fff of banks 0 and 2; without it those bytes are 0.
+ * which the VIC sees at $1000-$1fff of banks 0 and 2; without it those bytes are 0. `lineOf` (a running C64's frame):
+ * the registers each raster line had, so that what a program changes during the frame (the border's and the
+ * background's colours, the mode, the scroll) shows on the lines it changed it for; `st` is then the frame's start.
  */
-export function vicScreen(st: VicState, ram: Uint8Array, colorRam: ArrayLike<number>, chars: Uint8Array | null = null): VicScreen {
+export function vicScreen(st0: VicState, ram: Uint8Array, colorRam: ArrayLike<number>, chars: Uint8Array | null = null, lineOf?: (line: number) => VicState): VicScreen {
   const { width, height, firstLine, firstX } = VIC_SCREEN;
-  const pixels = new Uint8Array(width * height).fill(st.border);
-  if (!st.den) return { width, height, pixels };
-  /** a byte as the VIC reads it: 14 bits in its bank */
-  const vr = (a14: number) => {
-    const a = a14 & 0x3fff;
-    if (!(st.bank & 1) && (a & 0x3000) === 0x1000) return chars ? chars[a & 0x0fff] : 0;
-    return ram[st.base + a];
-  };
-  const scr = st.screen - st.base, chr = st.charset - st.base, bmp = st.bitmap - st.base;
-  const top = st.rows === 25 ? 51 : 55, bottom = st.rows === 25 ? 251 : 247;
-  const left = st.cols === 40 ? 24 : 31, right = st.cols === 40 ? 344 : 335;
-  const first = 0x30 + st.yscroll;
+  const pixels = new Uint8Array(width * height).fill(st0.border);
+  if (!st0.den && !lineOf) return { width, height, pixels };
   const fg = new Uint8Array(width), col = new Uint8Array(width);
-  for (let line = top; line < bottom; line++) {
+  for (let line = firstLine; line < firstLine + height; line++) {
     const y = line - firstLine;
-    if (y < 0 || y >= height) continue;
+    const st = lineOf ? lineOf(line) : st0;
+    // (each line its own border: raster bars)
+    if (lineOf) pixels.fill(st.border, y * width, (y + 1) * width);
+    if (!st.den) continue;
+    const top = st.rows === 25 ? 51 : 55, bottom = st.rows === 25 ? 251 : 247;
+    if (line < top || line >= bottom) continue;
+    /** a byte as the VIC reads it: 14 bits in its bank */
+    const vr = (a14: number) => {
+      const a = a14 & 0x3fff;
+      if (!(st.bank & 1) && (a & 0x3000) === 0x1000) return chars ? chars[a & 0x0fff] : 0;
+      return ram[st.base + a];
+    };
+    const scr = st.screen - st.base, chr = st.charset - st.base, bmp = st.bitmap - st.base;
+    const left = st.cols === 40 ? 24 : 31, right = st.cols === 40 ? 344 : 335;
+    const first = 0x30 + st.yscroll;
     const gy = line - first, display = gy >= 0 && gy < 200, row = gy >> 3, rc = gy & 7;
     for (let X = left; X < right; X++) {
       const sx = X - firstX;

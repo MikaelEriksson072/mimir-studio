@@ -66,6 +66,9 @@ export interface MemoryGfxProps {
   /** Unmark: the graphics blocks in the range, cut to it, become data */
   onUnmark: (range: { start: Addr; end: Addr }) => void;
   onShow: (a: Addr) => void;
+  /** an Assembler project (spec 10.7): nothing is marked here (the sources say what the bytes are), and Show goes to the
+   *  line in the sources that writes them */
+  source?: boolean;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
   /** the selection as characters, sprites or a bitmap to the library (spec 10.6), drawn as here; a part of a bitmap is
@@ -107,7 +110,7 @@ const VIC_COLOURS_OF: Record<GfxKind, string> = {
   bitmap: 'the background $d021 and the colours most cells of its screen and colour RAM give',
 };
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ source = false, A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -510,7 +513,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMult
             </select></label>
         </OptGroup>}
         <OptGroup title="Colours">
-          <label className="check gfxv-mc" title={kind === 'screens' ? 'Draw the characters multicolour: pairs of bits, each two pixels wide' : `Draw multicolour: pairs of bits, each two pixels wide. ${kind === 'sprites' ? 'Sprite data' : kind === 'bitmap' ? 'A bitmap' : 'A charset'} the selection is in is drawn so in the listing too, and Mark as takes it with it`}><input type="checkbox" checked={mc} onChange={e => { set({ mc: e.target.checked }); if (range && kind !== 'screens') onMulticolor?.(range, kind, e.target.checked); }} /><span>Multicolor</span></label>
+          <label className="check gfxv-mc" title={kind === 'screens' ? 'Draw the characters multicolour: pairs of bits, each two pixels wide' : `Draw multicolour: pairs of bits, each two pixels wide. ${kind === 'sprites' ? 'Sprite data' : kind === 'bitmap' ? 'A bitmap' : 'A charset'} the selection is in is drawn so in the listing too, and Mark as takes it with it`}><input type="checkbox" checked={mc} onChange={e => { set({ mc: e.target.checked }); if (range && kind !== 'screens' && !source) onMulticolor?.(range, kind, e.target.checked); }} /><span>Multicolor</span></label>
           <label className="check gfxv-mc" title="Bytes in a block that is already graphics (Charset, Sprite data, Bitmap or Screen matrix, set by the analysis or by you) are drawn tinted orange, the graphics colour, so what is left to find stands out. Saved files keep their own colours">
             <input type="checkbox" checked={marked} onChange={e => set({ marked: e.target.checked })} /><i className="gfxv-marked" style={{ background: `rgb(${MARKED_TINT.join(',')})` }} /><span>Marked graphics</span></label>
           {snapVic && <label className="check gfxv-mc" title={`Draw in the colours the snapshot's VIC-II had when VICE saved it: ${VIC_COLOURS_OF[kind]}. The screen it showed ($${h4(snapVic.st.screen)})${snapVic.st.bmm ? ` and its bitmap ($${h4(snapVic.st.bitmap)})` : ''} are drawn cell by cell in their own colours, as on the C64. Picking a colour here draws in your colours instead`}>
@@ -527,10 +530,10 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMult
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           <span className="grow" />
           {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && !wholeWin)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
-          {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')}
+          {!source && marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')}
             title={pieces && pieces.length > 1 ? `Marks the bytes drawn: ${pieces.length} stretches of ${win.cols * 8} bytes, one a character row, each a block of its own. The bytes between them keep their types` : undefined}
             onClick={() => onMark(id, pieces?.length === 1 ? pieces[0] : range, kind === 'screens' ? undefined : mc, pieces ?? undefined)}>Mark as {label}</button>)}
-          <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>
+          {!source && <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>}
           {onLibrary && (kind === 'chars' || kind === 'sprites' || kind === 'bitmap') && <button className="btn small" title={kind === 'bitmap' ? 'Keep a copy of the bitmap the selection starts as a picture in the library (the Library view in the activity bar), for every project: its screen and colour RAM from where they are found in memory, or in these colours'
             : `Keep a copy of the selection as ${kind === 'chars' ? 'a charset' : 'sprites'} in the library (the Library view in the activity bar), in these colours, for every project`}
             onClick={() => {
@@ -544,9 +547,9 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMult
               {saveAs.map(s => <button key={s.id} role="menuitem" onClick={() => void save(s)}>{s.label}</button>)}
             </div>}
           </span>
-          <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name="list" size={13} />Show in listing</button>
+          <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name={source ? 'code' : 'list'} size={13} />{source ? 'Show in the source' : 'Show in listing'}</button>
         </> : kind === 'fontrows' ? <span className="muted">Each row is drawn with its own font, 2 KB after the font of the row above (passing over memory where no font can be), and the same 40 screen codes. Click a row to select its font, Shift+click or drag for more. Dark rows are not loaded{marked ? ', orange ones already graphics' : ''}.</span>
-          : <span className="muted">Click a {NAMES[kind]} to select it, Shift+click or drag for more, then mark it as the graphics it is.{kind === 'screens' ? ' Go to an address and a screen starts there; hold Ctrl over a screen to see it alone in the whole window.' : ''} Dark cells are not loaded{marked ? ', orange ones already graphics' : ''}.</span>}
+          : <span className="muted">Click a {NAMES[kind]} to select it, Shift+click or drag for more{source ? '; Show in the source goes to the line that writes it, Save… and Add to library keep a copy' : ', then mark it as the graphics it is'}.{kind === 'screens' ? ' Go to an address and a screen starts there; hold Ctrl over a screen to see it alone in the whole window.' : ''} Dark cells are not loaded{marked ? ', orange ones already graphics' : ''}.</span>}
       </div>
       <div className="gfxv-scroll" ref={scroller} onScroll={onScroll}>
         <div className="gfxv-inner" style={{ height: L.height * zoom }}>

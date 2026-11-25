@@ -48,6 +48,9 @@ interface MemoryDumpProps {
   onMark: (id: string, range: { start: Addr; end: Addr }) => void;
   onShow: (a: Addr) => void;
   onCopy: (text: string) => void;
+  /** an Assembler project (spec 10.7): nothing is marked here, and Show goes to the line in the sources that writes the
+   *  bytes */
+  source?: boolean;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it in the top row (null: at the cursor) */
@@ -70,7 +73,7 @@ const plainAddr = (a: Addr) => `$${h4(a)}`;
 /** the line over a bank's rows: `bank 1 · $8000–$9fff` */
 const bankLine = (bank: number, start: Addr, end: Addr) => `bank ${bank} · $${h4(start & 0xffff)}–$${h4((end - 1) & 0xffff)}`;
 
-export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, goTo, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
+export function MemoryDump({ source = false, A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, goTo, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
@@ -228,6 +231,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); e.stopPropagation(); findInput.current?.select(); return; }
     if (e.key === 'F3') { e.preventDefault(); e.stopPropagation(); goHit(e.shiftKey ? -1 : 1); return; }
     if (e.key === '0' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); toZero(); return; }
+    if (e.key === 'Enter' && source && range && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); onShow(range.start); return; }
     if (e.key === 'Enter' && range && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); onMark(MARK[enter][0], range); return; }
     if (e.key === 'Escape') { e.stopPropagation(); anchor.current = null; onClear(); }
   };
@@ -397,11 +401,11 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           {zeroBtn}
           <span className="grow" />
-          {MARK.map(([id, label], i) => <button key={id} className={cx('btn small', i === enter && 'primary')} onClick={() => onMark(id, range)}
+          {!source && MARK.map(([id, label], i) => <button key={id} className={cx('btn small', i === enter && 'primary')} onClick={() => onMark(id, range)}
             title={i < 2 ? `Mark the selection as ${label.toLowerCase()}, named by its first word${i === enter ? ' (Enter)' : ''}` : undefined}>Mark as {label}{i === enter && <kbd>Enter</kbd>}</button>)}
-          <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name="list" size={13} />Show in listing</button>
+          <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name={source ? 'code' : 'list'} size={13} />{source ? 'Show in the source' : 'Show in listing'}{source && <kbd>Enter</kbd>}</button>
         </> : <>
-          <span className="muted">Click a byte to put the cursor there, Shift+click or drag to select, arrow keys to move, <kbd>0</kbd> to select to the 0 that ends a text, <kbd>Enter</kbd> to mark the selection as text named by its first word. Double-click shows it in the listing.</span>
+          <span className="muted">Click a byte to put the cursor there, Shift+click or drag to select, arrow keys to move, <kbd>0</kbd> to select to the 0 that ends a text, {source ? <><kbd>Enter</kbd> to show the selection's line in the sources. A double-click shows the byte's.</> : <><kbd>Enter</kbd> to mark the selection as text named by its first word. Double-click shows it in the listing.</>}</span>
           {cursor != null && A.owner[cursor] >= 0 && <><span className="grow" />{zeroBtn}</>}
         </>}
       </div>

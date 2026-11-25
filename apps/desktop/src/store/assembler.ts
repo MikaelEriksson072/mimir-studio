@@ -8,7 +8,10 @@ import { store } from '../lib/util';
 /** the output's tabs: what the check and the build found, the build's output, and how the last run in Mimir ended */
 export type AsmOutTab = 'problems' | 'build' | 'run';
 
-const MAINS_KEY = 'kr.asmMain', LANGS_KEY = 'kr.asmLang', OPEN_KEY = 'kr.asmOpen', LAYOUT_KEY = 'kr.asmLayout', TABS_KEY = 'kr.asmTabs';
+const MAINS_KEY = 'kr.asmMain', LANGS_KEY = 'kr.asmLang', OPEN_KEY = 'kr.asmOpen', LAYOUT_KEY = 'kr.asmLayout', TABS_KEY = 'kr.asmTabs', MACHINE_KEY = 'kr.asmMachine';
+
+/** what a run in Mimir runs in: Mimir's 6510 with the program's memory only, or the whole C64 (Sindri, VICE's ROMs) */
+export type AsmMachineKind = 'memory' | 'c64';
 
 /** a folder's tabs: the files open in the editor, in their order, and the one that is a preview (a click in the list
  *  opens a file there, and the next click puts another in its place; typing in it or a double-click keeps it) */
@@ -37,6 +40,8 @@ interface AsmState extends Layout {
   bps: Record<string, number[]>;
   /** the tabs of each folder (by the folder's path) */
   tabs: Record<string, AsmTabs>;
+  /** what each folder's runs in Mimir run in (missing: memory only) */
+  machines: Record<string, AsmMachineKind>;
   set: (patch: Partial<Layout>) => void;
   setMain: (dir: string, path: string | null) => void;
   setLang: (dir: string, lang: ScriptLang | null) => void;
@@ -44,6 +49,7 @@ interface AsmState extends Layout {
   setExpanded: (dir: string, paths: string[]) => void;
   setBps: (dir: string, path: string, lines: number[]) => void;
   setTabs: (dir: string, tabs: AsmTabs) => void;
+  setMachine: (dir: string, kind: AsmMachineKind) => void;
 }
 
 const without = <T,>(r: Record<string, T>, k: string): Record<string, T> => { const { [k]: _, ...rest } = r; return rest; };
@@ -57,11 +63,13 @@ export const useAssembler = create<AsmState>((set, get) => ({
   expanded: {},
   bps: {},
   tabs: store.get<Record<string, AsmTabs>>(TABS_KEY, {}),
+  machines: store.get<Record<string, AsmMachineKind>>(MACHINE_KEY, {}),
   set: patch => { set(patch); store.set(LAYOUT_KEY, layoutOf({ ...get(), ...patch })); },
   setMain: (dir, path) => { const mains = path ? { ...get().mains, [dir]: path } : without(get().mains, dir); store.set(MAINS_KEY, mains); set({ mains }); },
   setLang: (dir, lang) => { const langs = lang ? { ...get().langs, [dir]: lang } : without(get().langs, dir); store.set(LANGS_KEY, langs); set({ langs }); },
   setShown: (dir, path) => { const shown = path ? { ...get().shown, [dir]: path } : without(get().shown, dir); store.set(OPEN_KEY, shown); set({ shown }); },
   setExpanded: (dir, paths) => set({ expanded: { ...get().expanded, [dir]: paths } }),
+  setMachine: (dir, kind) => { const machines = kind === 'c64' ? { ...get().machines, [dir]: kind } : without(get().machines, dir); store.set(MACHINE_KEY, machines); set({ machines }); },
   setTabs: (dir, t) => { const tabs = { ...get().tabs, [dir]: t }; store.set(TABS_KEY, tabs); set({ tabs }); },
   setBps: (dir, path, lines) => {
     const k = `${dir}|${path}`, had = get().bps[k];
