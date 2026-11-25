@@ -82,6 +82,9 @@ export interface RenderOptions {
    *  with the labels they have there, and references to that area go to them. The files, fileLines, problems and
    *  verification do not change. */
   viewOffsets?: boolean;
+  /** the files (spec 10.7): every block that is not code, BASIC or relocated is between `// @block <kind>` and
+   *  `// @end` (asm-blocks.ts), so an Assembler project made of the source sees its bytes as what they are */
+  blockMarks?: boolean;
 }
 
 /** loader parts that span code or data: their end gets a mark too */
@@ -578,7 +581,32 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
   };
   const SEG_NAME: Partial<Record<BlockKind, string>> = { code: 'Code', sprite: 'Sprites', charset: 'Charset', bitmap: 'Bitmap', screen: 'Screen', data: 'Data', reloc: 'Relocated' };
 
+  /** a block's mark for an Assembler project (RenderOptions.blockMarks): what it is, how it is drawn or played; null:
+   *  code, the BASIC line and a relocated block (whose blocks have marks of their own) are not marked */
+  const blockMark = (b: Block): string | null => {
+    const p = b.props;
+    switch (b.type) {
+      case 'code': case 'basic': case 'reloc': return null;
+      case 'sprite': case 'charset': case 'bitmap': return `@block ${b.type}${p.mc == null ? '' : p.mc ? ' multicolor' : ' hires'}`;
+      case 'music': {
+        const m = A.music.find(x => x.start === b.start), init = p.init ?? m?.init, play = p.play ?? m?.play;
+        return `@block music${init != null ? ` init=$${h4(init)}` : ''}${play ? ` play=$${h4(play)}` : ''}`;
+      }
+      case 'text': return `@block text ${p.enc || 'petscii'}`;
+      case 'lohi': return '@block table';
+      default: return `@block ${b.type}`;
+    }
+  };
   function renderBlock(out: Line[], b: Block, ctx: RenderCtx & { usedMusic: Set<MusicInfo> }) {
+    const mark = opts.blockMarks ? blockMark(b) : null;
+    if (!mark) { renderBlockLines(out, b, ctx); return; }
+    // the mark under the block's header, its end after its last line
+    const at = out.length;
+    renderBlockLines(out, b, ctx);
+    out.splice(at + 1, 0, { k: 'cmt', a: b.start, text: mark });
+    out.push({ k: 'cmt', a: b.start, text: '@end' });
+  }
+  function renderBlockLines(out: Line[], b: Block, ctx: RenderCtx & { usedMusic: Set<MusicInfo> }) {
     const lb = labelAt(b.start);
     const len = b.end - b.start;
     const title = blockTitle(b);

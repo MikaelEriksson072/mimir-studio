@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  assemblerSources, bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, coversReadyScreen, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, ioSummary, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
@@ -17,7 +17,7 @@ import {
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
-  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
+  type BitfireDisk, type BitfireFile, type ScriptLang, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
   debugSources, asmLineAt, type AsmProgram,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
@@ -85,11 +85,11 @@ import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, gitNote, StartScreen, UnsavedWorkModal } from './components/Start';
+import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, gitNote, ignoreOut, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
-import { AssemblerTab } from './components/AssemblerView';
+import { AssemblerTab, ContinueInAssemblerModal, type AsmContinueInfo } from './components/AssemblerView';
 import { useAsmLink } from './store/asmlink';
 import { AnalysisOverview, type OverviewLinks, type PackCheck, type PackLook } from './components/Overview';
 import { GFX_KIND, snapshotPc } from './lib/overview';
@@ -1623,6 +1623,33 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const r = await kr.openProject(path ? { path } : undefined);
       if (r) { enter(r.project, r.home); resetView(); setExportDir(null); toast(`Opened the project ${r.home.name} (${r.home.dir})`, 'ok'); }
     } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /* ---- Continue in the Assembler (spec 10.7): an Assembler project of the re-assembled program, its blocks marked ---- */
+  const [asmContinue, setAsmContinue] = useState<AsmContinueInfo | null>(null);
+  const startContinue = async () => {
+    if (!kr) return needDesktop();
+    if (asmMode) { toast('This is an Assembler project already', 'info'); return; }
+    if (project.cart) { toast('A cartridge\'s sources build its image (a .crt): the Assembler builds and runs programs. Open a chip\'s program as a PRG to go on with it', 'warn'); return; }
+    if (!project.files.length) { toast('There is no program to go on with: open one first', 'warn'); return; }
+    try {
+      const s = assemblerSources(A, project), start = await kr.assemblerStart();
+      const base = project.name.replace(/\.[^.]*$/, '') || 'program';
+      setAsmContinue({ name: `${base}-asm`, parent: start.parent, lang: s.lang, main: s.main, blocks: s.blocks, sources: s.sources.length });
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const continueInAssembler = async (name: string, parent: string, lang: ScriptLang, git: boolean) => {
+    if (!kr) return;
+    await saveNow();
+    // (written for the assembler chosen: the same program in its words)
+    const p = { ...project, settings: { ...project.settings, assembler: lang === '64tass' ? '64tass' as const : 'kick' as const } };
+    const s = assemblerSources(A, p);
+    const made = createProject({ name, files: [], settings: { ...p.settings, deepAnalysis: false }, asm: { lang: s.lang, main: s.main } });
+    const r = await kr.createProject({ name, parent, project: made, git });
+    for (const [path, data] of Object.entries(s.files)) await kr.assemblerWrite({ dir: r.home.dir, path, ...(typeof data === 'string' ? { text: data } : { bytes: data }) });
+    if (r.git?.ok) await ignoreOut(r.home.dir);
+    setAsmContinue(null);
+    enter(made, r.home); resetView(); setExportDir(null);
+    toast(`${r.home.name} is an Assembler project of the program${gitNote(r).text}: ${s.main} is its main file, ${s.blocks === 1 ? 'a block' : `${s.blocks} blocks`} marked in its source; Run (F5) builds it and starts it in VICE`, 'ok');
   };
   /** a project file dropped on the window: its folder is not known, so it is work without a project */
   const openDroppedProject = (p: Project, name: string) => { leaveProject(); replace(p); resetView(); toast(`Opened project ${name} as work without a project: Save creates a project from it`, 'ok'); };
@@ -4268,6 +4295,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ] : []),
     { id: 'export', label: home ? `Export ${ASSEMBLERS[asm].name} project to ${home.name}\\source` : `Export ${ASSEMBLERS[asm].name} project to a folder…`, key: 'Ctrl+E', run: () => void exportProject() },
     ...(home ? [{ id: 'export-to', label: `Export ${ASSEMBLERS[asm].name} project to another folder…`, run: () => void exportProject(true) }] : []),
+    { id: 'asm-continue', label: 'Continue in the Assembler: a new Assembler project of this program\'s source, its blocks marked, to go on writing…', run: () => void startContinue() },
     { id: 'build-templates', label: `Build templates: make and choose build.bat / build.sh templates for every project${project.buildTemplate ? ` (this one uses "${project.buildTemplate.name}")` : ''}`, run: () => openTemplates() },
     { id: 'build-template-new', label: 'New build template from the original build.bat and build.sh', run: () => openTemplates('new') },
     ...(!project.cart && project.buildTemplate?.builtIn !== 'exomizer' ? [{ id: 'build-template-exomizer', label: 'Build scripts: pack the program with Exomizer and start the packed file (the template Pack with Exomizer)', run: () => applyTemplate(builtInTemplate('exomizer', S, false)) }] : []),
@@ -4896,6 +4924,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: 'Mount disk image (D64, G64)…', run: () => void mountDisk() },
       { label: 'Insert tape image (TAP, T64)…', run: () => void insertTape() },
       { sep: true },
+      { label: 'Continue in the Assembler…', run: () => void startContinue() },
+      { sep: true },
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
@@ -5182,6 +5212,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         fill={t => renderTemplate(templateText(t, S, !!project.cart), S, { names: R.fileNames, cart: cartBuild({ ...project, settings: S }), entry: sfxEntry(project) })}
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
+      {asmContinue && <ContinueInAssemblerModal info={asmContinue} onCreate={continueInAssembler} onClose={() => setAsmContinue(null)} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {valuesScript && <RunValuesModal script={valuesScript} busy={filesBusy} onRun={(text, rows, then) => void runWithValues(text, rows, then)} onStop={stopScript} onClose={() => setValuesRun(null)} />}
       {filesRun && filesRunScript && <RunOnFilesModal script={filesRunScript} files={filesRun.files} first={filesRun.first} busy={filesBusy} onRun={(f, then) => void runOnFiles(f, then)} onStop={stopScript} onClose={() => setFilesRun(null)} />}

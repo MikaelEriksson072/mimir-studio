@@ -3696,6 +3696,18 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   Dialogen visar raderna innan de läggs in; insättningen är ett steg att ångra. KickAss.jar och 64tass bygger varje slag,
   som .byte-rader och som fil, till samma bytes som Mimirs assembler (`asm-blocks.integration.test.ts`); Mimirs
   64tass kan `.align` (luckan oskriven, eller fylld med ett värde).
+- **Continue in the Assembler** (2026-11-25): i ett vanligt projekt (re-assemblern) gör *File → Continue in the Assembler…*
+  (och paletten) ett Assembler-projekt av programmet, att skriva vidare på som sitt eget. Dialogen frågar som *New…*
+  (namnet, `<projekt>-asm` först, mappen det hamnar i, Kick Assembler eller 64tass, git) och säger hur många källfiler
+  och markerade block det blir. Källan är den re-assemblerade (`render` med `blockMarks`, `assemblerSources` i
+  `asm-blocks.ts`): den bygger programmet byte för byte, och varje block analysen hittade (eller användaren märkte) som
+  inte är kod, BASIC-raden eller ett flyttat block står mellan `@block <slag>` och `@end`, med `multicolor`/`hires`
+  när det är valt, musikens init och play och textens kodning (en lo/hi-tabell blir `table`). Källfilerna, include-filen
+  och binärfilerna de läser skrivs i den nya mappen, huvudfilen är källan till filen där programmet startar, och det nya
+  projektet öppnas i fönstret i stället för det gamla (som sparas först och står kvar). Assemblern ser då samma block som
+  analysen såg och resten som kod. En markering vinner över BASIC-raden vid $0801. En cartridges källa bygger en avbild,
+  inte ett program, och kan inte fortsättas så. Testat för alla testprogram (`asm-continue.test.ts`: Mimirs assembler
+  bygger källan till programmets bytes, och varje block får sin typ).
 - **Filerna bredvid koden.** Listan är mappens filer och mappar som ett träd, mapparna först (`.git`, `node_modules` och
   liknande utelämnas; högst 4000 poster). Ett klick öppnar en fil i editorn, en mapp fälls ut och in; piltangenterna och
   Enter går i listan. Huvudfilen är märkt *main*, en fil med ändringar som inte är skrivna har en prick och en fil med

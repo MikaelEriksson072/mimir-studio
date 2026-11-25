@@ -285,13 +285,14 @@ export function asmProgram(c: Pick<AsmCheck, 'asm' | 'entry' | 'check' | 'files'
   const CODE = { kind: 'code' as const, props: {} }, BASIC = { kind: 'basic' as const, props: {} };
   const markOf = (a: Addr) => {
     const f = c.fileOf[a], line = c.asm.lines[a];
-    return (f && line ? byFile.get(c.files[f - 1])?.find(m => line > m.line && line < m.end) : null) ?? CODE;
+    return (f && line ? byFile.get(c.files[f - 1])?.find(m => line > m.line && line < m.end) : null) ?? null;
   };
   const overrides: Override[] = [];
   let lastMark: unknown = null;
   for (let a = 0; a < 0x10000; a++) {
     if (!written[a]) { lastMark = null; continue; }
-    const m = basic && a >= basic.start && a < basic.end ? BASIC : markOf(a), last = overrides[overrides.length - 1];
+    // (a block marked over the BASIC line is what its mark says)
+    const m = markOf(a) ?? (basic && a >= basic.start && a < basic.end ? BASIC : CODE), last = overrides[overrides.length - 1];
     if (last && last.end === a && lastMark === m) { last.end = a + 1; continue; }
     overrides.push({ start: a, end: a + 1, type: m.kind, ...(Object.keys(m.props).length ? { props: { ...m.props } } : {}) });
     lastMark = m;

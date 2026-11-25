@@ -41,7 +41,7 @@ export function gitNote(r: ProjectCreateResult): { text: string; bad: boolean } 
  *  write), not the deep one a program to re-assemble starts with */
 const ASM_SETTINGS = { deepAnalysis: false } as const;
 /** the folder's .gitignore leaves out what the Assembler's builds write (out, beside the main file) too */
-async function ignoreOut(dir: string): Promise<void> {
+export async function ignoreOut(dir: string): Promise<void> {
   if (!kr) return;
   const r = await kr.assemblerRead({ dir, path: '.gitignore' }).catch(() => null);
   const text = r?.text ?? '';

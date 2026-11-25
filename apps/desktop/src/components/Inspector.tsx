@@ -177,7 +177,7 @@ export function Inspector({ source, A, R, project, cursor, sel, colors, heatMode
             <dt>Refs in</dt><dd>{xin}</dd>
             {blk.type !== 'code' && <><dt>Seen as</dt><dd>{blk.reason || '—'}</dd></>}
           </dl>
-          <p className="muted small">The program the sources make: its code is the code they write, the rest is what the analysis sees in its bytes. It is changed in the sources.</p>
+          <p className="muted small">The program the sources make: what they write is code, except a block marked in them (// @block sprite … // @end, or Block… in the Assembler), which is what its mark says. It is changed in the sources.</p>
         </section>
       ) : zpVar != null ? <ZpSection a={zpVar} A={A} R={R} project={project} onRename={onRename} onNote={onZpNote} onComment={onZpComment} onPair={onZpPair} onNavigate={onNavigate} /> : blk ? (
         <section className="insp-sec">

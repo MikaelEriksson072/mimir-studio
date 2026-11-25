@@ -9,7 +9,9 @@
  * drawn (a sprite's 21 rows of 3 bytes in binary, a char a line, a screen row a line), or a file of the project the
  * source imports, put where the caret is (aligned as the VIC needs it) or at an address.
  * ===================================================================== */
-import type { Addr, BlockKind, OverrideProps, ScriptLang, TextEncoding } from './types';
+import type { Addr, AnalysisResult, BlockKind, OverrideProps, ProjectInput, ScriptLang, TextEncoding, Vfs } from './types';
+import { render } from './render/kick';
+import { isTass } from './render/dialect';
 import type { AsmProblem } from './asm-project';
 import type { LibraryKind } from './library';
 import { OPC } from './cpu/opcodes';
@@ -296,4 +298,28 @@ export function asmBlockBytes(kind: AsmBlockKind, fileName: string, bytes: Uint8
       return { bytes: bytes.slice(o), offset: o };
     }
   }
+}
+
+/* ---- an Assembler project of a re-assembled program ---- */
+
+/** What an Assembler project made of a re-assembled program has (`assemblerSources`): the source of each file with its
+ *  blocks marked, the binary files they load and the include, the main file (the file the program starts in), the
+ *  language, and how many blocks are marked */
+export interface AssemblerSources { files: Vfs; main: string; lang: ScriptLang; blocks: number; sources: string[] }
+
+/**
+ * The project's program as an Assembler project's sources (Continue in the Assembler, spec 10.7): the re-assembled
+ * source with every block the analysis found (or the user marked) that is not code between `@block` and `@end`, so the
+ * Assembler shows them as what they are and the rest as code. The main file is the source of the file the program
+ * starts in (its entry), else the first. A cartridge's sources build an image, not a program the Assembler runs.
+ */
+export function assemblerSources(A: AnalysisResult, project: ProjectInput): AssemblerSources {
+  if (project.cart) throw new Error('A cartridge\'s sources build its image (a .crt): the Assembler builds and runs programs');
+  if (!A.files.length) throw new Error('The project has no program to continue with');
+  const R = render(A, project, { blockMarks: true });
+  const at = A.entry != null ? A.owner[A.entry] : -1, main = `${R.fileNames[at >= 0 ? at : 0]}.asm`;
+  const sources = R.fileNames.map(n => `${n}.asm`);
+  let blocks = 0;
+  for (const n of sources) { const t = R.files[n]; if (typeof t === 'string') blocks += asmBlockMarks([{ path: n, text: t }]).marks.length; }
+  return { files: R.files, main, lang: isTass(project.settings) ? '64tass' : 'kickass', blocks, sources };
 }

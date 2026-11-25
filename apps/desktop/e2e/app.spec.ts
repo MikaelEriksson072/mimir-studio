@@ -1217,7 +1217,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
     await file.click();
     await expect(file).toHaveAttribute('aria-expanded', 'true');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount disk image (D64, G64)…', 'Insert tape image (TAP, T64)…', 'Save: create a project from this work…Ctrl+S']);
+    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount disk image (D64, G64)…', 'Insert tape image (TAP, T64)…', 'Continue in the Assembler…', 'Save: create a project from this work…Ctrl+S']);
     await file.click();
     await expect(menu).toBeHidden();
     await expect(file).toHaveAttribute('aria-expanded', 'false');

@@ -520,3 +520,45 @@ test('Insert block in the Assembler: sprites from the library as .byte lines, mu
   expect(disk()).toContain('LoadSid');
   await closeProject(page, 'blocks');
 });
+
+test.describe('from the re-assembler', () => {
+  test.use({ start: 'without' });
+  test('Continue in the Assembler: the re-assembled program as an Assembler project, its blocks marked, opened in the window', async ({ workDir: work, app, page }) => {
+    // the demo, re-assembled: File → Continue in the Assembler…
+    await expect(page.locator('.main-tabs').getByRole('tab', { name: 'Listing' })).toBeVisible();
+    await page.getByRole('button', { name: 'File', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Continue in the Assembler…' }).click();
+    const form = page.getByRole('dialog', { name: 'Continue in the Assembler' }).getByRole('form', { name: 'Continue in the Assembler' });
+    await expect(form.getByRole('textbox')).toHaveValue('raster-demo-asm');
+    await expect(form.getByRole('combobox', { name: 'Assembler' })).toHaveValue('kickass');
+    await stubDialogs(app, { open: [work] });
+    await form.getByRole('button', { name: 'Change…' }).click();
+    const dir = join(work, 'raster-demo-asm');
+    await expect(form).toContainText(dir);
+    await expect(form).toContainText(/raster-demo\.asm the main file, which Run builds\), \d+ blocks marked/);
+    await shot(page, '16-continue');
+    await form.getByRole('button', { name: 'Create and open' }).click();
+
+    // an Assembler project now, in the window: its source checked and the program the same
+    const tabs = page.locator('.main-tabs');
+    await expect(page.getByRole('button', { name: 'Project raster-demo-asm' })).toBeVisible();
+    await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
+    await expect(tabs.getByRole('tab', { name: 'Listing' })).toHaveCount(0);
+    await expect(page.locator('.scr-check')).toContainText('Ready', { timeout: 15_000 });
+    expect(JSON.parse(readFileSync(join(dir, 'raster-demo-asm.mimir.json'), 'utf8')).asm).toEqual({ lang: 'kickass', main: 'raster-demo.asm' });
+    const src = readFileSync(join(dir, 'raster-demo.asm'), 'utf8');
+    expect(src).toContain('// @block music init=$1000 play=$1003');
+    expect(src).toContain('// @block charset');
+    await expect(page.getByLabel('File name')).toHaveValue('raster-demo.asm');
+    await expect(page.locator('.scr-editor .asm-blk').first()).toBeVisible();
+
+    // its blocks are what the analysis found, the rest code
+    await tabs.getByRole('tab', { name: 'Memory' }).click();
+    const side = page.locator('.sidebar');
+    await side.getByRole('button', { name: 'Memory map' }).click();
+    await expect(side.locator('.seg-row', { hasText: '$1000' }).locator('i')).toHaveAttribute('style', /--g-music/, { timeout: 15_000 });
+    await expect(side.locator('.seg-row', { hasText: '$3000' }).locator('i')).toHaveAttribute('style', /--g-gfx/);
+    await shot(page, '17-continued-memory');
+    await closeProject(page, 'raster-demo-asm');
+  });
+});

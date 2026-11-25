@@ -8,7 +8,7 @@
  * Debug runs it in Mimir's 6510 (or the whole C64) an instruction at a time, with breakpoints, the registers, the stack
  * and the C64 screen; under the code the problems, the last build and the last run. The start screen's Assembler page
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmProgram, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
@@ -27,6 +27,7 @@ import { ScriptScreenPanel } from './ScriptScreen';
 import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, parentOf, type TreeEdit } from './AsmTree';
 import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmRunKept } from './AsmOutput';
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
+import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
 import type { AsmBlockKind } from '@mimir/core';
 
@@ -71,6 +72,20 @@ const withoutProjectFile = (f: AsmFolder, name: string): AsmFolder => {
   const own = projectFileName(name).toLowerCase();
   return { ...f, entries: f.entries.filter(e => e.dir || e.path.toLowerCase() !== own) };
 };
+
+/** Continue in the Assembler (spec 10.7): an Assembler project made of the re-assembled program, its blocks marked. */
+export interface AsmContinueInfo { name: string; parent: string; lang: ScriptLang; main: string; blocks: number; sources: number }
+export function ContinueInAssemblerModal({ info, onCreate, onClose }: { info: AsmContinueInfo; onCreate: (name: string, parent: string, lang: ScriptLang, git: boolean) => Promise<void>; onClose: () => void }) {
+  return (
+    <Modal title="Continue in the Assembler" onClose={onClose} className="asm-continue">
+      <div className="modal-body">
+        <p className="small">A new Assembler project of this program: its re-assembled source, which builds the program byte for byte, in a folder of its own, to go on writing as your own. Each block the analysis found that is not code (sprites, charsets, music, tables, text…) is marked in the source (<span className="mono">{info.lang === '64tass' ? ';' : '//'} @block sprite</span> … <span className="mono">@end</span>), so Graphics, Memory and the inspector show it as what it is; the rest is code. This project stays as it is; the new one opens in its place.</p>
+        <NewFolderForm parent={info.parent} name={info.name} lang={info.lang} label="Continue in the Assembler" submit="Create and open" onCreate={onCreate} onCancel={onClose}
+          makes={where => <>Creates <span className="mono">{where}</span> with its project file and {info.sources === 1 ? 'the source' : `${info.sources} sources`} (<span className="mono">{info.main}</span> the main file, which Run builds), {info.blocks === 1 ? 'a block' : `${info.blocks} blocks`} marked in {info.sources === 1 ? 'it' : 'them'}, and the files they load.</>} />
+      </div>
+    </Modal>
+  );
+}
 
 /* ---------------------------------------------------------------------------------------------------------------- */
 
@@ -127,11 +142,15 @@ export function AssemblerHome({ onBack, onCreate, onOpen }: {
 }
 
 /** A new Assembler project: its name, where its folder goes, the assembler its first source is written for, and a git
- *  repository or none (the box as it was ticked last, as in New project). */
-function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string; onCreate: (name: string, parent: string, lang: ScriptLang, git: boolean) => Promise<void>; onCancel: () => void }) {
-  const [name, setName] = useState('');
+ *  repository or none (the box as it was ticked last, as in New project). Continue in the Assembler asks the same, with
+ *  the name and language it starts with, its own label, what it makes and its button. */
+function NewFolderForm({ parent: parent0, onCreate, onCancel, name: name0 = '', lang: lang0 = 'kickass', label = 'New Assembler project', makes, submit: submitText = 'Create' }: {
+  parent: string; onCreate: (name: string, parent: string, lang: ScriptLang, git: boolean) => Promise<void>; onCancel: () => void;
+  name?: string; lang?: ScriptLang; label?: string; makes?: (where: string) => ReactNode; submit?: string;
+}) {
+  const [name, setName] = useState(name0);
   const [parent, setParent] = useState(parent0);
-  const [lang, setLang] = useState<ScriptLang>('kickass');
+  const [lang, setLang] = useState<ScriptLang>(lang0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const git = useUi(s => s.newProjectGit);
@@ -147,7 +166,7 @@ function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string
   };
   const where = `${parent.replace(/[\\/]+$/, '')}${parent.includes('/') && !parent.includes('\\') ? '/' : '\\'}${n}`;
   return (
-    <form className="new-project" onSubmit={submit} aria-label="New Assembler project">
+    <form className="new-project" onSubmit={submit} aria-label={label}>
       <label className="field"><span>Name</span>
         <input autoFocus value={name} onChange={e => { setName(e.target.value); setError(null); }} placeholder="my-intro" spellCheck={false} className={cx(!!n && problem && 'bad')} aria-invalid={!!n && !!problem} />
       </label>
@@ -169,10 +188,10 @@ function NewFolderForm({ parent: parent0, onCreate, onCancel }: { parent: string
         </span>
       </label>
       <div className="np-where">{n && !problem
-        ? <>Creates <span className="mono">{where}</span> with its project file and <span className="mono">main.asm</span> in it: a program that prints a line, to start from.</>
+        ? makes ? makes(where) : <>Creates <span className="mono">{where}</span> with its project file and <span className="mono">main.asm</span> in it: a program that prints a line, to start from.</>
         : <span className={cx(n && 'bad')}>{problem}</span>}</div>
       {error && <div className="np-error" role="alert">{error}</div>}
-      <div className="np-foot"><span className="grow" /><button type="button" className="btn" onClick={onCancel}>Cancel</button><button type="submit" className="btn primary" disabled={!!problem || busy}>{busy ? 'Creating…' : 'Create'}</button></div>
+      <div className="np-foot"><span className="grow" /><button type="button" className="btn" onClick={onCancel}>Cancel</button><button type="submit" className="btn primary" disabled={!!problem || busy}>{busy ? 'Creating…' : submitText}</button></div>
     </form>
   );
 }
