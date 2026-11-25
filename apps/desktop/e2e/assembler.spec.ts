@@ -929,3 +929,53 @@ test('drawing in the Graphics tab of an Assembler project: Draw, a click and a d
   await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %00000000, %00000000, %00000000');
   await closeProject(page, 'gdraw');
 });
+
+test('macros and segments in an Assembler project: Mimir\'s check runs them, says what file the program is and which segment no file has, and Build takes the file a .file writes', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'segs');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [
+    '.file [name="game.prg", segments="Code,Data"]',
+    '.segmentdef Code [start=$0801]',
+    '.segmentdef Data [startAfter="Code"]',
+    '.segment Code',
+    'BasicUpstart2(start)',
+    'start:  Border(2)',
+    '        Border(colors - start)',
+    '        rts',
+    '.segment Data',
+    'colors: .byte 1, 2, 3',
+    '.segment Extra [start=$c000]',
+    '        .byte 9',
+    '.macro Border(c) {',
+    '        lda #c',
+    '        sta $d020',
+    '}',
+    '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  // the check runs the macro and puts the segments together as the .file says
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  await expect(problems).toContainText('(game.prg, which the sources\' segments write)');
+  await expect(problems).toContainText('a run starts at $080e (the SYS of its BASIC line)');
+  // a segment that no file has: a warning on its line and in the list
+  const warned = page.getByRole('list', { name: 'What the check warns of' });
+  await expect(warned.getByRole('listitem')).toHaveCount(1);
+  await expect(warned).toContainText('main.asm:11');
+  await expect(warned).toContainText("The segment 'Extra' is in no file");
+  await expect(page.locator('.scr-editor .squiggly-warning')).toHaveCount(1);
+  await shot(page, '26-macros-segments');
+  // Build: the program is the .file's game.prg, as the check said
+  const kickJar = (await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<{ kickJar: string }> } }).kr.getSettings())).kickJar;
+  if (kickJar && existsSync(kickJar)) {
+    await page.getByRole('button', { name: 'Build', exact: true }).click();
+    await expect(page.locator('.scr-run-stat')).toContainText('Built game.prg', { timeout: 60_000 });
+    const prg = readFileSync(join(dir, 'out', 'game.prg'));
+    expect([...prg.subarray(0, 2)]).toEqual([0x01, 0x08]);
+    expect(existsSync(join(dir, 'out', 'main.prg'))).toBe(false);
+  }
+  await closeProject(page, 'segs');
+});

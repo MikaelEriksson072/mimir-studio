@@ -284,7 +284,7 @@ export function registerProviders(monaco: typeof Monaco): void {
       const K = monaco.languages.SymbolKind;
       return asmNames(model.getValue(), langOf(model)).filter(n => n.def).map(n => {
         const range = new monaco.Range(n.line, n.col, n.line, n.col + n.name.length), a = asmContext.names.get(n.name);
-        return { name: n.name, detail: a != null ? `$${h4(a)}` : '', kind: n.how === 'value' ? K.Constant : K.Field, tags: [], range, selectionRange: range };
+        return { name: n.name, detail: a != null ? `$${h4(a)}` : '', kind: n.how === 'value' ? K.Constant : n.how === 'macro' ? K.Function : K.Field, tags: [], range, selectionRange: range };
       });
     },
   });

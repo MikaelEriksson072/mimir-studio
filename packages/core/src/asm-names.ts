@@ -11,7 +11,7 @@ import { OPC } from './cpu/opcodes';
 import { langIs } from './code-lang';
 
 /** a name written in a source: its line and column (from 1), and whether it is defined there */
-export interface AsmNameAt { name: string; line: number; col: number; def: boolean; how?: 'label' | 'value' }
+export interface AsmNameAt { name: string; line: number; col: number; def: boolean; how?: 'label' | 'value' | 'macro' }
 
 const WORD = /[A-Za-z_]/, WORDS = /\w/;
 
@@ -21,6 +21,8 @@ export function asmNames(text: string, lang: ScriptLang): AsmNameAt[] {
   const out: AsmNameAt[] = [];
   const lines = text.split('\n');
   let block = false, tassComment = false;
+  // (64tass: the macros the source defines, which `.name` calls)
+  const macroSet = new Set(tass ? lines.map(l => l.match(/^([A-Za-z_]\w*):?\s+\.(?:macro|segment)\b/)?.[1]).filter((n): n is string => !!n) : []);
   lines.forEach((raw, li) => {
     const s = raw.replace(/\r$/, '');
     if (tass) {
@@ -40,16 +42,19 @@ export function asmNames(text: string, lang: ScriptLang): AsmNameAt[] {
       while (j < s.length && WORDS.test(s[j])) j++;
       const name = s.slice(i, j), before = i > 0 ? s[i - 1] : '';
       // (a number's digits, a member or a directive, a local label, a register after a comma: not names)
-      const skip = before === '$' || before === '%' || before === '.' || before === '!' || before === '@' || /\d/.test(before) || (/^0x/i.test(s.slice(i - 1, i + 1)));
+      // (64tass: `.name` first on a line where a name is a macro's is its call, as `#name` is)
+      const call = tass && before === '.' && /^\s*(?:[A-Za-z_]\w*:?\s+)?$/.test(s.slice(0, i - 1)) && macroSet.has(name);
+      const skip = !call && (before === '$' || before === '%' || before === '.' || before === '!' || before === '@' || /\d/.test(before) || (/^0x/i.test(s.slice(i - 1, i + 1))));
       if (!skip) {
         const lead = s.slice(0, i), rest = s.slice(j);
         let def = false, how: AsmNameAt['how'];
         if (tass) {
-          if (i === 0) { def = true; how = /^\s*:?=/.test(rest) ? 'value' : 'label'; }
+          if (i === 0) { def = true; how = /^\s*:?=/.test(rest) ? 'value' : /^\s*\.(macro|segment|function|sfunction)\b/.test(rest) ? 'macro' : 'label'; }
           else if (/^\s*$/.test(lead) && /^\s*:?=/.test(rest)) { def = true; how = 'value'; }
           else if (/^\s*$/.test(lead) && /^:(?!=)/.test(rest)) { def = true; how = 'label'; }
         } else if (/^\s*$/.test(lead) && /^\s*:(?![:=])/.test(rest)) { def = true; how = 'label'; }
         else if (/^\s*\.(label|const|var)\s+$/.test(lead) && /^\s*=/.test(rest)) { def = true; how = 'value'; }
+        else if (/^\s*\.(macro|function|pseudocommand)\s+$/.test(lead)) { def = true; how = 'macro'; }
         out.push({ name, line: li + 1, col: i + 1, def, ...(how ? { how } : {}) });
       }
       i = j - 1;

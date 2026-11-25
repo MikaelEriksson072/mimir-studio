@@ -604,8 +604,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     for (const [p, m] of Object.entries(models.current)) {
       if (m.isDisposed()) continue;
       const on = (line: number) => line > 0 && line <= m.getLineCount();
-      monaco.editor.setModelMarkers(m, 'asm-check', (check?.problems ?? []).filter(x => x.file === p && on(x.line)).map(x => ({
-        severity: monaco.MarkerSeverity.Error, message: x.msg, source: 'Mimir\'s check', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
+      monaco.editor.setModelMarkers(m, 'asm-check', [...(check?.problems ?? []).map(x => ({ ...x, warn: false })), ...(check?.warnings ?? []).map(x => ({ ...x, warn: true }))].filter(x => x.file === p && on(x.line)).map(x => ({
+        severity: x.warn ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error, message: x.msg, source: 'Mimir\'s check', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
       })));
       monaco.editor.setModelMarkers(m, 'asm-c64', notes.filter(x => x.file === p && on(x.line)).map(x => ({
         severity: x.level === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info, message: x.msg, source: 'Mimir\'s C64 check', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),

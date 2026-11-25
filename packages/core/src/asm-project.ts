@@ -139,6 +139,10 @@ export interface AsmCheck {
   /** it assembles and has code to run */
   ok: boolean;
   problems: AsmProblem[];
+  /** what is likely a mistake but assembles (a segment with bytes that no file has) */
+  warnings: AsmProblem[];
+  /** the file the program is when the sources use segments (Kick Assembler: `game.prg` of a .file; null: <main>.prg) */
+  programFile: string | null;
   /** where a run starts: the SYS of its BASIC line (BasicUpstart), else its start (or main) label, else its first byte */
   entry: Addr | null;
   entryFrom: 'basic' | 'label' | 'first' | null;
@@ -162,8 +166,12 @@ const START_LABELS = ['start', 'main', 'begin', 'entry', 'init'];
 
 /** Assemble the program (`main` and what it imports, all in `vfs`) with Mimir's own assembler and check it. */
 export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang): AsmCheck {
-  const asm = assembleIn(langIs(lang), vfs, main, { allFiles: true });
+  // (Kick Assembler starts the program counter at $2000 until a * = moves it)
+  const asm = assembleIn(langIs(lang), vfs, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }) });
   const problems: AsmProblem[] = asm.errors.map(e => ({ file: e.file, line: e.line, msg: e.msg }));
+  const warnings: AsmProblem[] = (asm.warnings ?? []).map(e => ({ file: e.file, line: e.line, msg: e.msg }));
+  const base = main.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') + '.prg';
+  const programFile = asm.programFile && asm.programFile.toLowerCase() !== base.toLowerCase() ? asm.programFile : null;
   const { mem, written } = asm;
   const ranges = maskRanges(written), bytes = ranges.reduce((n, r) => n + r.end - r.start, 0);
   const names = new Map<string, number>();
@@ -187,7 +195,7 @@ export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang): AsmCheck {
     ok, problems: problems.map(p => ({ level: 'error' as const, msg: p.msg, ...(p.line ? { line: p.line } : {}) })), entry, code: ranges, bytes, place: 'own', prints: asm.prints,
     mem, written, lines: asm.lines, starts: asm.starts, ops: asm.ops, labels, uses: [], access: [], actions: [],
   };
-  return { ok, problems, entry, entryFrom, ranges, bytes, names, files, fileOf, prints: asm.prints, asm, check };
+  return { ok, problems, warnings, programFile, entry, entryFrom, ranges, bytes, names, files, fileOf, prints: asm.prints, asm, check };
 }
 
 /** where in the sources the byte at `a` comes from (null: no line there) */

@@ -3451,7 +3451,8 @@ $06, $08` i `.asm`-filen efter en körning.
   `name.label` utanför), `.if`/`else`/`else .if`, `.for`, `.while`, `.var` och `.eval` (`=`, `++`, `--`, `+=`, `-=`,
   `*=`, `/=`), `.print`, `.error`, jämförelser, `&&`, `||`, `!`, `~`, `? :`, `[ ]` som parenteser, teckenlitteraler
   (`'a'` i den aktuella kodningen), flyttal och funktionerna (`round`, `floor`, `sin`, `toRadians`, `mod`, `min`,
-  `max`, `pow`, … och strängarnas `.size()`, `.charAt()`). Mätt mot KickAss 5.25: `<` och `>` tar hela uttrycket
+  `max`, `pow`, … och strängarnas `.size()`, `.charAt()`), makron, funktioner, pseudokommandon och segment (10.7,
+  *Makron och segment i kontrollen*). Mätt mot KickAss 5.25: `<` och `>` tar hela uttrycket
   efter sig (`<label+1` är låga byten av label+1), `{ }` till `.if`, `.for`, `.while` och ett eget block öppnar ett
   scope vars etiketter koden utanför inte ser (varje varv i `.for` och `.while` sitt eget), medan `.pseudopc { }`
   inte gör det, `else` står på raden efter en `.if` utan block, och ett villkor måste vara sant eller falskt. Ett
@@ -3745,8 +3746,43 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`#import`, `.include`, från den importerande filens mapp först, som KickAss gör) och data den laddar (`LoadSid`,
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
-  fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (makron, funktioner, segment): där
-  bygger *Run* ändå med den riktiga, vars problem är de som gäller.
+  fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers `.disk`, modifierare
+  och `mbfiles`, 64tass `.function`): där bygger *Run* ändå med den riktiga, vars problem är de som gäller. Kick
+  Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
+- **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
+  segment som Kick Assembler 5.25 och makron och sektioner som 64tass 1.57 (mätt mot dem: `asm-macros.integration.test.ts`
+  bygger varje fall med KickAss.jar och 64tass och jämför varje fil byte för byte).
+  - *Kick Assembler:* `.macro Name(a, b) { }` anropas `Name(1, 2)` (eller `:Name(1, 2)`) före eller efter
+    definitionen; varje anrop är ett eget scope under toppnivån (makrot ser toppnivåns namn, inte anroparens), och en
+    etikett före anropet namnger det (`w1: Wait(3)` → `w1.loop`). `.function f(a) { .return a*2 }` (en per antal
+    argument, med `.var`, `.if`, `.for`, `.eval` i; en funktion skriver inga bytes). `.pseudocommand mov src : dst { }`:
+    varje argument med sitt adresseringssätt (`mov #1 : $d020` ger `lda #1`), `CmdArgument`, `getType()`,
+    `getValue()`, `AT_*`. Ett omedelbart värde tar sin låga byte, som KickAss (`lda #$1234` är `a9 34`).
+  - *Kick Assemblers segment:* `.segmentdef`, `.segment` (definierar med parametrar; ett segment måste vara definierat
+    innan `.segment` går till det), `.file`, `.segmentout`, `.memblock`; parametrarna `start` (utan: `$2000`),
+    `startAfter` och `align`, `min`/`max`, `fill` och `fillByte`, `virtual`, `segments`, `outPrg`/`outBin`,
+    `prgFiles`, `sidFiles`, `allowOverlap` (`hide` och `dest` tas och betyder inget här). Varje segment har sitt eget
+    minne och sin programräknare. **Programmet** kontrollen ger (det Graphics, Memory, Explorer och debuggern visar) är
+    det bygget skriver som `<main>.prg`: Default-segmentet; är det tomt, filen en `.file` (eller en `outPrg`) skriver
+    (den som heter `<main>.prg` först), och *Problems* säger vilken (`The program assembles: 26 bytes (game.prg, which the
+    sources' segments write)`). Ett segment med bytes som ingen fil har (KickAss skriver det ingenstans) är en
+    **varning** på raden som definierar det och i listan. Två segment över varandra i en fil är ett fel (utan
+    `allowOverlap`), och de andra felen säger det KickAss säger (`Undefined segment`, `Can't use fill without both min
+    and max`, `Can't output default segment …`). *Build* och *Run* tar filen KickAss skrev först (`Writing prg file:`)
+    när `<main>.prg` inte skrivs (`runKickAssembler`).
+  - *64tass:* `name .macro a, b=2` … `.endm` (`.endmacro`; ett eget block, som en etikett före anropet namnger och är
+    adressen för: `var .lohi 1, 2` → `var.lo`) och `name .segment` … `.endsegment` (inget block), anropade `#name 1, 2`
+    eller `.name 1, 2` före eller efter definitionen; parametrarna som text (`\1`-`\9`, `\name`, `\{name}`, `\@` alla,
+    `@1`-`@9`; inte i strängar, som 64tass 1.57), standardvärden för de som saknas, och ett makro som anropar sig självt
+    vecklas ut så långt dess `.if` låter det. Sektioner: `.dsection name` där byten från alla `.section name` … `.send`
+    hamnar, före eller efter fragmenten, nästlade också; `.byte ?`, `.word ?`, `.addr ?` tar plats utan att skriva.
+    En tuppel `(1234, 5678)` och `<`/`>` av den ger en byte per värde.
+  - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
+    anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
+    raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger
+    vilket anrop det kom från (`Unknown symbol "x" (in Border(), called on line 6)`). Namnen (Shift+F12, F2,
+    Ctrl+Shift+O) räknar ett makros, en funktions och ett pseudokommandos namn som definierat där direktivet namnger det,
+    och 64tass `.name` som ett anrop när källan har ett sådant makro.
 - **Run** (Ctrl+Enter, F5) skriver det som inte är skrivet, bygger huvudfilen med KickAss.jar eller 64tass i dess mapp
   (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
   (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
@@ -4165,7 +4201,9 @@ det generatorn skriver, som 64tass 1.57 med `-a -C`: etiketter i början av rade
 `.include`, `.cpu`, `.enc`, `.cdef`, `.byte`, `.word`, `.text`, `.null`, `.fill`, `.binary`, `.cerror`,
 `.comment`/`.endc`, `@w`/`@b`, och uttrycken: tal, strängar, `*`, `<`/`>` över hela uttrycket efter sig (som 64tass),
 aritmetik, bitoperatorer, jämförelser, `? :`, listor, bytesträngar indexerade, med listor och skivade
-(`sid[[7, 6]]`, `sid[offset + 2:]`), `binary()`, `len()` och `format()`. Flera pass tills storlekarna står still.
+(`sid[[7, 6]]`, `sid[offset + 2:]`), `binary()`, `len()` och `format()`; och det man skriver själv i Assemblern:
+makron (`.macro`, `.segment`), sektioner (`.dsection`, `.section`/`.send`), `.addr`, `?` och tupler (10.7, *Makron och
+segment i kontrollen*). Flera pass tills storlekarna står still.
 
 **Riktiga 64tass** (`run64tass`) körs som `64tass -a -C --cbm-prg <extra> -o out/<namn>.prg --vice-labels -l
 out/<namn>.vs <namn>.asm` i byggmappen (utdatamappen görs först: 64tass gör den inte själv); en cartridges egen källa

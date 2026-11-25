@@ -93,9 +93,16 @@ export async function runKickAssembler(o: KickRunOptions): Promise<KickRunResult
   });
   output = output.replace(/\r\n?/g, '\n');
   const problems = parseKickOutput(output, o.cwd);
-  const prg = existsSync(prgPath) ? new Uint8Array(await readFile(prgPath)) : null;
+  // a source whose Default segment is empty writes no <name>.prg: its program is the first PRG a .file (or a segment's
+  // outPrg) writes, as the build says ("Writing prg file: game.prg")
+  let outPath = prgPath;
+  if (!existsSync(outPath)) {
+    const first = output.match(/^Writing prg file: (.+)$/m)?.[1].trim();
+    if (first && existsSync(join(o.cwd, o.outDir, first))) outPath = join(o.cwd, o.outDir, first);
+  }
+  const prg = existsSync(outPath) ? new Uint8Array(await readFile(outPath)) : null;
   const ok = code === 0 && !problems.some(p => p.severity === 'error') && prg != null;
-  return { ok, code, output, problems, argv: [o.java, ...argv], prgPath, prg, vsPath: existsSync(vsPath) ? vsPath : null, ms: Date.now() - t0 };
+  return { ok, code, output, problems, argv: [o.java, ...argv], prgPath: outPath, prg, vsPath: existsSync(vsPath) ? vsPath : null, ms: Date.now() - t0 };
 }
 
 export interface TassRunOptions {

@@ -1246,6 +1246,12 @@ export interface AssembleResult {
    *  `starts` and `ops` then cover every file the code imports */
   fileOf?: Uint16Array;
   fileNames?: string[];
+  /** what is not an error but likely a mistake (Kick Assembler: a segment with bytes that no file has) */
+  warnings?: AsmError[];
+  /** (Kick Assembler's segments) the files the build writes besides <main>.prg (.file, outPrg, outBin), and the one the
+   *  program (`mem`, `written`, `prg`) is: <main>.prg from the Default segment, else the first PRG of those (null: none) */
+  files?: { name: string; type: 'prg' | 'bin'; segments: string[]; bytes: Uint8Array | null }[];
+  programFile?: string | null;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

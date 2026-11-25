@@ -7,8 +7,13 @@
  * mode of the NMOS 6510 with 64tass's names of the undocumented opcodes (with `.cpu "6502i"`), and the expressions
  * it uses: numbers, strings, `*`, `<` and `>` over all of the expression after them (as 64tass: `<label+1` is the
  * low byte of label+1), the arithmetic, bit, shift, comparison and logical operators, `? :`, lists, byte strings
- * indexed, by lists and sliced (`sid[[7, 6]]`, `sid[offset + 2:]`), binary(), len() and format(). Several passes
- * until the sizes settle, as 64tass. The desktop app and the CLI can additionally run the real 64tass.
+ * indexed, by lists and sliced (`sid[[7, 6]]`, `sid[offset + 2:]`), binary(), len() and format(). Macros: `name
+ * .macro a, b=2` … `.endm` (a block of its own, which a label before the call names: `var .lohi 1, 2` → `var.lo`) and
+ * `name .segment` … `.endsegment` (no block), called `#name 1, 2` or `.name 1, 2` before or after the definition, the
+ * parameters as text (`\1`-`\9`, `\name`, `\{name}`, `\@` all of them, `@1`-`@9`; not inside strings, as 64tass 1.57).
+ * Sections: `.dsection name` where the bytes of every `.section name` … `.send` go, as 64tass, nested too; `.byte ?`,
+ * `.word ?`, `.addr ?` take room only. Several passes until the sizes settle, as 64tass. The desktop app and the CLI
+ * can additionally run the real 64tass.
  * ===================================================================== */
 import type { AsmError, AssembleResult, Vfs } from '../types';
 import { MODE_LEN, OPC, TASS_ENC, type AddrMode } from '../cpu/opcodes';
@@ -56,8 +61,13 @@ const ENCODINGS: Record<string, (c: string) => number | null> = {
 
 const IMPLIED_ACC = new Set(['ASL', 'LSR', 'ROL', 'ROR']);
 const BRANCH = new Set(['BPL', 'BMI', 'BVC', 'BVS', 'BCC', 'BCS', 'BNE', 'BEQ']);
-/** the namespace a `.namespace` or `.block` label stands for */
-interface Space { space: string }
+/** the namespace a `.namespace` or `.block` label (or a macro call's) stands for, and the address where it starts */
+interface Space { space: string; v?: number }
+/** a macro (`.macro`: a block of its own; `.segment`: none): its parameters with their defaults and its lines */
+interface TMacro { kind: 'macro' | 'segment'; name: string; params: { name: string; def: string | null }[]; lines: { raw: string; line: number }[]; file: string }
+/** a section: where its .dsection put it in this pass and the last (pc, and the offset of a .logical), how much its
+ *  fragments took so far and at most */
+interface Sect { name: string; key: string; pc0: number | null; off0: number; used: number; max: number; prevPc0: number | null; prevOff0: number; prevSize: number; frags: boolean }
 const isSpace = (v: Value): v is Space => !!v && typeof v === 'object' && typeof v.space === 'string';
 
 const typeName = (v: Value) => typeof v === 'boolean' ? 'bool' : typeof v === 'string' ? 'str' : typeof v === 'number' ? 'int' : v instanceof Uint8Array ? 'bytes' : Array.isArray(v) ? 'list' : 'namespace';
@@ -108,38 +118,104 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const errors: AsmError[] = [];
   /** 0 while the files are read, then the passes, and the final one */
   let pass: number | 'final' = 0;
+  /** the macros being run, outermost first: a byte one writes is its outermost call's line's, and a problem in one says
+   *  which call it was in */
+  let calls: { name: string; st: Stmt }[] = [];
   // (only the loading and the final pass report: a pass before it may meet a value not known yet)
-  const E = (msg: string, st?: Stmt) => { if (pass === 0 || pass === 'final') errors.push({ msg, file: st ? st.file : entryPath, line: st ? st.line : 0 }); };
+  const E = (msg: string, st?: Stmt) => {
+    if (pass !== 0 && pass !== 'final') return;
+    const c = calls[calls.length - 1];
+    const where = c && st && c.st !== st ? ` (in the macro ${c.name}, called on line ${c.st.line}${c.st.file !== st.file ? ` of ${c.st.file}` : ''})` : '';
+    errors.push({ msg: msg + where, file: st ? st.file : entryPath, line: st ? st.line : 0 });
+  };
   const stmts: Stmt[] = [];
+  const macros = new Map<string, TMacro>();
 
   // ---- the lines: comments off, the label at the start of a line, .include and .comment … .endc ----
+  /** a line as a statement: its label at the start of the line, the rest, and its comment */
+  const parseLine = (raw: string, path: string, no: number): Stmt => {
+    const line = stripComment(raw).replace(/\s+$/, '');
+    const cmt = raw.slice(stripComment(raw).length).replace(/^;\s*/, '').trim();
+    let label: string | undefined, rest = line;
+    if (line && !/^\s/.test(line)) {
+      // at the start of a line: a label (`name:`, `name`, `+`, `-`), else `*` or a directive
+      // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1` at the start of a line)
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=)/);
+      if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) { label = m[1]; rest = line.slice(m[0].length); }
+    }
+    return { file: path, line: no, src: raw, ...(label ? { label } : {}), body: rest.trim(), ...(cmt ? { cmt } : {}) };
+  };
   const loadFile = (path: string, depth: number) => {
     const src = vfs[path];
     if (typeof src !== 'string') { E(`can't open file "${path}"`); return; }
     if (depth > 16) { E(`.include nested too deep at "${path}"`); return; }
-    let inComment = false;
+    let inComment = false, def: TMacro | null = null, inner = 0;
     src.split(/\r?\n/).forEach((raw, i) => {
-      const line = stripComment(raw).replace(/\s+$/, '');
-      const cmt = raw.slice(stripComment(raw).length).replace(/^;\s*/, '').trim();
-      const at: Stmt = { file: path, line: i + 1, src: raw, body: '', ...(cmt ? { cmt } : {}) };
-      let label: string | undefined, rest = line;
-      if (line && !/^\s/.test(line)) {
-        // at the start of a line: a label (`name:`, `name`, `+`, `-`), else `*` or a directive
-        // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1` at the start of a line)
-        const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=)/);
-        if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) { label = m[1]; rest = line.slice(m[0].length); }
-      }
-      const body = rest.trim();
+      const st = parseLine(raw, path, i + 1), { label, body } = st;
       if (inComment) { if (/^\.endc(omment)?$/.test(body)) inComment = false; return; }
+      // a macro's lines are kept as they are written, until its end
+      if (def) {
+        if (/^\.(macro|segment)\b/.test(body)) inner++;
+        else if (/^\.(endm|endmacro|endsegment)\b/.test(body)) { if (inner) inner--; else { def = null; return; } }
+        def.lines.push({ raw, line: i + 1 });
+        return;
+      }
       if (/^\.comment$/.test(body)) { inComment = true; return; }
+      const md = body.match(/^\.(macro|segment)\b\s*(.*)$/);
+      if (md) {
+        def = { kind: md[1] as TMacro['kind'], name: label ?? '', params: md[2].trim() ? splitTop(md[2], ',').map(p => { const [n, d] = p.split('='); return { name: n.trim(), def: d == null ? null : d.trim() }; }) : [], lines: [], file: path };
+        if (!label || label === '+' || label === '-') E(`a .${md[1]} needs its name before it (name .${md[1]})`, st);
+        else if (macros.has(label)) E(`duplicate definition '${label}'`, st);
+        else macros.set(label, def);
+        return;
+      }
       const inc = body.match(/^\.include\s+"([^"]+)"$/);
-      if (inc) { if (label) stmts.push({ ...at, label }); loadFile(importPath(vfs, path, inc[1]), depth + 1); return; }
+      if (inc) { if (label) stmts.push({ ...st, body: '' }); loadFile(importPath(vfs, path, inc[1]), depth + 1); return; }
       if (!label && !body) return;
-      stmts.push({ ...at, ...(label ? { label } : {}), body });
+      stmts.push(st);
     });
     if (inComment) E(`.comment without .endc in "${path}"`);
+    const unclosed = def as TMacro | null;
+    if (unclosed) E(`closing directive '.endmacro' not found for '${unclosed.name}' in "${path}"`);
   };
   loadFile(entryPath, 0);
+  /** a macro's lines for a call with these parameters (as text): each reference replaced outside strings and comments */
+  const expanded = new Map<string, Stmt[]>();
+  const expand = (def: TMacro, argText: string): Stmt[] => {
+    const key = `${def.name}\u0000${argText}`;
+    const done = expanded.get(key); if (done) return done;
+    const given = argText.trim() ? splitTop(argText, ',') : [];
+    const texts = Array.from({ length: Math.max(given.length, def.params.length) }, (_, i) => (given[i] ?? '') !== '' ? given[i] : (def.params[i]?.def ?? ''));
+    const named = new Map(def.params.map((p, i) => [p.name, texts[i]] as const).filter(([n]) => n));
+    const sub = (raw: string) => {
+      let out = '', q = '';
+      for (let k = 0; k < raw.length; k++) {
+        const c = raw[k];
+        if (q) { out += c; if (c === q) q = ''; continue; }
+        if (c === '"' || c === "'") { q = c; out += c; continue; }
+        if (c === ';') return out + raw.slice(k);
+        if (c === '\\' || c === '@') {
+          const r = raw.slice(k + 1);
+          let m: RegExpMatchArray | null;
+          if ((m = r.match(/^[1-9]/))) { out += texts[+m[0] - 1] ?? ''; k += 1; continue; }
+          if (c === '\\' && r[0] === '@') { out += argText.trim(); k += 1; continue; }
+          if (c === '\\' && (m = r.match(/^\{([A-Za-z_]\w*)\}/)) && named.has(m[1])) { out += named.get(m[1]); k += m[0].length; continue; }
+          if (c === '\\' && (m = r.match(/^[A-Za-z_]\w*/)) && named.has(m[0])) { out += named.get(m[0]); k += m[0].length; continue; }
+        }
+        out += c;
+      }
+      return out;
+    };
+    const list = def.lines.map(l => parseLine(sub(l.raw), def.file, l.line)).filter(st => st.label || st.body);
+    expanded.set(key, list);
+    return list;
+  };
+  /** a call of a macro: `#name …` or `.name …` (a name that is a macro) */
+  const callOf = (body: string): { def: TMacro; args: string } | null => {
+    const m = body.match(/^[#.]([A-Za-z_]\w*)(?:\s+(.*))?$/);
+    const def = m ? macros.get(m[1]) : undefined;
+    return def ? { def, args: m![2] ?? '' } : null;
+  };
 
   // ---- expressions ----
   const tokenize = (s: string): Tok[] => {
@@ -189,7 +265,13 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (ends(peek(n - 1))) { p += n - 1; return { k: 'anon', dir: t.v, n }; }
         return { k: 'u', op: t.v, a: primary() };
       }
-      if (t.v === '(') { const e = full(); if (!isOp(next(), ')')) throw new Error(`missing ) in "${s}"`); return post(e); }
+      if (t.v === '(') {
+        const e = full();
+        // a tuple: `(1234, 5678)`
+        if (isOp(peek(), ',')) { const items = [e]; while (isOp(peek(), ',')) { next(); items.push(full()); } if (!isOp(next(), ')')) throw new Error(`missing ) in "${s}"`); return post({ k: 'list', items }); }
+        if (!isOp(next(), ')')) throw new Error(`missing ) in "${s}"`);
+        return post(e);
+      }
       if (t.v === '[') {
         const items: Node[] = [];
         if (!isOp(peek(), ']')) for (;;) { items.push(full()); const c = next(); if (isOp(c, ']')) break; if (!isOp(c, ',')) throw new Error(`bad list in "${s}"`); } else next();
@@ -268,6 +350,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (typeof v === 'boolean') return v ? 1 : 0;
     if (v instanceof Uint8Array) { let n = 0; for (let i = v.length - 1; i >= 0; i--) n = n * 256 + v[i]; return n; }
     if (typeof v === 'string') { const b = encode(v); if (b.length === 1) return b[0]; throw new Error(`a string of ${b.length} characters is not a number`); }
+    // a block's or a macro call's label is also the address where it starts
+    if (isSpace(v) && typeof v.v === 'number') return v.v;
     throw new Error(`a ${typeName(v)} is not a number`);
   };
   const truth = (v: Value): boolean => (typeof v === 'boolean' ? v : numberOf(v) !== 0);
@@ -341,6 +425,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       case 'u': {
         const v = ev(node.a); if (v == null) return null;
         if (node.op === '!') return !truth(v);
+        // of a list, each item's (`<(1234, 5678)`: both low bytes)
+        if (Array.isArray(v)) return v.map(x => ev({ k: 'u', op: node.op, a: { k: 'n', v: numberOf(x) } }));
         const n = numberOf(v);
         return node.op === '<' ? n & 0xff : node.op === '>' ? (n >> 8) & 0xff : node.op === '~' ? ~n : node.op === '+' ? n : -n;
       }
@@ -380,12 +466,16 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000), ops = new Uint8Array(0x10000);
   /** the program counter at each line of the entry file the final pass assembles (not those of an .if not taken) */
   const linePcs = new Map<number, number>();
+  /** the sections, by name (one whose .dsection is in another's fragment: `outer/name`) */
+  const sects = new Map<string, Sect>();
   const prints: string[] = [];
   let endPc = 0;
   // (allFiles: every file's lines, and whose each byte is: its index in fileNames + 1)
   const all = !!opts.allFiles, fileOf = all ? new Uint16Array(0x10000) : undefined, fileNames: string[] = [];
   const fileNo = (file: string) => { let i = fileNames.indexOf(file); if (i < 0) i = fileNames.push(file) - 1; return i + 1; };
   const mine = (st: Stmt) => all || st.file === entryPath;
+  /** the line a byte is said to come from: a macro's is the line that calls it (the outermost call) */
+  const site = (st: Stmt) => calls.length ? calls[0].st : st;
   let fresh = false;
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
@@ -393,11 +483,12 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
     if (written[a] && pass === 'final') E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
-    if (pass === 'final' && mine(st)) { lines[a] = st.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(st.file); }
+    const at = site(st);
+    if (pass === 'final' && mine(at)) { lines[a] = at.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(at.file); }
     fresh = false;
     mem[a] = b; written[a] = 1; pc++;
   };
-  const byte = (v: Value, st: Stmt) => { const n = numberOf(v); if (pass === 'final' && (n < 0 || n > 0xff)) E(`too large for a 8 bit unsigned integer '${n}'`, st); emit(n, st); };
+  const byte = (v: Value, st: Stmt): void => { if (Array.isArray(v)) { for (const x of v) byte(x, st); return; } const n = numberOf(v); if (pass === 'final' && (n < 0 || n > 0xff)) E(`too large for a 8 bit unsigned integer '${n}'`, st); emit(n, st); };
   /** what `.text` writes of a value: a string encoded, a byte string as it is, a number as a byte, a list each */
   const text = (v: Value, st: Stmt) => {
     if (typeof v === 'string') { for (const b of encode(v)) emit(b, st); return; }
@@ -414,16 +505,45 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const defs = new Set<string>();
     const define = (name: string, v: Value, st: Stmt, variable = false) => {
       const k = keyIn(spaces, name);
-      if (!variable) { if (defs.has(k)) E(`duplicate definition '${name}'`, st); defs.add(k); }
+      // (a name defined twice keeps its first value, as 64tass)
+      if (!variable) { if (defs.has(k)) { E(`duplicate definition '${name}'`, st); return; } defs.add(k); }
       if (final && syms.has(k) && typeof v === 'number' && syms.get(k) !== v && !variable) E(`symbol "${name}" changed value in the final pass`, st);
-      if (syms.get(k) !== v && (typeof v === 'number' || !syms.has(k))) changed = true;
+      const old = syms.get(k);
+      if (old !== v && (typeof v === 'number' || !syms.has(k) || (isSpace(v) && isSpace(old) && v.v !== old.v))) changed = true;
       syms.set(k, v);
     };
     // .if: whether each level is on, whether a branch of it was taken, and whether the level around it is on
     const cond: { on: boolean; taken: boolean; outer: boolean }[] = [];
     const active = () => cond.every(c => c.on);
     const report = (st: Stmt) => { if (unresolved.length) { missing = true; if (final) for (const u of new Set(unresolved)) E(`not defined symbol '${u}'`, st); } unresolved = []; };
-    for (const st of stmts) {
+
+    // ---- macros: each call runs the macro's lines with its parameters, a .macro in a block of its own ----
+    calls = [];
+    let callNo = 0;
+    const runCall = (def: TMacro, args: string, st: Stmt) => {
+      if (calls.length >= 100) throw new Error(`macros called ${calls.length} deep at ${def.name}: does it call itself without end?`);
+      const list = expand(def, args);
+      const wasSpaces = spaces, wasScope = scope;
+      if (def.kind === 'macro') spaces = [...spaces, st.label && st.label !== '+' && st.label !== '-' ? st.label : `#m${callNo++}`];
+      calls.push({ name: def.name, st });
+      try { runList(list); } finally { calls.pop(); if (def.kind === 'macro') { spaces = wasSpaces; scope = wasScope; } }
+    };
+
+    // ---- sections: the fragments open now, innermost last; each section where its .dsection is ----
+    for (const x of sects.values()) {
+      x.prevOff0 = x.pc0 != null ? x.off0 : x.prevOff0; x.prevPc0 = x.pc0 ?? x.prevPc0; x.prevSize = x.max;
+      x.pc0 = null; x.used = 0; x.max = 0; x.frags = false;
+    }
+    const open: { sect: Sect; pc: number; off: number }[] = [];
+    const newSect = (name: string, key: string): Sect => { const x: Sect = { name, key, pc0: null, off0: 0, used: 0, max: 0, prevPc0: null, prevOff0: 0, prevSize: 0, frags: false }; sects.set(key, x); return x; };
+    /** the section `.section name` means: one a fragment open now holds (its .dsection inside it), else the top level's */
+    const sectFor = (name: string): Sect => {
+      for (let i = open.length - 1; i >= 0; i--) { const x = sects.get(`${open[i].sect.key}/${name}`); if (x) return x; }
+      return sects.get(name) ?? newSect(name, name);
+    };
+    const sectFirst = new Map<Sect, Stmt>();
+
+    const runList = (list: readonly Stmt[]): void => { for (const st of list) {
       curStmt = st; fresh = true;
       const s = st.body;
       try {
@@ -442,22 +562,53 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           continue;
         }
         if (!active()) continue;
-        if (final && st.file === entryPath) linePcs.set(st.line, pc);
+        // (a macro's lines are the call's: the program counter at a line is the line's own only)
+        if (final && st.file === entryPath && !calls.length) linePcs.set(st.line, pc);
+        const call = callOf(s);
         // a label: an anonymous one, `name = value`, `name := value`, a namespace, or the address here; one that
-        // starts with _ is local to the code label before it (`loop._x`)
+        // starts with _ is local to the code label before it (`loop._x`); one before a .macro's call names its block
         if (st.label === '+' || st.label === '-') anon.push({ dir: st.label, v: pc });
         else if (st.label) {
           const local = st.label.startsWith('_') && scope ? `${scope}.${st.label}` : st.label;
           if ((m = s.match(/^(:?)=(?!=)\s*(.+)$/))) { const v = ev(P(m[2])); if (v != null) define(local, v, st, m[1] === ':'); report(st); continue; }
-          if (/^\.(namespace|block)\b/.test(s)) {
-            define(st.label, { space: keyIn(spaces, st.label) } as Space, st);
+          if (/^\.(namespace|block)\b/.test(s) || call?.def.kind === 'macro') {
+            define(st.label, { space: keyIn(spaces, st.label), ...(/^\.namespace\b/.test(s) ? {} : { v: pc }) } as Space, st);
+            if (call) { runCall(call.def, call.args, st); continue; }
             spaces = [...spaces, st.label];
             continue;
           }
           define(local, pc, st);
           if (!st.label.startsWith('_')) scope = st.label;
         }
+        if (call) { runCall(call.def, call.args, st); continue; }
         if (!s) continue;
+        // a macro's call that names no macro
+        if ((m = s.match(/^#([A-Za-z_]\w*)\b/))) { E(`not defined symbol '${m[1]}' (no macro of that name)`, st); continue; }
+        // sections: where they go (.dsection), and their fragments (.section … .send)
+        if ((m = s.match(/^\.dsection\s+([A-Za-z_]\w*)$/))) {
+          const key = (open.length ? `${open[open.length - 1].sect.key}/` : '') + m[1];
+          const x = sects.get(key) ?? newSect(m[1], key);
+          if (x.pc0 != null) { E(`duplicate definition '${m[1]}'`, st); continue; }
+          x.pc0 = pc; x.off0 = off;
+          // the room its fragments took: they are compiled where they are written
+          pc += Math.max(x.prevSize, x.max);
+          continue;
+        }
+        if ((m = s.match(/^\.section\s+([A-Za-z_]\w*)$/))) {
+          const x = sectFor(m[1]);
+          x.frags = true; if (!sectFirst.has(x)) sectFirst.set(x, st);
+          open.push({ sect: x, pc, off });
+          pc = (x.pc0 ?? x.prevPc0 ?? 0) + x.used; off = x.pc0 != null ? x.off0 : x.prevOff0;
+          continue;
+        }
+        if ((m = s.match(/^\.(send|endsection)\b\s*(.*)$/))) {
+          const top = open.pop();
+          if (!top) { E(`.${m[1]} without .section`, st); continue; }
+          if (m[2].trim() && m[2].trim() !== top.sect.name) E(`wrong reference: .${m[1]} ${m[2].trim()} closes the .section ${top.sect.name}`, st);
+          top.sect.used = pc - (top.sect.pc0 ?? top.sect.prevPc0 ?? 0); top.sect.max = Math.max(top.sect.max, top.sect.used);
+          pc = top.pc; off = top.off;
+          continue;
+        }
         if (/^\.(endnamespace|bend|endblock)$/.test(s)) { if (!spaces.length) E(`${s} without .namespace`, st); else spaces = spaces.slice(0, -1); continue; }
         if (/^\.(namespace|block)$/.test(s)) { spaces = [...spaces, `#${st.line}`]; continue; }
         // a namespace opened again by its name (`.namespace bank03`: a bank's next chip)
@@ -513,10 +664,11 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           report(st);
           continue;
         }
-        if ((m = s.match(/^\.(byte|word|text|null|fill|binary)\b\s*(.*)$/))) {
+        if ((m = s.match(/^\.(byte|word|addr|text|null|fill|binary)\b\s*(.*)$/))) {
           const dir = m[1], args = splitTop(m[2], ',').filter(a => a !== '');
-          if (dir === 'byte') for (const a of args) { const v = ev(P(a)); if (v == null) emit(0, st); else byte(v, st); }
-          else if (dir === 'word') for (const a of args) { const v = ev(P(a)); const n = v == null ? 0 : numberOf(v); if (final && (n < 0 || n > 0xffff)) E(`too large for a 16 bit unsigned integer '${n}'`, st); emit(n & 0xff, st); emit((n >> 8) & 0xff, st); }
+          // (`?`: room for the value, nothing written)
+          if (dir === 'byte') for (const a of args) { if (a === '?') { pc++; continue; } const v = ev(P(a)); if (v == null) emit(0, st); else byte(v, st); }
+          else if (dir === 'word' || dir === 'addr') for (const a of args) { if (a === '?') { pc += 2; continue; } const v = ev(P(a)); for (const x of Array.isArray(v) ? v : [v]) { const n = x == null ? 0 : numberOf(x); if (final && (n < 0 || n > 0xffff)) E(`too large for a 16 bit unsigned integer '${n}'`, st); emit(n & 0xff, st); emit((n >> 8) & 0xff, st); } }
           else if (dir === 'text' || dir === 'null') {
             const from = pc;
             for (const a of args) { const v = ev(P(a)); if (v == null) emit(0, st); else text(v, st); }
@@ -565,7 +717,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (op === undefined) { E(`not a valid addressing mode for ${mn.toLowerCase()} (${mode})`, st); continue; }
           if (OPC[op].ill && cpu !== '6502i') { E(`${mn.toLowerCase()} is an undocumented opcode: it needs .cpu "6502i"`, st); continue; }
           emit(op, st);
-          if (pass === 'final' && mine(st)) ops[(pc - off - 1) & 0xffff] = 1;
+          if (pass === 'final' && mine(site(st))) ops[(pc - off - 1) & 0xffff] = 1;
           const len = MODE_LEN[mode as AddrMode];
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
@@ -578,6 +730,13 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         }
         E(`general syntax: ${s}`, st);
       } catch (err) { E((err as Error).message, st); if (unresolved.length) missing = true; unresolved = []; }
+    } };
+    runList(stmts);
+    if (open.length && final) E(`.section without .send (${open.map(o => o.sect.name).join(', ')})`, open[0] && sectFirst.get(open[0].sect));
+    for (const x of sects.values()) {
+      if (x.frags && x.pc0 == null && final) E(`not defined section '${x.name}': its bytes go where a .dsection ${x.name} is`, sectFirst.get(x));
+      // a section that moved or grew takes another pass
+      if (x.pc0 !== x.prevPc0 || x.max !== x.prevSize) changed = true;
     }
     if (cond.length && final) E(`.if without .endif (${cond.length} open)`);
     if (outer.length && final) E(`.logical without .here (${outer.length} open)`);

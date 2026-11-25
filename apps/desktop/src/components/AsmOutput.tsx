@@ -60,7 +60,7 @@ interface AsmOutputProps {
 export interface AsmNote { file: string; line: number; level: 'warning' | 'info'; msg: string }
 
 export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFold, onGo, onScreen, cycles, notes }: AsmOutputProps) {
-  const own = check?.problems.length ?? 0, built = build?.problems.length ?? 0, warned = notes.filter(n => n.level === 'warning').length;
+  const own = check?.problems.length ?? 0, built = build?.problems.length ?? 0, warned = notes.filter(n => n.level === 'warning').length + (check?.warnings.length ?? 0);
   const builtErrors = build?.problems.filter(p => p.severity === 'error').length ?? 0;
   const tabs: { k: AsmOutTab; label: string; tip: string; badge: React.ReactNode }[] = [
     { k: 'problems', label: 'Problems', tip: 'What Mimir\'s check finds in the sources as you type, what the assembler found in the last build, and what the C64 does with the program that the assembler cannot see',
@@ -126,8 +126,9 @@ function ProblemsPane({ check, build, notes, onGo }: { check: AsmCheck | null; b
         <h4 className="asm-out-head">Mimir's check <span className="muted small">as you type, with Mimir's own assembler</span></h4>
         {!check ? <p className="muted small asm-out-p">No main file to check yet.</p>
           : check.problems.length ? <ul className="asm-problem-list" aria-label="What the check found">{check.problems.map((p, i) => <ProblemRow key={i} file={p.file} line={p.line} msg={p.msg} level="error" onGo={onGo} />)}</ul>
-            : <p className="small asm-out-p"><Icon name="check" size={12} className="scr-tab-ok" /> The program assembles: {plural(check.bytes, 'byte')}{check.entry != null ? `, a run starts at $${h4(check.entry)}${check.entryFrom === 'basic' ? ' (the SYS of its BASIC line)' : check.entryFrom === 'label' ? ` (its label ${check.check.labels.get(check.entry) ?? ''})` : ' (its first byte)'}` : ''}.</p>}
-        {!!check?.problems.length && <p className="muted small asm-out-p">Mimir's assembler knows most of what Kick Assembler and 64tass do, not all (macros, functions, segments): where it cannot follow a line, Run still builds with the real assembler, and that build's problems are the ones that count.</p>}
+            : <p className="small asm-out-p"><Icon name="check" size={12} className="scr-tab-ok" /> The program assembles: {plural(check.bytes, 'byte')}{check.programFile ? ` (${check.programFile}, which the sources' segments write)` : ''}{check.entry != null ? `, a run starts at $${h4(check.entry)}${check.entryFrom === 'basic' ? ' (the SYS of its BASIC line)' : check.entryFrom === 'label' ? ` (its label ${check.check.labels.get(check.entry) ?? ''})` : ' (its first byte)'}` : ''}.</p>}
+        {!!check?.warnings.length && <ul className="asm-problem-list" aria-label="What the check warns of">{check.warnings.map((p, i) => <ProblemRow key={i} file={p.file} line={p.line} msg={p.msg} level="warning" onGo={onGo} />)}</ul>}
+        {!!check?.problems.length && <p className="muted small asm-out-p">Mimir's assembler knows most of what Kick Assembler and 64tass do (macros, functions, segments and sections too), not all: where it cannot follow a line, Run still builds with the real assembler, and that build's problems are the ones that count.</p>}
         {notes.length > 0 && <>
           <h4 className="asm-out-head">The C64 <span className="muted small">what it does with the program that the assembler cannot see: the VIC, LOAD, the ROMs</span></h4>
           <ul className="asm-problem-list" aria-label="What the C64 check found">{notes.map((n, i) => <ProblemRow key={i} file={n.file} line={n.line} msg={n.msg} level={n.level} onGo={onGo} />)}</ul>

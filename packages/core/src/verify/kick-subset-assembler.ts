@@ -5,10 +5,18 @@
  * addressing mode, .abs/.zp, multi-pass resolution), and what code the user writes in patches and scripts uses besides:
  * multi-labels (`!loop:`, `!:`, `bne !-`, `jmp !loop+`), scopes (`{ }`, `name: { }` read as `name.label`), .if/else,
  * .for, .while, .eval, .print, .error, comparisons, `&&` `||` `!` `~`, `? :`, `[ ]` as parentheses, char literals,
- * floating-point arithmetic and the math functions. Measured against KickAss 5.25: `<` and `>` take all of the
+ * floating-point arithmetic and the math functions; macros (`.macro name(a, b) { }`, called `name(1, 2)` before or
+ * after the definition, each call a scope of its own that a label before the call names), functions (`.function f(a)
+ * { .return a*2 }`, one per number of arguments), pseudo commands (`.pseudocommand mov src : dst { }`, each argument
+ * with its addressing mode, CmdArgument, AT_*), and segments: `.segmentdef`, `.segment` (start, startAfter, align, min,
+ * max, fill, fillByte, virtual, segments, outPrg, outBin, prgFiles, sidFiles, allowOverlap), `.file`, `.segmentout`,
+ * `.memblock`. Measured against KickAss 5.25: `<` and `>` take all of the
  * expression after them (`<label+1` is the low byte of label+1), `{ }` of .if, .for, .while and a plain block open a
  * scope whose labels the code outside does not see (each .for or .while round its own), `.pseudopc { }` does not, and
- * a condition must be true or false. The desktop app and the CLI can additionally run the real KickAss.jar.
+ * a condition must be true or false; a macro sees the names of the top level, not the caller's; a segment must be
+ * defined before `.segment` goes to it, one with no start starts at $2000, and `<main>.prg` is the Default segment
+ * (the program the check gives: else the file a `.file` or an outPrg writes). The desktop app and the CLI can
+ * additionally run the real KickAss.jar.
  * ===================================================================== */
 import type { AsmBlock, AsmError, AssembleResult, Vfs } from '../types';
 import { BRANCHES, ENC, MODE_LEN, type AddrMode } from '../cpu/opcodes';
@@ -71,6 +79,16 @@ const stringMember = (s: string, m: string): Value => {
   throw new Error(`a string has no .${m}()`);
 };
 
+/** a pseudo command's argument: its addressing mode and value (`#1` is AT_IMMEDIATE 1), as Kick Assembler's CmdArgument */
+interface CmdArg { cmd: true; type: number; value: Value; getType: () => number; getValue: () => Value }
+const AT: Record<string, number> = { AT_NONE: 0, AT_ABSOLUTE: 1, AT_ABSOLUTEX: 2, AT_ABSOLUTEY: 3, AT_IMMEDIATE: 4, AT_INDIRECT: 5, AT_IZEROPAGEX: 6, AT_IZEROPAGEY: 7 };
+const cmdArg = (type: number, value: Value): CmdArg => ({ cmd: true, type, value, getType: () => type, getValue: () => value });
+const isCmd = (v: Value): v is CmdArg => !!v && typeof v === 'object' && v.cmd === true;
+/** the instruction's addressing mode an argument of each type gives */
+const CMD_MODE: Record<number, string> = { [AT.AT_ABSOLUTE]: 'plain', [AT.AT_ABSOLUTEX]: 'x', [AT.AT_ABSOLUTEY]: 'y', [AT.AT_IMMEDIATE]: 'imm', [AT.AT_INDIRECT]: 'ind', [AT.AT_IZEROPAGEX]: 'izx', [AT.AT_IZEROPAGEY]: 'izy' };
+/** what `.return` throws to the function it ends */
+class Ret { constructor(readonly v: Value) {} }
+
 const typeName = (v: Value) => typeof v === 'boolean' ? 'boolean' : typeof v === 'string' ? 'string' : typeof v === 'number' ? 'number' : 'object';
 /** a value that goes into bytes or an address: a number (a boolean or a string is an error, as in Kick Assembler) */
 const numberOf = (v: Value): number => {
@@ -78,6 +96,8 @@ const numberOf = (v: Value): number => {
   throw new Error(`Can't get a number from a value of type ${typeName(v)}`);
 };
 const isBool = (v: Value): v is boolean => typeof v === 'boolean';
+/** `"A, B"` as its names */
+const listOf = (v: Value): string[] => String(v).split(',').map(x => x.trim()).filter(Boolean);
 
 export interface AssembleOptions {
   /** names the code may use without defining them (the program's labels, the hardware's): the code's own win */
@@ -154,12 +174,40 @@ type Tree =
   | { k: 'st'; st: Stmt }
   | { k: 'blk'; id: number; st: Stmt; kind: 'scope' | 'pseudopc' | 'if' | 'for' | 'while'; head: string; body: Tree[]; els?: Tree[] };
 
-/** where names are looked up: a block's own variables and labels, then the blocks around it */
-interface Scope { key: string; vars: Map<string, Value>; parent: Scope | null; name?: string }
+/** where names are looked up: a block's own variables and labels, then the blocks around it (a named one's labels are
+ *  also `name.label` in `home`, else in the parent) */
+interface Scope { key: string; vars: Map<string, Value>; parent: Scope | null; name?: string; home?: Scope }
+
+/** a macro, function or pseudo command the code defines */
+interface Def { kind: 'macro' | 'function' | 'pseudocommand'; name: string; params: string[]; body: Tree[]; st: Stmt }
+
+/** a memory block of a segment: where it starts, its name, and the last address it reached (start - 1: none) */
+interface MemBlock { start: number; name: string; end?: number }
+/** a segment: its parameters, its own memory and program counter, its memory blocks; `Default` is the code's */
+interface Seg {
+  name: string; st: Stmt | null; p: Record<string, Value>;
+  mem: Uint8Array; written: Uint8Array; lines: Int32Array; starts: Uint8Array; ops: Uint8Array; fileOf?: Uint16Array;
+  pc: number; begun: boolean; blocks: MemBlock[];
+  /** where its first byte went, and when (in the order of the code) */
+  first: number; firstN: number;
+}
+/** what a file or a .segmentout gets of segments: their bytes (fill where asked) with the lines they come from */
+interface Content { mem: Uint8Array; written: Uint8Array; lines: Int32Array; starts: Uint8Array; ops: Uint8Array; fileOf?: Uint16Array; min: number; max: number; first: number; firstN: number; blocks: AsmBlock[] }
+/** a file the build writes: `.file` or a segment's outPrg / outBin */
+interface OutFile { name: string; type: 'prg' | 'bin'; segments: string[]; st: Stmt }
+const SEG_PARAMS = new Set(['start', 'startAfter', 'align', 'min', 'max', 'fill', 'fillByte', 'virtual', 'segments', 'outPrg', 'outBin', 'allowOverlap', 'hide', 'dest', 'prgFiles', 'sidFiles']);
 
 export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}): AssembleResult {
   const errors: AsmError[] = [];
-  const E = (msg: string, st?: Stmt) => errors.push({ msg, file: st ? st.file : entryPath, line: st ? st.line : 0 });
+  /** the macros, functions and pseudo commands being run, outermost first: a byte one writes is its outermost call's
+   *  line's, and a problem in one says which call it was in */
+  let calls: { name: string; st: Stmt }[] = [];
+  const E = (msg: string, st?: Stmt) => {
+    const c = calls[calls.length - 1];
+    const where = c && st && c.st !== st ? ` (in ${c.name}, called on line ${c.st.line}${c.st.file !== st.file ? ` of ${c.st.file}` : ''})` : '';
+    errors.push({ msg: msg + where, file: st ? st.file : entryPath, line: st ? st.line : 0 });
+  };
+  const warnings: AsmError[] = [];
   const stmts: Stmt[] = [];
   // preprocessor: #define/#undef and #if/#elif/#else/#endif over defined symbols (!, &&, ||, parentheses)
   const defines = new Set<string>();
@@ -226,6 +274,23 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
 
   // ---- the statements as a tree of blocks ----
   let at = 0, blockIds = 0;
+  // the macros, functions and pseudo commands, wherever they are in the code (a call may come first)
+  const macros = new Map<string, Def>(), pseudos = new Map<string, Def>(), funcs = new Map<string, Map<number, Def>>();
+  const addDef = (kind: Def['kind'], head: string, body: Tree[], st: Stmt) => {
+    const m = kind === 'pseudocommand' ? head.match(/^([A-Za-z_]\w*)\s*(.*)$/) : head.match(/^([A-Za-z_]\w*)\s*\(([^)]*)\)$/);
+    if (!m) { E(kind === 'pseudocommand' ? '.pseudocommand needs a name and its arguments: .pseudocommand mov src : dst {' : `.${kind} needs a name and its parameters: .${kind} name(a, b) {`, st); return; }
+    const params = m[2].split(kind === 'pseudocommand' ? ':' : ',').map(p => p.trim()).filter(Boolean);
+    const bad = params.find(p => !/^[A-Za-z_]\w*$/.test(p));
+    if (bad) { E(`"${bad}" is not a name for a parameter`, st); return; }
+    const def: Def = { kind, name: m[1], params, body, st };
+    if (kind === 'function') {
+      const byN = funcs.get(def.name) ?? new Map<number, Def>(); funcs.set(def.name, byN);
+      if (byN.has(params.length)) E(`The function '${def.name}' with ${params.length} parameter${params.length === 1 ? '' : 's'} is already defined`, st); else byN.set(params.length, def);
+      return;
+    }
+    const map = kind === 'macro' ? macros : pseudos;
+    if (map.has(def.name)) E(`The ${kind === 'macro' ? 'macro' : 'pseudo command'} '${def.name}' is already defined`, st); else map.set(def.name, def);
+  };
   const list = (inBlock: Stmt | null): Tree[] => {
     const out: Tree[] = [];
     while (at < stmts.length) {
@@ -266,6 +331,16 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       return blk;
     }
     if (/^else\b/.test(s)) { E('else without .if', st); return { k: 'st', st: { ...st, body: '' } }; }
+    // a definition: kept apart, run where it is called
+    const def = s.match(/^\.(macro|function|pseudocommand)\b\s*(.*?)\s*(\{?)$/);
+    if (def) {
+      let body: Tree[] = [];
+      if (def[3]) body = list(st);
+      else if (at < stmts.length && stmts[at].body === '{' && !stmts[at].label) { at++; body = list(st); }
+      else E(`.${def[1]} without its body in { }`, st);
+      addDef(def[1] as Def['kind'], def[2], body, st);
+      return { k: 'st', st: { ...st, body: '' } };
+    }
     if (s.endsWith('{')) {
       const head = s.slice(0, -1).trim(), pp = head.match(/^\.pseudopc\s+(.+)$/);
       if (pp) return { k: 'blk', id: blockIds++, st, kind: 'pseudopc', head: pp[1], body: list(st) };
@@ -374,7 +449,8 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   let pc = 0, pass: number | 'final' = 0, unresolved: string[] = [];
   let enc = 'screencode_mixed';
   const builtins: Record<string, Value> = {
-    ...MATH,
+    ...MATH, ...AT,
+    CmdArgument: (type: Value, value: Value) => cmdArg(num(type, 'CmdArgument'), value),
     LoadSid: (path: string) => { const u = vfs[importPath(vfs, curStmt?.file ?? entryPath, path)]; if (!(u instanceof Uint8Array)) throw new Error(`LoadSid: can't open "${path}"`); const sid = parsePsid(u); return Object.assign({}, sid, { getData: (i: number) => sid.data[i] }); },
   };
   const names = opts.names;
@@ -432,6 +508,8 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         const v = o[node.v]; if (v === undefined) throw new Error(`unknown member .${node.v}`); return v;
       }
       case 'call': {
+        // a function the code defines
+        if (node.f.k === 'id' && funcs.has(node.f.v)) { const args = node.args.map(a => ev(a, s)); return args.some(a => a == null) ? null : callFunc(node.f.v, args); }
         if (node.f.k === 'mem' && !(dotted(node.f) && lookup(dotted(node.f)!, s) !== undefined)) {
           const o = ev(node.f.o, s); if (o == null) return null;
           const fn = typeof o === 'string' ? stringMember(o, node.f.v) : o[node.f.v];
@@ -482,6 +560,10 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     }
     return null;
   };
+  /** each macro call's statement's number: its scope's key, the same in every pass */
+  const callIds = new Map<Stmt, number>();
+  /** runs a function the code defines (set by each pass: it runs statements) */
+  let callFunc: (name: string, args: Value[]) => Value = () => null;
   /** a number for bytes and addresses (null: not known yet in this pass) */
   const evn = (node: Node, s: Scope = cur): number | null => { const v = ev(node, s); return v == null ? null : numberOf(v); };
   /** a condition: true or false (null: not known yet in this pass) */
@@ -491,28 +573,99 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     return v;
   };
   const splitArgs = (s: string) => splitTop(s, ',').filter(a => a !== '');
-  let mem = new Uint8Array(0x10000), written = new Uint8Array(0x10000), blocks: { start: number; name: string }[] = [];
+  let mem: Uint8Array = new Uint8Array(0x10000), written: Uint8Array = new Uint8Array(0x10000), blocks: MemBlock[] = [];
   // `.pseudopc a { … }`: `pc` (labels, `*`, branches) counts from a while the bytes go on where they are; `off` is
   // how far pc is from where the next byte goes, and `outer` the offsets of the .pseudopc blocks around
   let off = 0, outer: number[] = [], first = -1;
   const prints: string[] = [];
   // in the final pass, the line of the entry file each byte comes from, and where each statement's bytes start (an
   // instruction's first byte: a debugger's line, a breakpoint's address)
-  const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000), ops = new Uint8Array(0x10000);
+  const lines0 = new Int32Array(0x10000), starts0 = new Uint8Array(0x10000), ops0 = new Uint8Array(0x10000);
   // (allFiles: every file's, and whose each byte is: its index in fileNames + 1)
-  const all = !!opts.allFiles, fileOf = all ? new Uint16Array(0x10000) : undefined, fileNames: string[] = [];
+  const all = !!opts.allFiles, fileOf0 = all ? new Uint16Array(0x10000) : undefined, fileNames: string[] = [];
+  // (those of the segment the code writes in: the Default segment's are the ones above)
+  let lines: Int32Array = lines0, starts: Uint8Array = starts0, ops: Uint8Array = ops0, fileOf: Uint16Array | undefined = fileOf0;
   const fileNo = (file: string) => { let i = fileNames.indexOf(file); if (i < 0) i = fileNames.push(file) - 1; return i + 1; };
   const mine = (st: Stmt) => all || st.file === entryPath;
+  /** the line a byte is said to come from: a macro's is the line that calls it (the outermost call) */
+  const site = (st: Stmt) => calls.length ? calls[0].st : st;
+  // the segments, Default first (each pass makes them anew; the last pass's are kept for .segmentout and startAfter),
+  // the one the code writes in, and the files the build writes
+  const noI = new Int32Array(0), noU = new Uint8Array(0);
+  const newSeg = (name: string, st: Stmt | null, p: Record<string, Value>, final: boolean, at = 0x2000): Seg => ({
+    name, st, p, mem: new Uint8Array(0x10000), written: new Uint8Array(0x10000),
+    lines: final ? new Int32Array(0x10000) : noI, starts: final ? new Uint8Array(0x10000) : noU, ops: final ? new Uint8Array(0x10000) : noU,
+    ...(all ? { fileOf: final ? new Uint16Array(0x10000) : new Uint16Array(0) } : {}),
+    pc: at, begun: false, blocks: [], first: -1, firstN: 0,
+  });
+  let segs = new Map<string, Seg>(), prevSegs: Map<string, Seg> | null = null, prevEnds = new Map<string, number>();
+  let seg: Seg = newSeg('Default', null, {}, false), outFiles: (OutFile & { p: Record<string, Value> })[] = [], outed = new Set<string>();
+  /** bytes written so far in the pass, and how deep in .function calls the code is (a function writes none) */
+  let emitted = 0, inFunc = 0;
   let fresh = false;
   const emit = (b: number, st: Stmt) => {
+    if (inFunc) throw new Error('A .function cannot write bytes: write them in a .macro');
     b &= 0xff;
     const a = pc - off;
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
+    const bl = blocks[blocks.length - 1];
+    if (bl && (bl.end == null || a > bl.end)) bl.end = a;
+    // a virtual segment's bytes take room and are written nowhere
+    if (seg.p.virtual) { fresh = false; pc++; return; }
     if (written[a] && pass === 'final') E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
-    if (pass === 'final' && mine(st)) { lines[a] = st.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(st.file); }
+    if (seg.first < 0) { seg.first = a; seg.firstN = emitted; }
+    emitted++;
+    const at = site(st);
+    if (pass === 'final' && mine(at)) { lines[a] = at.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(at.file); }
     fresh = false;
     mem[a] = b; written[a] = 1; pc++;
+  };
+  /** the code writes in segment `s` from here on */
+  const useSeg = (s: Seg) => {
+    seg.pc = pc;
+    seg = s; mem = s.mem; written = s.written; lines = s.lines; starts = s.starts; ops = s.ops; fileOf = s.fileOf; blocks = s.blocks;
+    pc = s.pc;
+  };
+  /** where a segment ends: after its last byte (its start when it has none) */
+  const segEnd = (s: Seg) => { let e = -1; for (const b of s.blocks) if (b.end != null && b.end > e) e = b.end; return e < 0 ? s.pc : e + 1; };
+  /** the bytes of segments together (those they are made of too, and fill where asked), as a file or .segmentout has
+   *  them; two in one address is an error unless allowOverlap */
+  const compose = (names: readonly string[], p: Record<string, Value>, what: string, from: Map<string, Seg>, st: Stmt | null, final: boolean): Content => {
+    const out: Content = { mem: new Uint8Array(0x10000), written: new Uint8Array(0x10000), lines: new Int32Array(0x10000), starts: new Uint8Array(0x10000), ops: new Uint8Array(0x10000), ...(all ? { fileOf: new Uint16Array(0x10000) } : {}), min: -1, max: -1, first: -1, firstN: Infinity, blocks: [] };
+    const who = new Int16Array(0x10000), parts: string[] = [], said = new Set<string>(), seen = new Set<string>();
+    const fill = (q: Record<string, Value>, part: number) => {
+      if (!q.fill || q.min == null || q.max == null) return;
+      const fb = q.fillByte == null ? 0 : numberOf(q.fillByte) & 0xff;
+      for (let a = Math.max(0, numberOf(q.min)); a <= Math.min(0xffff, numberOf(q.max)); a++) if (!out.written[a]) { out.mem[a] = fb; out.written[a] = 1; who[a] = part; }
+    };
+    const add = (name: string, depth: number) => {
+      const s = from.get(name);
+      if (!s) { if (final) E(`Undefined segment '${name}' in ${what}`, st ?? undefined); return; }
+      if (seen.has(name) || depth > 32) return;
+      seen.add(name);
+      if (s.p.segments != null) for (const n of String(s.p.segments).split(',').map(x => x.trim()).filter(Boolean)) add(n, depth + 1);
+      if (s.p.virtual) return;
+      const part = parts.push(name), free = !!(s.p.allowOverlap || p.allowOverlap);
+      for (let a = 0; a < 0x10000; a++) {
+        if (!s.written[a]) continue;
+        if (out.written[a] && !free && who[a] !== part) {
+          const k = `${who[a]}:${part}`;
+          if (final && !said.has(k)) { said.add(k); E(`In ${what} the segment '${name}' overlaps '${parts[who[a] - 1]}' at $${h4(a)}`, s.st ?? st ?? undefined); }
+        }
+        out.mem[a] = s.mem[a]; out.written[a] = 1; who[a] = part;
+        out.lines[a] = s.lines[a] ?? 0; out.starts[a] = s.starts[a] ?? 0; out.ops[a] = s.ops[a] ?? 0;
+        if (out.fileOf && s.fileOf) out.fileOf[a] = s.fileOf[a] ?? 0;
+      }
+      fill(s.p, part);
+      if (s.first >= 0 && s.firstN < out.firstN) { out.first = s.first; out.firstN = s.firstN; }
+      for (const b of s.blocks) if (b.end != null && b.end >= b.start && (b.name || name !== 'Default')) out.blocks.push({ start: b.start, end: b.end, name: b.name || name });
+    };
+    for (const n of names) add(n, 0);
+    fill(p, parts.push(what));
+    for (let a = 0; a < 0x10000; a++) if (out.written[a]) { if (out.min < 0) out.min = a; out.max = a; }
+    out.blocks.sort((x, y) => x.start - y.start);
+    return out;
   };
 
   /** `var x = 1`, `x = 1`, `x++`, `x += 2`: a variable declared (in `s`) or set (where it was declared); else the
@@ -543,8 +696,12 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   };
 
   const runPass = (final: boolean) => {
-    mem = new Uint8Array(0x10000); written = new Uint8Array(0x10000); blocks = [];
+    prevSegs = segs.size ? segs : null;
+    seg = { ...newSeg('Default', null, {}, false, opts.pc ?? 0), lines: lines0, starts: starts0, ops: ops0, fileOf: fileOf0, begun: true };
+    segs = new Map([['Default', seg]]); outFiles = []; outed = new Set();
+    mem = seg.mem; written = seg.written; blocks = seg.blocks; lines = lines0; starts = starts0; ops = ops0; fileOf = fileOf0;
     pc = opts.pc ?? 0; off = 0; outer = []; enc = 'screencode_mixed'; unresolved = []; first = -1;
+    calls = []; inFunc = 0; emitted = 0;
     mlPrev = ml; ml = [];
     root.vars.clear(); cur = root;
     let changed = false;
@@ -553,8 +710,105 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       if (final && syms.has(k) && syms.get(k) !== v && typeof v === 'number') E(`symbol "${name}" changed value in the final pass`, st);
       if (syms.get(k) !== v) changed = true;
       syms.set(k, v);
-      // a label of a named scope can be reached from the scope around it as `scope.label`
-      if (s.name && s.parent) define(`${s.name}.${name}`, v, st, s.parent);
+      // a label of a named scope can be reached from the scope around it as `scope.label` (a macro call's: from where
+      // it is called)
+      const home = s.home ?? s.parent;
+      if (s.name && home) define(`${s.name}.${name}`, v, st, home);
+    };
+
+    // ---- macros, functions, pseudo commands ----
+    const ids = callIds;
+    const callKey = (st: Stmt) => { let i = ids.get(st); if (i == null) { i = ids.size; ids.set(st, i); } return `c${i}`; };
+    const deep = (name: string) => { if (calls.length >= 100) throw new Error(`Calls nested ${calls.length} deep at ${name}: does a macro or function call itself without end?`); };
+    /** a macro or pseudo command run with its parameters: a scope of its own under the top level (a label before the
+     *  call names it), its bytes the call's line's */
+    const invoke = (def: Def, args: Value[], st: Stmt) => {
+      deep(def.name);
+      const was = cur, named = st.label && st.label[0] !== '!' ? st.label : undefined;
+      cur = { key: `${was.key}>${callKey(st)}`, vars: new Map(def.params.map((p, i) => [p, args[i]])), parent: root, ...(named ? { name: named, home: was } : {}) };
+      calls.push({ name: def.kind === 'macro' ? `${def.name}()` : def.name, st });
+      try { run(def.body); } finally { cur = was; calls.pop(); }
+    };
+    callFunc = (name, args) => {
+      const byN = funcs.get(name)!, def = byN.get(args.length);
+      if (!def) throw new Error(`Invalid number of arguments for the function ${name}: it takes ${[...byN.keys()].join(' or ')}, not ${args.length}`);
+      deep(name);
+      const was = cur, wasStmt = curStmt, wasUnresolved = unresolved, wasFresh = fresh;
+      cur = { key: `${was.key}>f`, vars: new Map(def.params.map((p, i) => [p, args[i]])), parent: root };
+      unresolved = []; inFunc++;
+      calls.push({ name: `${name}()`, st: wasStmt ?? def.st });
+      try { run(def.body); return null; }
+      catch (err) { if (err instanceof Ret) return err.v; throw err; }
+      finally { cur = was; curStmt = wasStmt; fresh = wasFresh; unresolved = wasUnresolved.concat(unresolved); inFunc--; calls.pop(); }
+    };
+    /** a pseudo command's argument as it is written: `#1`, `$d020,x`, `($fb),y` … */
+    const argOf = (text: string): CmdArg => {
+      const t = text.trim(); let m: RegExpMatchArray | null;
+      if (!t) return cmdArg(AT.AT_NONE, null);
+      if (t[0] === '#') return cmdArg(AT.AT_IMMEDIATE, ev(P(t.slice(1))));
+      if ((m = t.match(/^\((.+),\s*[xX]\s*\)$/))) return cmdArg(AT.AT_IZEROPAGEX, ev(P(m[1])));
+      if ((m = t.match(/^\((.+)\)\s*,\s*[yY]$/))) return cmdArg(AT.AT_IZEROPAGEY, ev(P(m[1])));
+      if ((m = t.match(/^(.+),\s*([xXyY])$/))) return cmdArg(m[2].toLowerCase() === 'x' ? AT.AT_ABSOLUTEX : AT.AT_ABSOLUTEY, ev(P(m[1])));
+      if (t[0] === '(' && closeAt(t, 0) === t.length) return cmdArg(AT.AT_INDIRECT, ev(P(t.slice(1, -1))));
+      return cmdArg(AT.AT_ABSOLUTE, ev(P(t)));
+    };
+
+    // ---- segments ----
+    /** `start=$1000, fill, segments="A,B"`: each parameter's value (a name alone is true) */
+    const paramsOf = (text: string): Record<string, Value> => {
+      const p: Record<string, Value> = {};
+      for (const part of splitTop(text, ',').filter(Boolean)) {
+        const m = part.match(/^([A-Za-z_]\w*)\s*(?:=\s*(.+))?$/);
+        if (!m) throw new Error(`bad parameter "${part}"`);
+        p[m[1]] = m[2] == null ? true : ev(P(m[2]));
+      }
+      return p;
+    };
+    /** `[…]` at the start of `s` and what comes after it */
+    const bracket = (s: string): { p: Record<string, Value> | null; rest: string } => {
+      const t = s.trim();
+      if (t[0] !== '[') return { p: null, rest: t };
+      const k = closeAt(t, 0); if (k < 0) throw new Error('missing ] after the parameters');
+      return { p: paramsOf(t.slice(1, k - 1)), rest: t.slice(k).trim() };
+    };
+    const checkParams = (p: Record<string, Value>, allowed: Set<string>, what: string) => {
+      for (const k of Object.keys(p)) if (!allowed.has(k)) {
+        throw new Error(k === 'modify' || /^marg\d$/.test(k) ? `Mimir's check cannot run the modifier of ${what} (Run builds with Kick Assembler)`
+          : k === 'mbfiles' ? `Mimir's check does not write a file per memory block (mbfiles): Run builds with Kick Assembler` : `Unknown parameter "${k}" of ${what}`);
+      }
+      if (p.fill && (!('min' in p) || !('max' in p))) throw new Error("Can't use fill without both min and max");
+    };
+    const defineSeg = (name: string, p: Record<string, Value>, st: Stmt): Seg => {
+      if (segs.has(name)) throw new Error(`The segment '${name}' is already defined`);
+      checkParams(p, SEG_PARAMS, `the segment ${name}`);
+      const s = newSeg(name, st, p, final);
+      segs.set(name, s);
+      for (const k of ['outPrg', 'outBin'] as const) if (p[k] != null) outFiles.push({ name: String(p[k]), type: k === 'outPrg' ? 'prg' : 'bin', segments: [name], st, p: {} });
+      // the files it is given: a PRG where it loads, a SID's data where it loads
+      for (const k of ['prgFiles', 'sidFiles'] as const) if (p[k] != null) for (const f of listOf(p[k])) {
+        const u = vfs[importPath(vfs, st.file, f)];
+        if (!(u instanceof Uint8Array)) { E(`Can't open file "${f}"`, st); continue; }
+        let load: number, data: Uint8Array;
+        if (k === 'prgFiles') { load = u[0] | (u[1] << 8); data = u.subarray(2); } else { const sid = parsePsid(u); load = sid.location; data = sid.data; }
+        const was = seg; useSeg(s); pc = load; blocks.push({ start: load, name: f.replace(/^.*[\\/]/, '') });
+        for (const b of data) emit(b, st);
+        useSeg(was);
+      }
+      return s;
+    };
+    /** a segment's first `.segment` in the pass: its program counter from start, startAfter (and align), else $2000 */
+    const begin = (s: Seg) => {
+      s.begun = true;
+      let start: number | null = s.p.start != null ? numberOf(s.p.start) : null;
+      if (start == null && s.p.startAfter != null) {
+        const ref = String(s.p.startAfter), r = segs.get(ref) ?? prevSegs?.get(ref);
+        const end = prevEnds.get(ref) ?? (r ? segEnd(r) : null);
+        if (end == null) throw new Error(`The segment '${s.name}' starts after '${ref}', which is not defined`);
+        start = end;
+        const al = s.p.align != null ? numberOf(s.p.align) : 0;
+        if (al > 0) start = Math.ceil(start / al) * al;
+      }
+      if (start != null) s.pc = start;
     };
     const defs = new Set<string>();
     const label = (st: Stmt) => {
@@ -611,7 +865,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
             return;
           }
         }
-      } catch (err) { E((err as Error).message, st); report(st); }
+      } catch (err) { if (err instanceof Ret) throw err; E((err as Error).message, st); report(st); }
     };
     const stmt = (st: Stmt) => {
       curStmt = st;
@@ -635,6 +889,67 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         }
         if ((m = s.match(/^\.encoding\s+"([^"]+)"$/))) { if (!ENCODINGS[m[1]]) E(`unknown encoding "${m[1]}"`, st); enc = m[1]; return; }
         if ((m = s.match(/^\.cpu\b/))) return;
+        if ((m = s.match(/^\.return\b\s*(.*)$/))) {
+          if (!inFunc) { E('.return outside a .function', st); return; }
+          throw new Ret(m[1] ? ev(P(m[1])) : null);
+        }
+        // segments: defined, gone to, written to files
+        if ((m = s.match(/^\.segmentdef\s+([A-Za-z_]\w*)\s*(.*)$/))) {
+          const { p, rest } = bracket(m[2]);
+          if (rest) throw new Error(`unexpected "${rest}" after .segmentdef ${m[1]}`);
+          defineSeg(m[1], p ?? {}, st);
+          return;
+        }
+        if ((m = s.match(/^\.segment\s+([A-Za-z_]\w*)\s*(.*)$/))) {
+          if (outer.length) { E('.segment inside .pseudopc', st); return; }
+          const { p, rest } = bracket(m[2]), name = rest.match(/^"([^"]*)"$/);
+          if (rest && !name) throw new Error(`unexpected "${rest}" after .segment ${m[1]}`);
+          const t = p ? defineSeg(m[1], p, st) : segs.get(m[1]);
+          if (!t) throw new Error(`Undefined segment '${m[1]}'`);
+          useSeg(t);
+          if (!t.begun) { begin(t); pc = t.pc; blocks.push({ start: pc, name: name ? name[1] : t.name }); }
+          else if (name) blocks.push({ start: pc, name: name[1] });
+          return;
+        }
+        if ((m = s.match(/^\.memblock\s+"([^"]*)"$/))) { blocks.push({ start: pc, name: m[1] }); return; }
+        if ((m = s.match(/^\.file\s*(.*)$/))) {
+          const { p, rest } = bracket(m[1]);
+          if (!p || rest || p.name == null || p.segments == null) throw new Error('.file needs a name and its segments: .file [name="game.prg", segments="Code,Data"]');
+          checkParams(p, new Set([...SEG_PARAMS, 'name', 'type', 'mbfiles']), '.file');
+          const type = p.type == null ? 'prg' : String(p.type);
+          if (type !== 'prg' && type !== 'bin') throw new Error(`.file writes type "prg" or "bin", not "${type}"`);
+          outFiles.push({ name: String(p.name), type, segments: listOf(p.segments), st, p });
+          return;
+        }
+        if ((m = s.match(/^\.segmentout\s*(.*)$/))) {
+          const { p, rest } = bracket(m[1]);
+          if (!p || rest || p.segments == null) throw new Error('.segmentout needs its segments: .segmentout [segments="Code"]');
+          checkParams(p, SEG_PARAMS, '.segmentout');
+          const names = listOf(p.segments);
+          for (const n of names) outed.add(n);
+          // the segments as the last pass left them (one that comes later in the code is not written yet)
+          const from = prevSegs && names.every(n => prevSegs!.has(n)) ? prevSegs : segs;
+          const c = compose(names, p, '.segmentout', from, st, final);
+          if (c.min >= 0) for (let a = c.min; a <= c.max; a++) emit(c.mem[a], st);
+          return;
+        }
+        if (/^\.disk\b/.test(s)) { E("Mimir's check does not make disk images (.disk): Run builds with Kick Assembler", st); return; }
+        // a macro called: `name(1, 2)` (or `:name(1, 2)`)
+        if ((m = s.match(/^:?([A-Za-z_]\w*)\s*\((.*)\)$/)) && m[1] !== 'BasicUpstart2' && !(ENC[m[1].toUpperCase()] && s[0] !== ':' && !macros.has(m[1]))) {
+          const def = macros.get(m[1]);
+          if (!def) { E(funcs.has(m[1]) ? `${m[1]}() is a function: use its value (.eval ${m[1]}(…))` : `Unknown macro "${m[1]}"`, st); return; }
+          const args = splitArgs(m[2]).map(a => ev(P(a)));
+          if (args.length !== def.params.length) { E(`Invalid number of arguments for macro ${m[1]}: it takes ${def.params.length}, not ${args.length}`, st); return; }
+          invoke(def, args, st);
+          return;
+        }
+        // a pseudo command: `mov #1 : $d020`
+        if ((m = s.match(/^([A-Za-z_]\w*)(?:\s+(.*))?$/)) && pseudos.has(m[1])) {
+          const def = pseudos.get(m[1])!, parts = m[2] ? splitTop(m[2], ':') : [];
+          if (parts.length > def.params.length) { E(`Invalid number of arguments for the pseudo command ${m[1]}: it takes ${def.params.length}, not ${parts.length}`, st); return; }
+          invoke(def, def.params.map((_, i) => argOf(parts[i] ?? '')), st);
+          return;
+        }
         if ((m = s.match(/^BasicUpstart2\s*\((.+)\)$/))) {
           const v = evn(P(m[1])) ?? 0x1000; pc = 0x0801; blocks.push({ start: pc, name: 'Basic Upstart' });
           const digits = String(v); const endL = 0x0801 + 6 + digits.length;
@@ -675,7 +990,16 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           if ((mode === 'izy' && (ext === 'zp' || ext === 'z')) || ((mode === 'izx' || mode === 'izy') && (ext === 'abs' || ext === 'a'))) {
             E(`Cannot force ${ext === 'zp' || ext === 'z' ? 'zeropage' : 'absolute'} mode on an argument of type ${mode === 'izy' ? 'indirectZeropageY' : 'indirectZeropageX'}`, st); return;
           }
-          const v = ex != null ? evn(P(ex)) : null;
+          const raw = ex != null ? ev(P(ex)) : null;
+          let v: number | null;
+          // a pseudo command's argument (or a CmdArgument) brings its addressing mode: `lda src` with src = #1 is lda #1
+          if (isCmd(raw)) {
+            const want = CMD_MODE[raw.type];
+            if (raw.type === AT.AT_NONE) mode = IMPLIED_ACC.has(mn) ? 'acc' : 'imp';
+            else if (mode === 'plain') mode = want ?? 'plain';
+            else if (raw.type !== AT.AT_ABSOLUTE) throw new Error(`an argument written ${want === 'imm' ? '#…' : `as ${want}`} cannot take ,${mode} too`);
+            v = raw.value == null ? null : numberOf(raw.value);
+          } else v = raw == null ? null : numberOf(raw);
           if (BRANCHES.has(mn)) mode = 'rel';
           else if (mode === 'plain' || mode === 'x' || mode === 'y') {
             const suf = mode === 'plain' ? '' : mode;
@@ -684,36 +1008,82 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
             const wantZp = forceZp || (!forceAbs && v != null && v >= 0 && v < 0x100);
             mode = (wantZp && zpOk) ? 'zp' + suf : absOk ? (suf ? 'ab' + suf : 'abs') : 'zp' + suf;
           }
+          // (an immediate value takes its low byte: KickAss 5.25 writes lda #$1234 as a9 34)
           const op = modes[mode as AddrMode];
           if (op === undefined) { E(`${mn.toLowerCase()} does not support this addressing mode (${mode})`, st); return; }
           emit(op, st);
-          if (pass === 'final' && mine(st)) ops[(pc - off - 1) & 0xffff] = 1;
+          if (pass === 'final' && mine(site(st)) && !seg.p.virtual) ops[(pc - off - 1) & 0xffff] = 1;
           const len = MODE_LEN[mode as AddrMode];
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
             if (final && (o < -128 || o > 127)) E(`branch out of range (${o})`, st);
             emit(o & 0xff, st);
-          } else if (len === 2) { if (final && v != null && (v < -128 || v > 255)) E(`value $${(v >>> 0).toString(16)} does not fit in a byte`, st); emit(v ?? 0, st); }
+          } else if (len === 2) { if (final && v != null && mode !== 'imm' && (v < -128 || v > 255)) E(`value $${(v >>> 0).toString(16)} does not fit in a byte`, st); emit(v ?? 0, st); }
           else if (len === 3) { emit((v ?? 0) & 0xff, st); emit(((v ?? 0) >> 8) & 0xff, st); }
           return;
         }
         E(`unsupported statement: ${s}`, st);
-      } catch (err) { E((err as Error).message, st); }
+      } catch (err) { if (err instanceof Ret) throw err; E((err as Error).message, st); }
       finally { report(st); }
     };
     run(tree);
-    return changed;
+    // a segment that moved (startAfter another that grew) takes another pass
+    useSeg(seg);
+    const ends = new Map([...segs].map(([k, s]) => [k, segEnd(s)] as const));
+    const moved = [...ends].some(([k, e]) => prevEnds.get(k) !== e);
+    prevEnds = ends;
+    return changed || moved;
   };
   for (pass = 1; pass <= 12; pass++) { const ch = runPass(false); if (!ch && !unresolved.length && pass > 1) break; }
   pass = 'final';
   runPass(true);
+  // the program: <main>.prg, the Default segment; when the code has segments and Default is empty, the file a .file (or
+  // an outPrg) writes, the one called <main>.prg first (the build takes that file then)
+  const dflt = segs.get('Default')!;
+  let out: Pick<Content, 'mem' | 'written' | 'lines' | 'starts' | 'ops' | 'fileOf' | 'first'> & { blocks: AsmBlock[] | null } = { mem: dflt.mem, written: dflt.written, lines: lines0, starts: starts0, ops: ops0, fileOf: fileOf0, first, blocks: null };
+  let programFile: string | null = null, fileContents: Content[] = [];
+  const usesSegs = segs.size > 1 || outFiles.length > 0;
+  if (usesSegs) {
+    const base = entryPath.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') + '.prg';
+    const named = outFiles.find(f => f.type === 'prg' && f.name.toLowerCase() === base.toLowerCase());
+    // (every file put together: two segments over each other in one is an error)
+    const contents = fileContents = outFiles.map(f => compose(f.segments, f.p, `the file '${f.name}'`, segs, f.st, true));
+    let c: Content | null = null;
+    if (dflt.first >= 0) {
+      if (named) E(`Can't output default segment since a file called '${base}' already exist`, named.st);
+      c = compose(['Default'], {}, base, segs, null, true); programFile = base;
+    } else {
+      const i = named ? outFiles.indexOf(named) : outFiles.findIndex(f => f.type === 'prg');
+      if (i >= 0) { c = contents[i]; programFile = outFiles[i].name; }
+    }
+    if (c) out = { mem: c.mem, written: c.written, lines: c.lines, starts: c.starts, ops: c.ops, fileOf: c.fileOf, first: c.first, blocks: c.blocks };
+    // a segment with bytes that no file has: Kick Assembler writes it nowhere
+    const inFile = new Set<string>(['Default']);
+    const take = (n: string, d: number) => { if (d > 32 || inFile.has(n) && d) return; inFile.add(n); const s = segs.get(n); if (s?.p.segments != null) for (const x of listOf(s.p.segments)) take(x, d + 1); };
+    for (const f of outFiles) for (const n of f.segments) take(n, 0);
+    for (const n of outed) take(n, 0);
+    for (const s of segs.values()) {
+      if (inFile.has(s.name) || s.first < 0 || s.p.virtual || !s.st) continue;
+      warnings.push({ msg: `The segment '${s.name}' is in no file: Kick Assembler writes ${base} from the Default segment only (name it in a .file [segments="${s.name}"], or give it outPrg="…")`, file: s.st.file, line: s.st.line });
+    }
+  }
   let min = -1, max = -1;
-  for (let a = 0; a < 0x10000; a++) if (written[a]) { if (min < 0) min = a; max = a; }
-  const blockList: AsmBlock[] = blocks.filter(b => b.name).map((b, i, arr) => ({ start: b.start, name: b.name, end: i + 1 < arr.length ? arr[i + 1].start - 1 : max }));
+  for (let a = 0; a < 0x10000; a++) if (out.written[a]) { if (min < 0) min = a; max = a; }
+  const blockList: AsmBlock[] = out.blocks ?? dflt.blocks.filter(b => b.name).map((b, i, arr) => ({ start: b.start, name: b.name, end: i + 1 < arr.length ? arr[i + 1].start - 1 : max }));
   let prg: Uint8Array | null = null;
-  if (min >= 0) { prg = new Uint8Array(max - min + 3); prg[0] = min & 0xff; prg[1] = min >> 8; prg.set(mem.subarray(min, max + 1), 2); }
+  if (min >= 0) { prg = new Uint8Array(max - min + 3); prg[0] = min & 0xff; prg[1] = min >> 8; prg.set(out.mem.subarray(min, max + 1), 2); }
   // an error a loop met in each round is said once
   const said = new Set<string>();
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, vars: new Map(root.vars), prints, first, external, lines, starts, ops, ...(fileOf ? { fileOf, fileNames } : {}) };
+  const bytesOf = (c: Content | undefined, type: 'prg' | 'bin'): Uint8Array | null => {
+    if (!c || c.min < 0) return null;
+    const body = c.mem.subarray(c.min, c.max + 1);
+    return type === 'bin' ? body.slice() : Uint8Array.from([c.min & 0xff, c.min >> 8, ...body]);
+  };
+  const files = outFiles.map((f, i) => ({ name: f.name, type: f.type, segments: f.segments, bytes: bytesOf(fileContents[i], f.type) }));
+  return {
+    mem: out.mem, written: out.written, min, max, errors: once, prg, blocks: blockList, symbols: syms, vars: new Map(root.vars), prints, first: out.first, external,
+    lines: out.lines, starts: out.starts, ops: out.ops, ...(out.fileOf ? { fileOf: out.fileOf, fileNames } : {}),
+    ...(warnings.length ? { warnings } : {}), ...(usesSegs ? { files, programFile } : {}),
+  };
 }
