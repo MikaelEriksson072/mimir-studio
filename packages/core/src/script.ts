@@ -589,14 +589,18 @@ export function scriptStartMemory(env: ScriptEnv, script: Pick<UserScript, 'pads
 }
 
 /** A byte of the stack, from the top ($01ff) down to the stack pointer: a return address a JSR (or the start of the
- *  run, called like SYS) put there is said, with who made the JSR and where it goes back to. */
+ *  run, called like SYS) put there is said, with who made the JSR and where it goes back to; in the whole C64 also an
+ *  interrupt's (its return address and the flags under it). */
 export interface StackEntry {
   addr: Addr;
   value: number;
-  /** the high byte of a return address (the low byte is the entry after it): where an RTS goes and who it goes to */
-  ret?: { to: Addr; by: 'start' | 'script' | 'program' };
+  /** the high byte of a return address (the low byte is the entry after it): where an RTS goes and who it goes to; an
+   *  interrupt's: where its RTI goes back to (the instruction the interrupt came before) */
+  ret?: { to: Addr; by: 'start' | 'script' | 'program' | 'interrupt' };
   /** the low byte of a return address */
   low?: boolean;
+  /** the flags (P) an interrupt pushed under its return address */
+  flags?: boolean;
 }
 
 /**

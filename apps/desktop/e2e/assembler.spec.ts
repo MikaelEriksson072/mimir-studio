@@ -321,10 +321,24 @@ test('the Assembler in the whole C64: RUN typed at READY, stopped at the program
   await page.getByRole('button', { name: /^Step/ }).click();
   await expect(dbgPanel.getByRole('status')).toContainText('main.asm line 6');
   await expect(screen).toContainText(/Stopped on raster line \d+/);
+  // the debugger's line marked in the code, the cursor on it (its line number the one lit)
+  const editor = page.locator('.scr-editor');
+  await expect(editor.locator('.scr-pc-line')).toHaveCount(1);
+  await expect(editor.locator('.line-numbers.active-line-number')).toHaveText('6');
   await shot(page, '9-c64-debug');
+  // a step into the KERNAL's GETIN, where no line of the sources is: the JSR's line is marked, and the status says it
+  await page.getByRole('button', { name: /^Step/ }).click();
+  await expect(dbgPanel.getByRole('status')).toContainText('At GETIN ($ffe4), inside the JSR on main.asm line 6');
+  await expect(editor.locator('.scr-pc-line')).toHaveCount(0);
+  await expect(editor.locator('.scr-call-line')).toHaveCount(1);
+  await expect(editor.locator('.scr-call-glyph')).toHaveCount(1);
+  // Out: back after it, on the next line
+  await page.getByRole('button', { name: 'Out Shift+F6' }).click();
+  await expect(dbgPanel.getByRole('status')).toContainText('main.asm line 7');
+  await expect(editor.locator('.scr-call-line')).toHaveCount(0);
+  await expect(editor.locator('.scr-pc-line')).toHaveCount(1);
 
   // Continue: it waits for a key in the C64's own time; a breakpoint on the store, a key typed on the screen
-  const editor = page.locator('.scr-editor');
   const box = await editor.locator('.line-numbers', { hasText: /^8$/ }).boundingBox();
   const glyph = await editor.locator('.glyph-margin').boundingBox();
   await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);

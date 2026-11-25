@@ -10,7 +10,7 @@ import { assembleIn, langIs } from './code-lang';
 import { guessAssembler } from './render/dialect';
 import { parseBasic } from './c64/basic';
 import { importPath } from './verify/kick-subset-assembler';
-import { maskRanges, ScriptMachine, SCRIPT_LIMIT, type ScriptCheck, type ScriptRange, type ScriptRun } from './script';
+import { maskRanges, ScriptMachine, SCRIPT_LIMIT, type ScriptCheck, type ScriptRange, type ScriptRun, type StackEntry } from './script';
 import { SCREEN_C64, SCREEN_ROUTINES, type ScreenSize } from './script-screen';
 import { h4 } from './util/hex';
 
@@ -193,6 +193,24 @@ export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang): AsmCheck {
 export function asmLineAt(c: Pick<AsmCheck, 'files' | 'fileOf' | 'asm'>, a: Addr): { file: string; line: number } | null {
   const f = c.fileOf[a & 0xffff], line = c.asm.lines[a & 0xffff];
   return f && line ? { file: c.files[f - 1], line } : null;
+}
+
+/**
+ * Where a run whose program counter is at no line of the sources (the KERNAL's CHROUT, BASIC, code copied elsewhere)
+ * is in them, for the debugger: the innermost JSR of the sources whose routine is running, or the line an interrupt
+ * came before (the whole C64). From the stack: its return addresses, a JSR's checked to be one. Null: none of them.
+ */
+export function asmCallSite(c: Pick<AsmCheck, 'files' | 'fileOf' | 'asm'>, m: { stack(): StackEntry[]; peek(a: Addr): number }): { file: string; line: number; at: Addr; by: 'jsr' | 'interrupt' } | null {
+  const stack = m.stack();
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const r = stack[i].ret;
+    if (!r || r.by === 'start') continue;
+    const by = r.by === 'interrupt' ? 'interrupt' : 'jsr', at = by === 'jsr' ? (r.to - 3) & 0xffff : r.to;
+    if (by === 'jsr' && m.peek(at) !== 0x20) continue;
+    const l = asmLineAt(c, at);
+    if (l) return { ...l, at, by };
+  }
+  return null;
 }
 
 /** the address of a statement's first byte on `line` of `file` (a breakpoint's address), or null */

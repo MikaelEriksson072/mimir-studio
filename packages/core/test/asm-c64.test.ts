@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AsmC64, asmC64Text, c64Held, c64Key, C64_KEYS, FRAME_CYCLES } from '../src/asm-c64';
-import { asmLineAt, checkAsm } from '../src/asm-project';
+import { asmCallSite, asmLineAt, checkAsm } from '../src/asm-project';
 import { VIC_SCREEN } from '../src/c64/vicscreen';
 import { findC64Roms } from '../src/node';
 
@@ -77,6 +77,33 @@ describe.skipIf(!roms)('the Assembler\'s program in the whole C64', () => {
     expect(m.runFor(FRAME_CYCLES * 20, null)).toBe('more');
     expect(m.end).toBeNull();
     expect(m.text().codes.length).toBe(1000);
+  });
+
+  it('at no line of the sources, says the line it is running for: the JSR into the KERNAL, the line an interrupt came before', () => {
+    const c = checkAsm({ 'main.asm': 'BasicUpstart2(start)\nstart:\n  lda #$41\n  jsr $ffd2\n!loop:\n  inc $d020\n  jmp !loop-\n' }, 'main.asm', 'kickass');
+    const m = new AsmC64(c, { roms: roms! });
+    expect(asmCallSite(c, m)).toBeNull();
+    m.step(); m.step();
+    // in CHROUT: the JSR's line, and on in the KERNAL's own routines (their JSRs have no line)
+    expect(m.cpu.pc).toBe(0xffd2);
+    expect(asmLineAt(c, m.cpu.pc)).toBeNull();
+    expect(asmCallSite(c, m)).toEqual({ file: 'main.asm', line: 4, at: c.names.get('start')! + 2, by: 'jsr' });
+    for (let i = 0; i < 4; i++) m.step();
+    expect(m.cpu.pc).toBeGreaterThanOrEqual(0xe000);
+    expect(asmCallSite(c, m)?.line).toBe(4);
+    // back in the loop, the KERNAL's IRQ: its handler is inside an interrupt that came before a line of the loop
+    expect(m.runFor(FRAME_CYCLES * 2, x => x.cpu.pc === 0xff48)).toBe('stopped');
+    const site = asmCallSite(c, m)!;
+    expect(site.by).toBe('interrupt');
+    expect([6, 7]).toContain(site.line);
+    const st = m.stack(), ret = st.find(e => e.ret?.by === 'interrupt')!;
+    expect(ret.ret!.to).toBe(site.at);
+    expect(st[st.indexOf(ret) + 1].low).toBe(true);
+    expect(st[st.indexOf(ret) + 2].flags).toBe(true);
+    // its RTI: the interrupt's return is gone from the stack
+    expect(m.runFor(FRAME_CYCLES, x => x.cpu.lastOp === 0x40)).toBe('stopped');
+    expect(m.stack().some(e => e.ret?.by === 'interrupt')).toBe(false);
+    expect(asmLineAt(c, m.cpu.pc)?.line).toBe(site.line);
   });
 
   it('starts a program without a BASIC line with SYS', () => {

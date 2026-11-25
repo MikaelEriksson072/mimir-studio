@@ -20,10 +20,11 @@ const FLAGS: [string, number, string][] = [['N', 0x80, 'negative'], ['V', 0x40, 
 const named = (a: Addr, names: ReadonlyMap<Addr, string>) => names.get(a) ?? $4(a);
 
 /** Where the run is, in words: the script's line, or the program's code with the line of the script that called it.
- *  `lineOf` (the Assembler's): an address's file and line, for a run whose code is the sources'. */
-export function whereText(m: DebugMachine, names: ReadonlyMap<Addr, string>, lineOf?: (a: Addr) => string | null): string {
+ *  `lineOf` (the Assembler's): an address's file and line, for a run whose code is the sources'; `via`, at no line of
+ *  them: the line of the sources it is running for, in words (the JSR's, or the line an interrupt came before). */
+export function whereText(m: DebugMachine, names: ReadonlyMap<Addr, string>, lineOf?: (a: Addr) => string | null, via?: string | null): string {
   const pc = m.cpu.pc, line = m.lineAt();
-  if (lineOf) { const l = lineOf(pc); return l ? `${l} (${$4(pc)})` : `At ${named(pc, names)}${names.has(pc) ? ` (${$4(pc)})` : ''}, where no line of the sources is`; }
+  if (lineOf) { const l = lineOf(pc); return l ? `${l} (${$4(pc)})` : `At ${named(pc, names)}${names.has(pc) ? ` (${$4(pc)})` : ''}, ${via ?? 'where no line of the sources is'}`; }
   if (m.inScript) return line ? `Line ${line} ($${h4(pc)})` : `The script's memory at ${$4(pc)}`;
   const call = m.callLine();
   return `In the program at ${named(pc, names)}${names.has(pc) ? ` (${$4(pc)})` : ''}${call ? `, called from line ${call}` : ''}`;
@@ -33,24 +34,24 @@ function StackRow({ e, top, names, lineAt, lineOf }: { e: StackEntry; top: boole
   let note = '';
   if (e.ret) {
     if (e.ret.by === 'start') note = 'the end of the run (the return of its SYS)';
-    else if (lineOf) { const l = lineOf(e.ret.to); note = `return to ${l ? `${l} (${$4(e.ret.to)})` : named(e.ret.to, names)}`; }
+    else if (lineOf) { const l = lineOf(e.ret.to); note = `${e.ret.by === 'interrupt' ? 'the interrupt\'s return to' : 'return to'} ${l ? `${l} (${$4(e.ret.to)})` : named(e.ret.to, names)}`; }
     else {
       const line = e.ret.by === 'script' ? lineAt(e.ret.to) : null;
-      note = `return to ${line ? `line ${line} (${$4(e.ret.to)})` : named(e.ret.to, names)}, from ${e.ret.by === 'script' ? 'the script' : 'the program'}`;
+      note = `return to ${line ? `line ${line} (${$4(e.ret.to)})` : named(e.ret.to, names)}, from ${e.ret.by === 'script' ? 'the script' : e.ret.by === 'interrupt' ? 'an interrupt' : 'the program'}`;
     }
   }
   return (
-    <tr className={cx(top && 'top', (e.ret || e.low) && 'ret')}>
+    <tr className={cx(top && 'top', (e.ret || e.low || e.flags) && 'ret')}>
       <td className="mono">{$4(e.addr)}</td>
       <td className="mono">{h2(e.value)}</td>
-      <td className="dbg-note">{e.ret ? <>↩ {note}</> : e.low ? '' : 'pushed'}{top && <span className="dbg-sp">← S</span>}</td>
+      <td className="dbg-note">{e.ret ? <>↩ {note}</> : e.low ? '' : e.flags ? 'the flags (P) the interrupt pushed' : 'pushed'}{top && <span className="dbg-sp">← S</span>}</td>
     </tr>
   );
 }
 
 /** `lineOf`: an address's file and line (the Assembler's run, whose code is the sources'); `atBp` then names the
- *  breakpoint's file and line */
-export function DebugPanel({ m, prev, names: program, busy, atBp = null, watch = null, lineOf }: { m: DebugMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | string | null; watch?: React.ReactNode; lineOf?: (a: Addr) => string | null }) {
+ *  breakpoint's file and line, `via` the line of the sources a run at no line of them is running for (whereText) */
+export function DebugPanel({ m, prev, names: program, busy, atBp = null, watch = null, lineOf, via = null }: { m: DebugMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | string | null; watch?: React.ReactNode; lineOf?: (a: Addr) => string | null; via?: string | null }) {
   const r = regsOf(m);
   // the script's code names its own addresses by its own labels, the program's code by the program's names
   const names = m.inScript && m.check.labels.size ? new Map([...program, ...m.check.labels]) : program;
@@ -64,7 +65,7 @@ export function DebugPanel({ m, prev, names: program, busy, atBp = null, watch =
   const lineAt = (a: Addr) => m.lineAt(a);
   return (
     <aside className="scr-debug" aria-label="Debugger">
-      <div className="dbg-where" role="status">{busy ? 'Running…' : whereText(m, names, lineOf)}</div>
+      <div className="dbg-where" role="status">{busy ? 'Running…' : whereText(m, names, lineOf, via)}</div>
       {!busy && atBp != null && <div className="dbg-bp" role="note"><span className="dbg-bp-dot" />Stopped at the breakpoint on {typeof atBp === 'string' ? atBp : `line ${atBp}`}</div>}
       <div className="dbg-count muted small">{m.instructions.toLocaleString('en-US')} instruction{m.instructions === 1 ? '' : 's'} · {m.cycles.toLocaleString('en-US')} cycles</div>
       <table className="dbg-regs" aria-label="Registers">

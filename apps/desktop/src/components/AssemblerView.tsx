@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmC64Text, asmProgram, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
-import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
+import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { MenuItem } from '../lib/types';
@@ -32,8 +32,9 @@ type MonacoNs = typeof Monaco;
 type ToastKind = 'ok' | 'info' | 'warn' | 'err';
 type ToastFn = (msg: string, kind?: ToastKind) => void;
 type OnMenu = (x: number, y: number, items: MenuItem[]) => void;
-/** where a file opens: at a line (and column); `soft`: the debugger's line, shown only when out of view, the cursor and
- *  the focus left where they are; `keep`: in a tab that stays (else in the preview tab, when it is not open yet) */
+/** where a file opens: at a line (and column); `soft`: the debugger's line, scrolled to only when out of view, the
+ *  cursor put on it (its line's highlight is then the debugger's line too) and the focus left where it is; `keep`: in
+ *  a tab that stays (else in the preview tab, when it is not open yet) */
 type OpenAt = { line?: number; col?: number; soft?: boolean; keep?: boolean };
 
 /** files bigger than this are not read as text (no source is this big) */
@@ -386,7 +387,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const [state, setState] = useState<'loading' | 'ready' | 'fallback'>('loading');
   const applying = useRef(false);
   /** a line to show once its file is in the editor */
-  /** (`soft`: the debugger's line, shown only when it is out of view, the cursor and the focus left where they are) */
+  /** (`soft`: the debugger's line, scrolled to only when it is out of view, the focus left where it is) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
   const keys = useRef({ run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
@@ -495,7 +496,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (m && r && r.path === shown) {
       reveal.current = null;
       const n = Math.min(r.line, m.getLineCount());
-      requestAnimationFrame(() => { if (r.soft) { e.revealLineInCenterIfOutsideViewport(n); return; } e.revealLineInCenter(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); e.focus(); });
+      // (the debugger's line: the cursor on it too, or the cursor's line, highlighted as well, looks like a second one)
+      requestAnimationFrame(() => { if (r.soft) { e.revealLineInCenterIfOutsideViewport(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); return; } e.revealLineInCenter(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); e.focus(); });
     }
   });
 
@@ -745,14 +747,15 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     for (const p of Object.keys(models.current)) for (const l of bpLines(p)) { const a = asmAddrOf(c, p, l); if (a != null) out.add(a); }
     return out;
   };
-  /** the debugger stopped somewhere: its line shown (in its file), the C64's picture as it stands; at the end of the run
-   *  (memory only: the program returned; the whole C64: a JAM), it is the last run */
+  /** the debugger stopped somewhere: its line shown (in its file; at no line of the sources, the line it is running
+   *  for), the C64's picture as it stands; at the end of the run (memory only: the program returned; the whole C64: a
+   *  JAM), it is the last run */
   const stopped = (d: Debugging) => {
     if (dbgRef.current !== d) return;
     if (d.m.end) { finishDbg(d); return; }
     setTick(t => t + 1);
     if (d.m instanceof AsmC64) showPic(d.m, true);
-    const l = asmLineAt(d.c, d.m.cpu.pc);
+    const l = asmLineAt(d.c, d.m.cpu.pc) ?? asmCallSite(d.c, d.m);
     if (l) openFile(l.file, { line: l.line, col: 1, soft: true });
   };
   /** the run kept as the last run: how it ended (or where it was stopped), its registers, its screen */
@@ -891,14 +894,24 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
   // the code cannot change while it is being debugged
   useEffect(() => { ed.current?.updateOptions({ readOnly: !!dbg }); }, [dbg, state]);
-  // the debugger's line, in the file shown
+  // the debugger's line, in the file shown; at no line of the sources (the KERNAL's CHROUT, an interrupt, code copied
+  // elsewhere), the line it is running for: the JSR's, or the line an interrupt came before
   const pcDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const atBp = dbg && !dbgBusy && bpAddrs(dbg.c).has(dbg.m.cpu.pc) ? lineText(dbg.c, dbg.m.cpu.pc) : null;
+  const pcLine = dbg && !dbgBusy ? asmLineAt(dbg.c, dbg.m.cpu.pc) : null;
+  const site = dbg && !dbgBusy && !pcLine ? asmCallSite(dbg.c, dbg.m) : null;
+  const via = site ? `inside ${site.by === 'jsr' ? 'the JSR on' : 'an interrupt that came before'} ${site.file} line ${site.line}` : null;
   useEffect(() => {
     const monaco = monacoRef.current, e = ed.current;
     if (state !== 'ready' || !monaco || !e) return;
     if (!pcDeco.current) pcDeco.current = e.createDecorationsCollection();
-    const l = dbg && !dbgBusy ? asmLineAt(dbg.c, dbg.m.cpu.pc) : null;
+    if (!pcLine && site && site.file === shown) {
+      const pc = dbg!.m.cpu.pc, at = `${names.get(pc) ?? ''}${names.has(pc) ? ' ' : ''}($${h4(pc)})`;
+      pcDeco.current.set([{ range: new monaco.Range(site.line, 1, site.line, 1), options: { isWholeLine: true, className: 'scr-call-line', glyphMarginClassName: 'scr-call-glyph',
+        glyphMarginHoverMessage: { value: site.by === 'jsr' ? `The debugger is at ${at}, inside this line's JSR: the run comes back after this line once the routine returns (Out, Shift+F6, runs until the routine it is in returns)` : `The debugger is at ${at}, in an interrupt that came before this line ran: its RTI comes back here` } } }]);
+      return;
+    }
+    const l = pcLine;
     if (!l || l.file !== shown) { pcDeco.current.clear(); return; }
     pcDeco.current.set([{ range: new monaco.Range(l.line, 1, l.line, 1), options: atBp
       ? { isWholeLine: true, className: 'scr-pc-line scr-pc-bp', linesDecorationsClassName: 'scr-pc-bp-bar', glyphMarginClassName: 'scr-pc-bp-glyph', overviewRuler: { color: '#ff5a6e', position: monaco.editor.OverviewRulerLane.Full } }
@@ -1019,7 +1032,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
               <button className="btn small" onClick={() => void kr?.assemblerReveal({ dir, path: shown })}><Icon name="folder" size={13} />Show in folder</button>
             </div>}
             {!shown && loaded && <div className="asm-binary" role="note"><Icon name="code" size={28} /><h3>No file open</h3><p className="muted">Click a file in the list to open it (a double-click keeps its tab open), or + to make a source.</p></div>}
-            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={names} busy={dbgBusy} atBp={atBp} lineOf={a => lineText(dbg.c, a)} />}
+            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={names} busy={dbgBusy} atBp={atBp} lineOf={a => lineText(dbg.c, a)} via={via} />}
             {c64.open && <>
               <Splitter dir="v" onDrag={d => {
                 const rowW = editRow.current?.offsetWidth ?? 1200, other = (dbg ? 300 : 0) + 200;

@@ -3721,6 +3721,14 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   bilder per bildruta i fönstret) med skärmen levande, tills en brytpunkt, *Pause* eller *Stop*. Körningen slutar inte av
   sig själv (ett program som går tillbaka hamnar i BASIC och READY, som på en C64), bara en JAM stoppar den; *Stop*
   sparar den som *Last run* med skärmen. Debuggern namnger ROM:ens rutiner och kretsarnas register (`SYM`).
+- **Debuggerns rad** (2026-11-25): raden programräknaren står på markeras i koden (▶ och bandet, rött på en brytpunkt),
+  och editorns markör sätts på den (fokus stannar där det är), så att markörens radmarkering inte ser ut som en andra
+  rad. Står körningen där ingen rad i källorna är (i KERNAL:s CHROUT efter en Step in i en `jsr $ffd2`, i ett avbrott,
+  i kod som kopierats någon annanstans) markeras raden den kör för med ↳ (`scr-call-line`), och statusen säger t.ex.
+  *At CHROUT ($ffd2), inside the JSR on main.asm line 14* eller *… inside an interrupt that came before main.asm line 7*
+  (`asmCallSite`: den innersta JSR:en i källorna vars återhopp står på stacken, kontrollerad som en JSR, annars raden
+  ett avbrott kom före). `AsmC64` håller reda på avbrottens återhopp (`ints`, tas bort vid RTI) och stacken visar dem
+  (*the interrupt's return to …* och flaggorna under), och en push över gamla återhopp tar bort dem.
 - **C64-skärmen i hela C64:an** är VIC:ens bild som VICE ritar den (`vicScreen`, 384 × 272), rad för rad med
   registren varje rasterrad började med (rasterstaplar och delningar syns; `vicScreen` tar `lineOf`). När körningen står
   still är bilden den här bildens rader ned till strålen och registren som de är nu under den, och raden under skärmen

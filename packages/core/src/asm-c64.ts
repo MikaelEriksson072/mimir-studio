@@ -50,6 +50,8 @@ export class AsmC64 {
   private readonly t0 = Date.now();
   /** who made each JSR whose return address is on the stack, by the stack pointer before it */
   private readonly frames = new Map<number, boolean>();
+  /** the interrupts taken whose return address is on the stack, by the stack pointer before each */
+  private readonly ints = new Set<number>();
   /** the VIC's registers and bank as each raster line started (a frame's worth, written over line by line) */
   private readonly lineRegs = new Uint8Array(PAL_LINES * 0x40);
   private readonly lineBank = new Uint8Array(PAL_LINES);
@@ -88,7 +90,7 @@ export class AsmC64 {
       if (m.cycles - this.c0 > START_CYCLES) throw new Error(`The program did not start: ${this.typed} was typed at READY, and after ${START_CYCLES / PAL_CLOCK} seconds of the C64's time it had not got to $${h4(c.entry)} (it was at $${h4(this.cpu.pc)}).`);
       if (!this.step()) throw new Error(`The C64 jammed at $${h4(this.at)} before the program started.`);
     }
-    this.frames.clear();
+    this.frames.clear(); this.ints.clear();
     this.startS = this.cpu.s;
     this.c0 = m.cycles; this.i0 = m.icount;
   }
@@ -113,12 +115,19 @@ export class AsmC64 {
     if (cpu.jammed) { this.end = 'jam'; return false; }
     m.advance(n);
     const op = cpu.lastOp;
-    if (op === 0x20) this.frames.set(s0, true);
+    if (op === 0x20) { this.pushed(s0, 2); this.frames.set(s0, true); }
     else if (op === 0x60) this.frames.delete(cpu.s);
-    if (m.irqDue() && !(op === 0x40 ? cpu.i : iWas)) m.advance(m.takeIrq());
-    if (m.nmiDue()) m.advance(m.takeNmi());
+    else if (op === 0x40) this.ints.delete(cpu.s);
+    if (m.irqDue() && !(op === 0x40 ? cpu.i : iWas)) { this.pushed(cpu.s, 3); this.ints.add(cpu.s); m.advance(m.takeIrq()); }
+    if (m.nmiDue()) { this.pushed(cpu.s, 3); this.ints.add(cpu.s); m.advance(m.takeNmi()); }
     this.tick();
     return true;
+  }
+
+  /** `n` bytes pushed from the stack pointer `s` down: the returns that were there are gone (code that left the stack
+   *  another way than RTS or RTI, as an interrupt handler that never returns, leaves them behind) */
+  private pushed(s: number, n: number): void {
+    for (let i = 0; i < n; i++) { this.frames.delete((s - i) & 0xff); this.ints.delete((s - i) & 0xff); }
   }
 
   /** a new raster line: its registers kept for the picture; a new frame: the picture drawn */
@@ -192,11 +201,19 @@ export class AsmC64 {
   lineAt(pc: Addr = this.cpu.pc): number | null { return this.check.lines[pc & 0xffff] || null; }
   callLine(): number | null { return null; }
 
-  /** the stack from its top down to the stack pointer: the return into BASIC its start has, and the JSRs' returns */
+  /** the stack from its top down to the stack pointer: the return into BASIC its start has, the JSRs' returns and the
+   *  interrupts' (their return addresses and the flags under them) */
   stack(): StackEntry[] {
     const out: StackEntry[] = [], ram = this.m.ram;
     for (let s = 0xff; s > this.cpu.s; s--) {
       const value = ram[0x100 + s];
+      if (this.ints.has(s) && s - 2 > this.cpu.s) {
+        out.push({ addr: 0x100 + s, value, ret: { to: (value << 8) | ram[0x100 + s - 1], by: 'interrupt' } });
+        out.push({ addr: 0x100 + s - 1, value: ram[0x100 + s - 1], low: true });
+        out.push({ addr: 0x100 + s - 2, value: ram[0x100 + s - 2], flags: true });
+        s -= 2;
+        continue;
+      }
       const by = s === this.startS + 2 ? 'start' : this.frames.has(s) ? 'program' : null;
       if (by && s - 1 > this.cpu.s) {
         out.push({ addr: 0x100 + s, value, ret: { to: (((value << 8) | ram[0x100 + s - 1]) + 1) & 0xffff, by } });
