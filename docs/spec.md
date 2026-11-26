@@ -3833,6 +3833,19 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
   (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
   markeringar och i listan, och editorn öppnar det första felet.
+- **Projektets inställningar** (2026-11-26). I ett Assembler-projekt har Settings sidan *Assembler project* i gruppen
+  Project i stället för *Analysis* och *Assembler output* (de gäller ett återassemblerat program): **språket**,
+  **huvudfilen** (källorna i mappen, eller den Mimir hittar), **fler argument** till assemblern för just det här
+  projektet och var **Debug** kör (*Memory only* / *Whole C64*, sparas per mapp som valet bredvid Debug). Språket,
+  huvudfilen och argumenten sparas i projektfilen (`asm: { lang, main, args }`); knappen längst till höger i Assemblerns
+  verktygsrad och paletten (*Assembler project settings*) öppnar sidan. Argumenten kommer efter verktygskedjans (Toolchain →
+  Assemblers) i Run, Build, Release, Shift+F5 och de `build.bat`/`build.sh` Mimir skriver (`BuildRequest.args`), och
+  **Mimirs kontroll tar definitionerna i båda** (`asmArgDefines`, `checkAsm(…, { args })`): KickAss `-define NAME` en
+  symbol som `#if` ser, 64tass `-D NAME=värde` (eller `-DNAME=värde`; `-D NAME` ensamt är 0, som 64tass ger det) en
+  konstant i rotens scope före första raden, så att kontrollen och bygget ger samma program. Som i 64tass är en källa som
+  definierar namnet igen ett fel, utom i `.weak` … `.endweak`, som ger vika; ett fel i ett värde står på `<command line>`,
+  och ett klick på det öppnar sidan. Övriga argument är bara byggets. Mätt (`asm-args.integration.test.ts`): KickAss.jar
+  och 64tass med argumenten ger samma bytes som kontrollen.
 - **Det debuggade programmets minne, och externa debuggers** (2026-11-25). Medan Assemblern debuggar programmet visar
   *Memory* och *Graphics* maskinens minne som det är nu i stället för programmet som det laddas (`live` i
   `store/asmlink.ts`): i Mimirs 6510 det programmet ser (`asmMachineMemory`: det det skrivit över sina egna bytes), i hela

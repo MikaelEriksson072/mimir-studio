@@ -32,6 +32,9 @@ interface AsmLinkState {
   building: boolean;
   /** the main file the tab builds (a path in the project's folder; null: none yet) */
   main: string | null;
+  /** the sources in the project's folder, and the main file Mimir finds among them (Settings → Assembler project) */
+  sources: string[];
+  found: string | null;
   /** the C64 checks of the program (the window's analysis of it: asmC64Notes) */
   notes: AsmC64Note[];
   /** the memory of the program being debugged (Memory and Graphics show it while it is): its RAM, where it stopped (or
@@ -51,9 +54,9 @@ interface AsmLinkState {
 const none = () => Promise.resolve();
 const noBuild = () => Promise.resolve(null);
 export const useAsmLink = create<AsmLinkState>(set => ({
-  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, notes: [], live: null, flush: none, buildPrg: noBuild,
+  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, notes: [], live: null, flush: none, buildPrg: noBuild,
   set: p => set(p),
   request: (what, o) => set(s => ({ ask: { what, n: (s.ask?.n ?? 0) + 1, ...o } })),
   showAddr: addr => set(s => ({ show: { addr, n: (s.show?.n ?? 0) + 1 } })),
-  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, notes: [], live: null, flush: none, buildPrg: noBuild }),
+  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, notes: [], live: null, flush: none, buildPrg: noBuild }),
 }));

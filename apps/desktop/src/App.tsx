@@ -64,7 +64,8 @@ import { Listing, type ListingFind, type ScriptMark, type XrefBox } from './comp
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
 import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, DlocPanel, IfflPanel, KrillPanel, LogList, MessagesPanel, DiskSpeedPanel, ParaProtectPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
-import { SettingsModal, type AppPrefs } from './components/Settings';
+import { SettingsModal, type AppPrefs, type AsmSettings, type SettingsPage } from './components/Settings';
+import { useAssembler } from './store/assembler';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
 import { JunkRangeModal } from './components/JunkRange';
@@ -255,6 +256,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
+  /** the page Settings opens at this time (the Assembler's settings button: Assembler project); none: the one it was last on */
+  const [settingsPage, setSettingsPage] = useState<SettingsPage | undefined>();
   const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | 'templates' | 'library' | 'junk' | null>(null);
   /** the range Mark range as junk… starts with (11.7) */
   const [junkInit, setJunkInit] = useState<{ start: Addr; end: Addr } | null>(null);
@@ -4116,7 +4119,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const asmScripts = async () => {
     if (!kr || !home || !stored.asm) return;
     const at = useAsmLink.getState().main ?? stored.asm.main ?? 'main.asm', dir = at.includes('/') ? `${at.slice(0, at.lastIndexOf('/'))}/` : '', stem = at.replace(/^.*\//, '').replace(/\.[^.]*$/, '');
-    const scripts = buildScripts({ ...S, assembler: stored.asm.lang === '64tass' ? '64tass' : 'kick' }, [stem]);
+    // (the project's own arguments after the toolchain's, as Run gives them)
+    const own = stored.asm.args?.trim() ?? '', more = (a: string) => [a.trim(), own].filter(Boolean).join(' ');
+    const scripts = buildScripts({ ...S, assembler: stored.asm.lang === '64tass' ? '64tass' : 'kick', kickArgs: more(S.kickArgs), tassArgs: more(S.tassArgs) }, [stem]);
     const made: string[] = [], kept: string[] = [];
     for (const [name, text] of Object.entries(scripts)) {
       const path = `${dir}${name}`;
@@ -4243,16 +4248,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  project made of it first) */
   const later = useRef({ addFiles, loadDemo, openDroppedProject });
   later.current = { addFiles, loadDemo, openDroppedProject };
-  const saveSettings = async (s: Settings, prefs: AppPrefs) => {
+  const saveSettings = async (s: Settings, prefs: AppPrefs, asm: AsmSettings | null) => {
     const tc = pickToolchain(s);
     try { setToolchain(kr ? await kr.setSettings(tc) : tc); } catch (e) { toast(`Toolchain settings rejected: ${errorText(e)}`, 'err'); return; }
     // another library folder: the library is read from it (10.6)
     if (tc.libraryDir !== toolchain.libraryDir && libState().listing) void libState().load();
     setUi(prefs);
     setDrawer(d => (d === 'insp' ? null : d));
-    update('Settings', d => { for (const k of Object.keys(s) as (keyof Settings)[]) if (!(TOOLCHAIN_KEYS as readonly string[]).includes(k)) (d.settings as Record<string, unknown>)[k] = s[k]; });
-    setModal(null); toast('Settings saved', 'ok');
+    update('Settings', d => {
+      for (const k of Object.keys(s) as (keyof Settings)[]) if (!(TOOLCHAIN_KEYS as readonly string[]).includes(k)) (d.settings as Record<string, unknown>)[k] = s[k];
+      // an Assembler project's own: its language, main file and arguments (Project.asm)
+      if (asm && d.asm) { d.asm.lang = asm.lang; d.asm.main = asm.main; const args = asm.args.trim(); if (args) d.asm.args = args; else delete d.asm.args; }
+    });
+    if (asm && home) useAssembler.getState().setMachine(home.dir, asm.machine);
+    setModal(null); setSettingsPage(undefined); toast('Settings saved', 'ok');
   };
+  /** Settings at the Assembler project page (the Assembler's settings button, the palette) */
+  const asmSettings = () => { setSettingsPage('asmproject'); setModal('settings'); };
 
   /** Ctrl+Shift+B, the side panel's own button and its view's button in the activity bar: the side panel collapsed, so the
    *  listing and the other views get its room, or shown again (on a narrow window it is the drawer) */
@@ -4437,6 +4449,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'asm-pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'}: build the main file with ${asmTool2} and pack it as the Pack view says`, run: () => { setUi({ activity: 'pack', sidePanel: true }); void runPack(); } },
     { id: 'asm-release', label: 'Release: make the build into a disk image, a tape image, a cartridge or a PRG, packed or not, and start it in VICE…', run: () => setAsmRelease(true) },
     { id: 'asm-scripts', label: 'Write build.bat and build.sh beside the main file (they build it and start it in VICE outside Mimir)', run: () => void asmScripts() },
+    { id: 'asm-settings', label: `Assembler project settings: the language, the main file, more ${asmTool2} arguments (defines for the check too), where Debug runs`, run: asmSettings },
     { id: 'asm-debugger', label: `Run in ${debuggerName}: build the main file with ${asmTool2} and start it there with the sources and the breakpoints`, key: 'Shift+F5', run: () => asmAsk('debugger') },
     { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
     ...allCommands.filter(c => ASM_COMMANDS.has(c.id) || c.id.startsWith('script-run-')),
@@ -5140,6 +5153,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         <div className="editor">
           <ErrorBoundary>
             {asmMode && home && stored.asm && <AssemblerTab key={home.dir} dir={home.dir} name={home.name} info={stored.asm} active={tab === 'asm'} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })} onRelease={() => setAsmRelease(true)}
+              toolArgs={{ kick: toolchain.kickArgs, tass: toolchain.tassArgs }} onSettings={asmSettings}
               onInfo={(label, c) => update(label, d => { if (d.asm) Object.assign(d.asm, c); })} />}
             {tab === 'listing' && !project.files.length && <div className="empty-project">
               <Icon name={home ? 'folder' : 'doc'} size={30} />
@@ -5300,7 +5314,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} animData={animData} looking={lookingFor} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
         known={suggested} onNameKnown={() => nameKnown()} crypt={cryptLoops} onCryptScript={addCryptScript} fitting={scriptLibrary.filter(l => scriptFitsHere.has(l.name))} onAddFitting={l => addLibraryScript(l)} links={overviewLinks} onClose={() => setModal(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []}
+        asm={asmMode && home && stored.asm ? { lang: stored.asm.lang, main: stored.asm.main ?? null, args: stored.asm.args ?? '', machine: useAssembler.getState().machines[home.dir] ?? 'memory' } : null}
+        asmInfo={{ sources: useAsmLink.getState().sources, found: useAsmLink.getState().found }} page={settingsPage}
+        onSave={(s, prefs, asm) => void saveSettings(s, prefs, asm)} onClose={() => { setModal(null); setSettingsPage(undefined); }} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'library' && libDraft && <LibraryAddModal draft={libDraft} findSame={libSame} onAdd={a => void addToLibrary(a)}

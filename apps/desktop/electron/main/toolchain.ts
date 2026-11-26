@@ -28,8 +28,8 @@ export async function buildWithAssembler(req: BuildRequest, settings: ToolchainS
   for (const entry of entries) {
     if (!existsSync(join(dir, entry))) throw new Error(`${entry} does not exist in the build folder`);
     const run = tass
-      ? await run64tass({ exe: settings.tassPath, cwd: dir, entry, outDir: settings.outDir || 'out', args: splitArgs(settings.tassArgs) })
-      : await runKickAssembler({ java: settings.javaPath || 'java', jar: settings.kickJar, cwd: dir, entry, outDir: settings.outDir || 'out', args: splitArgs(settings.kickArgs) });
+      ? await run64tass({ exe: settings.tassPath, cwd: dir, entry, outDir: settings.outDir || 'out', args: [...splitArgs(settings.tassArgs), ...(req.args ?? [])] })
+      : await runKickAssembler({ java: settings.javaPath || 'java', jar: settings.kickJar, cwd: dir, entry, outDir: settings.outDir || 'out', args: [...splitArgs(settings.kickArgs), ...(req.args ?? [])] });
     commands.push(run.argv);
     stdout += `> ${run.argv.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}\n${run.output}\n`;
     outputs.push({ entry, ok: run.ok, prg: run.prg, prgPath: run.prgPath, vsPath: run.vsPath, problems: run.problems });

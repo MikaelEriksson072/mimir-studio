@@ -244,6 +244,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (unclosed) E(`closing directive '.endmacro' not found for '${unclosed.name}' in "${path}"`);
     if (unended) E(`closing directive '.endfunction' not found for '${unended.name}'`, unended.st);
   };
+  // the command line's -D NAME=value: constants defined before the first line (a problem in one is the command line's)
+  opts.defines?.forEach((d, i) => stmts.push(parseLine(`${d.name}=${d.value ?? '0'}`, '<command line>', i + 1)));
   loadFile(entryPath, 0);
   /** a macro's lines for a call with these parameters (as text): each reference replaced outside strings and comments */
   const expanded = new Map<string, Stmt[]>();

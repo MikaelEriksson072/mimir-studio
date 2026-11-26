@@ -185,7 +185,8 @@ export interface AsmPickResult { path: string; dir: string; entry: string; assem
 
 /** Assemble each entry (an .asm file in `dir`) with KickAss.jar or 64tass from the settings. */
 /** `assembler`: the one the sources are written for (Settings.assembler; missing: Kick Assembler) */
-export interface BuildRequest { dir: string; entries: string[]; assembler?: AssemblerId }
+/** `args`: more arguments for the assembler, after the toolchain's own (an Assembler project's, spec 10.7) */
+export interface BuildRequest { dir: string; entries: string[]; assembler?: AssemblerId; args?: string[] }
 export interface BuildOutput {
   entry: string;
   ok: boolean;

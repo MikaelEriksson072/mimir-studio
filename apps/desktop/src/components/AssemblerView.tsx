@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
-import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
+import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { MenuItem } from '../lib/types';
@@ -216,6 +216,10 @@ export interface AssemblerTabProps {
   onMenu: OnMenu;
   /** Release…: the window's dialog of what the build is made into */
   onRelease: () => void;
+  /** the arguments in Settings → Toolchain → Assemblers (Mimir's check takes their defines, as it does the project's) */
+  toolArgs: { kick: string; tass: string };
+  /** Settings at the Assembler project page (the project's language, main file, arguments, where Debug runs) */
+  onSettings: () => void;
 }
 
 /** The Assembler tab of an Assembler project: its folder opened (listed, watched), then the files and the code. */
@@ -237,7 +241,7 @@ interface WorkspaceProps extends AssemblerTabProps {
   onFolder: (f: AsmFolder) => void;
 }
 
-function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease }: WorkspaceProps) {
+function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease, toolArgs, onSettings }: WorkspaceProps) {
   const dir = folder.dir;
   const ui = useAssembler();
   const activeRef = useRef(active); activeRef.current = active;
@@ -375,10 +379,13 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   }, [wanted, bins]); // eslint-disable-line react-hooks/exhaustive-deps
   // the blocks marked in the sources (// @block sprite … // @end): the project's views show their bytes as what they are
   const blocks = useMemo(() => asmBlockMarks(Object.entries(quiet).filter(([p]) => ASM_SOURCE.test(p)).map(([path, text]) => ({ path, text }))), [quiet]);
+  // the arguments the build gives the assembler: the toolchain's, then the project's (the check takes their defines)
+  const own = info.args ?? '', theirs = lang === '64tass' ? toolArgs.tass : toolArgs.kick;
+  const args = useMemo(() => [...splitArgs(theirs), ...splitArgs(own)], [theirs, own]);
   const check = useMemo<AsmCheck | null>(() => {
     if (!loaded || !main || !(main in quiet)) return null;
-    try { return checkAsm({ ...quiet, ...bins }, main, lang); } catch { return null; }
-  }, [quiet, bins, main, lang, loaded]);
+    try { return checkAsm({ ...quiet, ...bins }, main, lang, { args }); } catch { return null; }
+  }, [quiet, bins, main, lang, loaded, args]);
   // the names the editor suggests and the hover says: the program's labels and constants (the last check that had them)
   useEffect(() => {
     if (!check?.names.size) return;
@@ -540,6 +547,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** a file opened in the editor (its folders opened in the list), in its tab: one open already, else the preview tab
    *  (a file put in its place) or, `keep`, a new tab after the one shown; at a line (OpenAt) */
   const openFile = (path: string, o: OpenAt = {}) => {
+    // (a problem in the arguments: they are in Settings)
+    if (path === '<command line>') { onSettings(); return; }
     const ups: string[] = [];
     for (let p = parentOf(path); p; p = parentOf(p)) ups.push(p);
     if (ups.some(p => !expanded.has(p))) ui.setExpanded(dir, [...new Set([...expanded, ...ups])]);
@@ -725,7 +734,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       const base: AsmBuild = { running: true, tool, main, ok: null, log: '', commands: [], problems: [], ms: 0, prg: null, at };
       setBuild(base);
       let r: BuildResult;
-      try { r = await kr.build({ dir: sub ? joinDir(dir, sub) : dir, entries: [baseName(main)], assembler: lang === '64tass' ? '64tass' : 'kick' }); }
+      try { r = await kr.build({ dir: sub ? joinDir(dir, sub) : dir, entries: [baseName(main)], assembler: lang === '64tass' ? '64tass' : 'kick', ...(own.trim() ? { args: splitArgs(own) } : {}) }); }
       catch (e) { setBuild({ ...base, running: false, log: errorText(e) }); ui.set({ outTab: 'build', outFolded: false }); toast(`${tool} did not run: ${errorText(e)}`, 'err'); return null; }
       const o = r.outputs[0];
       const problems: AsmBuildProblem[] = r.problems.map(p => ({ file: p.file ? tidyPath(sub ? `${sub}/${p.file}` : p.file) : '', line: p.line, column: p.column, msg: p.message, severity: p.severity }));
@@ -981,6 +990,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
   useEffect(() => { useAsmLink.getState().set({ main }); }, [main]);
+  // the sources and the main file Mimir finds, for Settings → Assembler project
+  const sourceList = useMemo(() => files.map(f => f.path).filter(p => ASM_SOURCE.test(p)).sort(), [files]);
+  useEffect(() => { useAsmLink.getState().set({ sources: sourceList, found: guessed ?? null }); }, [sourceList, guessed]);
 
   /* ---- bytes drawn in the window (the enlarged sprite or character) written into the lines that write them ---- */
   const writeBytes = async (changes: { addr: Addr; value: number }[]) => {
@@ -1226,6 +1238,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
               <option value="c64">Whole C64</option>
             </select>
           </>}
+          <button className="icon-btn asm-settings" aria-label="Assembler project settings" onClick={onSettings}
+            title={`The project's settings: its language, main file, more ${tool} arguments${own.trim() ? ` (now ${own.trim()})` : ''} and where Debug runs (Settings → Assembler project)`}>
+            <Icon name="sliders" size={14} /></button>
         </div>
         {dbg && (dbg.m instanceof AsmC64
           ? <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in the whole C64 (Sindri, VICE's ROMs): {dbg.m.typed} was typed at READY and the program stopped at its first instruction. <b>Continue</b> runs it in the C64's own time with the screen live; click the screen and type to use the C64's keyboard. The code cannot be changed until you stop; a click left of a line number sets a breakpoint.</span></p>

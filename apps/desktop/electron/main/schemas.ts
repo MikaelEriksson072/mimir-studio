@@ -170,6 +170,8 @@ const viewOffsets = z.array(z.object({ start: at, end: at, to: at }).refine(o =>
 const asmInfo = z.object({
   lang: z.enum(['kickass', '64tass']),
   main: z.string().max(1024).refine(p => !/^[\\/]|(^|[\\/])\.\.([\\/]|$)|:/.test(p), 'a path inside the project\'s folder').nullable().optional(),
+  /** more arguments for the assembler in this project, as typed */
+  args: z.string().max(1024).nullable().optional(),
 });
 
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */
@@ -297,7 +299,7 @@ export const exportWriteSchema = z.object({
   files: z.record(z.string().min(1).max(512), z.union([z.string(), z.instanceof(Uint8Array)])),
 }).refine(r => !!r.dir !== !!r.target, 'give either dir or target');
 /** the sources to assemble: one per project file, and a cartridge's own source after them */
-export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025), assembler: z.enum(['kick', '64tass']).optional() });
+export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025), assembler: z.enum(['kick', '64tass']).optional(), args: z.array(z.string().max(1024)).max(64).optional() });
 /** what a debugger shows of the program (spec 13.2b): the sources with the bytes their lines made, where it stops
  *  and what it watches. The sources are written next to the PRG, by their file names */
 const debugInfo = z.object({

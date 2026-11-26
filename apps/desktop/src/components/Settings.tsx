@@ -1,11 +1,14 @@
 /* Settings: pages in a list on the left, grouped by where they are kept: the app's own preferences (General, kept by
  * the window), the project's analysis and assembler output (saved in the project) and the toolchain (stored by the main
- * process), split into Assemblers, VICE & music, Debuggers and Packers & editor. Each setting has a line saying what it
- * does and the rest of its explanation behind More; the search box looks through every page. */
+ * process), split into Assemblers, VICE & music, Debuggers and Packers & editor. In an Assembler project the Project group
+ * is its own page instead (Assembler project: the language, the main file, its own arguments for the assembler and where
+ * Debug runs), the analysis and the assembler output being a re-assembled program's. Each setting has a line saying what
+ * it does and the rest of its explanation behind More; the search box looks through every page. */
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { DEFAULT_SETTINGS, PICTURE_FORMATS_HIRES, PICTURE_FORMATS_MC, pictureFormatName, type Settings } from '@mimir/core';
+import { DEFAULT_SETTINGS, PICTURE_FORMATS_HIRES, PICTURE_FORMATS_MC, pictureFormatName, type ScriptLang, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
 import type { DiskLook, InspectorMode } from '../store/ui';
+import type { AsmMachineKind } from '../store/assembler';
 import type { EditorInfo, LocateKey } from '../../shared/ipc';
 import { Modal } from './Modal';
 
@@ -35,7 +38,21 @@ export interface AppPrefs {
 const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir', autoMerge: true, learnRoutines: true };
 type PrefBool = { [K in keyof AppPrefs]: AppPrefs[K] extends boolean ? K : never }[keyof AppPrefs];
 
-type PageId = 'general' | 'analysis' | 'output' | 'assemblers' | 'vice' | 'debuggers' | 'tools';
+/** an Assembler project's own settings (Settings → Assembler project): the language, the main file and the arguments
+ *  are kept in its project file, where Debug runs by the app for its folder */
+export interface AsmSettings {
+  lang: ScriptLang;
+  /** null: the one Mimir finds */
+  main: string | null;
+  /** more arguments for the assembler, as typed */
+  args: string;
+  machine: AsmMachineKind;
+}
+/** what the page shows besides: the sources in the folder, the main file Mimir finds */
+export interface AsmSettingsInfo { sources: string[]; found: string | null }
+
+type PageId = 'general' | 'analysis' | 'output' | 'asmproject' | 'assemblers' | 'vice' | 'debuggers' | 'tools';
+export type SettingsPage = PageId;
 type Group = 'App' | 'Project' | 'Toolchain';
 const GROUPS: readonly Group[] = ['App', 'Project', 'Toolchain'];
 
@@ -63,11 +80,19 @@ interface Page { id: PageId; label: string; group: Group; where: string; section
 
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
-export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
+/** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them); `asm`: an
+ *  Assembler project's settings (its page instead of Analysis and Assembler output), with `asmInfo`; `page`: the page
+ *  it opens at (else the one it was last on) */
+export function SettingsModal({ settings, prefs: prefs0, desktop, editors, asm: asm0, asmInfo, page: page0, onSave, onClose }: {
+  settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; asm?: AsmSettings | null; asmInfo?: AsmSettingsInfo; page?: SettingsPage;
+  onSave: (s: Settings, prefs: AppPrefs, asm: AsmSettings | null) => void; onClose: () => void;
+}) {
   const [s, setS] = useState<Settings>(settings);
   const [prefs, setPrefs] = useState<AppPrefs>(prefs0);
-  const [page, setPageState] = useState<PageId>(lastPage);
+  const [asm, setAsm] = useState<AsmSettings | null>(asm0 ?? null);
+  // (an Assembler project has no Analysis or Assembler output page, a re-assembled program no Assembler project page)
+  const shows = (p: PageId) => (asm0 ? p !== 'analysis' && p !== 'output' : p !== 'asmproject');
+  const [page, setPageState] = useState<PageId>(() => [page0, lastPage].find((p): p is PageId => !!p && shows(p)) ?? 'general');
   const setPage = (p: PageId) => { lastPage = p; setPageState(p); };
   const [query, setQuery] = useState('');
   /** the settings whose More is turned the other way from how the search left it */
@@ -119,7 +144,43 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
   const chooseFolder = desktop && kr ? 'Choose folder… looks for the program in the folder you pick, in its bin (or win32) folder and in the folders in it, so the folder a zip unpacked to will do. When it is not there, a file dialog opens in that folder.' : undefined;
   const editorFound = desktop ? (editors.length ? `, here ${editors[0].name}` : ', and neither was found') : '';
 
-  const pages: Page[] = [
+  /** Project → Assembler project: what an Assembler project is written for and builds, its own arguments for the
+   *  assembler, and where Debug runs */
+  const asmPage = (a: AsmSettings): Page => {
+    const kick = a.lang !== '64tass', tool = kick ? 'Kick Assembler' : '64tass', toolArgs = (kick ? s.kickArgs : s.tassArgs).trim();
+    const put = (p: Partial<AsmSettings>) => setAsm(o => o && { ...o, ...p });
+    const sources = asmInfo?.sources ?? [];
+    return { id: 'asmproject', label: 'Assembler project', group: 'Project', where: 'Saved in the project file; where Debug runs is kept by the app, for this project\'s folder.', sections: [
+      { title: 'Building', items: [
+        { id: 'asmLang', label: 'Language', help: 'What the sources are written for: Mimir checks them as that while you type, and Run, Build and Release build them with it.',
+          more: 'The pill beside the file name in the Assembler switches it too. Kick Assembler is built with KickAss.jar (it needs Java), 64tass with the 64tass that comes with Mimir or the one in Toolchain → Assemblers. The sources stay as they are: written for the other one, they have to be changed by hand.',
+          words: 'Kick Assembler 64tass',
+          control: <select id="set-asmLang" value={a.lang} aria-describedby="set-asmLang-help" onChange={e => put({ lang: e.target.value === '64tass' ? '64tass' : 'kickass' })}>
+            <option value="kickass">Kick Assembler</option><option value="64tass">64tass</option></select> },
+        { id: 'asmMain', label: 'Main file', help: `The source Run, Build, Release and Debug build; the others are what it imports.${asmInfo?.found ? ` Mimir finds ${asmInfo.found}.` : ''}`,
+          more: 'Found by Mimir: the source that starts a program and that no other source imports. Right-click a source in the Assembler\'s file list to make it the main file there.',
+          words: sources.join(' '),
+          control: <select id="set-asmMain" className="mono" value={a.main ?? ''} aria-describedby="set-asmMain-help" onChange={e => put({ main: e.target.value || null })}>
+            <option value="">{asmInfo?.found ? `${asmInfo.found} (found)` : 'Found by Mimir'}</option>
+            {[...new Set([...sources, ...(a.main ? [a.main] : [])])].map(p => <option key={p} value={p}>{p}{sources.includes(p) ? '' : ' (not in the folder)'}</option>)}</select> },
+        { id: 'asmArgs', label: 'More arguments', help: `For ${tool} in this project, after the toolchain's. ${kick ? '`-define DEBUG` defines DEBUG for `#if DEBUG`' : '`-D DEBUG=1` defines DEBUG as 1 for `.if DEBUG`'}; Mimir's own check knows it too.`,
+          more: `They come after the ones in Toolchain → Assemblers (${toolArgs ? `\`${toolArgs}\`` : 'none now'}), in Run, Build, Release, Shift+F5 and the build.bat and build.sh Mimir writes. `
+            + `Mimir's own check, which runs as you type, takes the defines in both: ${kick ? '`-define NAME` (more than one: `-define DEBUG -define MUSIC`)' : '`-D NAME=value` or `-DNAME=value` (`-D NAME` alone is 0, as 64tass gives it); a source that defines the name again is an error, as in 64tass, unless it does so in `.weak` … `.endweak`, which gives way'}; the other arguments are the build's only. `
+            + 'Quotes keep spaces in one argument; Mimir passes them to the assembler without a shell.',
+          words: 'define arguments command line',
+          control: <input id="set-asmArgs" className="mono" value={a.args} placeholder={kick ? '-define DEBUG' : '-D DEBUG=1'} aria-describedby="set-asmArgs-help" onChange={e => put({ args: e.target.value })} spellCheck={false} /> },
+      ] },
+      { title: 'Debugging', items: [
+        { id: 'asmMachine', label: 'Debug runs in', help: 'Memory only: Mimir\'s 6510 with the program\'s memory. Whole C64: Sindri\'s C64 with VICE\'s ROMs.',
+          more: 'Memory only is fast; the KERNAL\'s printing routines are done on the C64 screen beside the code, and there are no ROMs or I/O. The whole C64 has BASIC, the KERNAL, the VIC, the CIAs and their interrupts, the keyboard and the screen as the VIC draws it, live. The Runs in box beside Debug in the Assembler switches it too.',
+          words: 'memory only whole c64 sindri',
+          control: <select id="set-asmMachine" value={a.machine} aria-describedby="set-asmMachine-help" onChange={e => put({ machine: e.target.value === 'c64' ? 'c64' : 'memory' })}>
+            <option value="memory">Memory only</option><option value="c64">Whole C64</option></select> },
+      ] },
+    ] };
+  };
+
+  const allPages: Page[] = [
     { id: 'general', label: 'General', group: 'App', where: desktop ? kept : 'Running outside the desktop app: there is no start screen.', sections: [
       { title: 'Starting and opening files', items: [
         pchk('startScreen', 'Show the start screen when Mimir starts', 'Continue, a new project, open one, or work without a project.',
@@ -214,16 +275,18 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
         chk('gfxBinary', 'Export charsets and bitmaps as binary files', tass ? 'Read with `.binary`.' : 'Read with `.import binary`.'),
       ] },
     ] },
+    ...(asm ? [asmPage(asm)] : []),
     { id: 'assemblers', label: 'Assemblers', group: 'Toolchain', where: tools, foot: chooseFolder, sections: [
       { title: 'Kick Assembler', items: [
         path('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later.', 'Choose folder…: the JDK or JRE folder (java is in its bin folder), or the folder with several in it.'),
         path('kickJar', 'KickAss.jar', 'Verify and Build & Run assemble with this jar when it exists.'),
-        txt('kickArgs', 'Extra Kick Assembler arguments', '`-vicesymbols` writes a VICE label file next to the PRG.'),
+        txt('kickArgs', 'Extra Kick Assembler arguments', '`-vicesymbols` writes a VICE label file next to the PRG.',
+          'For every build, a re-assembled program\'s and an Assembler project\'s; an Assembler project can add its own after them (Project → Assembler project). Mimir\'s own check takes the `-define NAME` in them too.'),
       ] },
       { title: '64tass', items: [
-        path('tassPath', '64tass', 'Verify and Build & Run assemble a project written for 64tass (Assembler output) with it.',
+        path('tassPath', '64tass', 'Verify and Build & Run assemble a project written for 64tass (Assembler output) with it, and an Assembler project in 64tass is built with it.',
           'The installed app comes with 64tass 1.57.2900 (resources\\64tass in its folder) and uses it unless you pick another.'),
-        txt('tassArgs', 'Extra 64tass arguments', '`-Wall` shows more warnings in Problems.', 'Mimir always gives -a -C --cbm-prg, the output and a VICE label file (--vice-labels -l).'),
+        txt('tassArgs', 'Extra 64tass arguments', '`-Wall` shows more warnings in Problems.', 'Mimir always gives -a -C --cbm-prg, the output and a VICE label file (--vice-labels -l). An Assembler project can add its own after them (Project → Assembler project); Mimir\'s own check takes the `-D NAME=value` in them too.'),
       ] },
       { title: 'Build', items: [
         txt('outDir', 'Output folder', 'The folder in the export\'s folder the build writes the PRG and its VICE labels to.'),
@@ -281,6 +344,7 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
       ] },
     ] },
   ];
+  const pages = allPages.filter(p => shows(p.id));
 
   // ---- the search: every word typed is somewhere in the setting, its section or its page ----
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -367,7 +431,7 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
             </>}
         </div>
       </div>
-      <div className="modal-foot"><button className="btn ghost" title="Every setting on every page back to its default (Save settings keeps it)" onClick={() => { setS({ ...DEFAULT_SETTINGS }); setPrefs(DEFAULT_PREFS); }}>Restore defaults</button><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(s, prefs)}>Save settings</button></div>
+      <div className="modal-foot"><button className="btn ghost" title={`Every setting on every page back to its default${asm ? ' (the project\'s language and main file stay)' : ''} (Save settings keeps it)`} onClick={() => { setS({ ...DEFAULT_SETTINGS }); setPrefs(DEFAULT_PREFS); setAsm(a => a && { ...a, args: '', machine: 'memory' }); }}>Restore defaults</button><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(s, prefs, asm)}>Save settings</button></div>
     </Modal>
   );
 }

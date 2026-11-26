@@ -190,10 +190,33 @@ export interface AsmCheck {
 /** the labels a run starts at when the program has no BASIC line (the first one that is there) */
 const START_LABELS = ['start', 'main', 'begin', 'entry', 'init'];
 
-/** Assemble the program (`main` and what it imports, all in `vfs`) with Mimir's own assembler and check it. */
-export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang): AsmCheck {
+/**
+ * The defines an assembler's command line gives (the toolchain's arguments and the project's, spec 10.7): Kick
+ * Assembler's `-define NAME`; 64tass's `-D NAME=value` or `-DNAME=value` (`-D NAME`: 0, as 64tass gives it). The other
+ * arguments are the build's: the check leaves them.
+ */
+export function asmArgDefines(lang: ScriptLang, args: readonly string[]): { name: string; value?: string }[] {
+  const out: { name: string; value?: string }[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (lang === '64tass') {
+      const d = a === '-D' ? args[++i] : a.startsWith('-D') ? a.slice(2) : null;
+      const m = d?.match(/^\s*([A-Za-z_]\w*)\s*(?:=([^]*))?$/);
+      if (m) out.push({ name: m[1], ...(m[2] != null ? { value: m[2].trim() } : {}) });
+    } else if (a === '-define' && i + 1 < args.length) {
+      const n = args[++i];
+      if (/^[A-Za-z_]\w*$/.test(n)) out.push({ name: n });
+    }
+  }
+  return out;
+}
+
+/** Assemble the program (`main` and what it imports, all in `vfs`) with Mimir's own assembler and check it; `args`:
+ *  the assembler's arguments the build gives (their defines are the check's too) */
+export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang, o: { args?: readonly string[] } = {}): AsmCheck {
+  const defines = o.args?.length ? asmArgDefines(lang, o.args) : [];
   // (Kick Assembler starts the program counter at $2000 until a * = moves it)
-  const asm = assembleIn(langIs(lang), vfs, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }) });
+  const asm = assembleIn(langIs(lang), vfs, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }), ...(defines.length ? { defines } : {}) });
   const problems: AsmProblem[] = asm.errors.map(e => ({ file: e.file, line: e.line, msg: e.msg }));
   const warnings: AsmProblem[] = (asm.warnings ?? []).map(e => ({ file: e.file, line: e.line, msg: e.msg }));
   const base = main.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') + '.prg';

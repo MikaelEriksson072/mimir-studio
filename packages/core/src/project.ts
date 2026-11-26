@@ -29,12 +29,16 @@ export function createProject(init: { name?: string; files: FileInput[]; setting
     files: init.files.map(withId),
     overrides: [], entries: [], entryPoint: null, labels: {}, comments: {}, blockComments: {}, notes: {}, bankZones: [], relocs: [], excluded: [], binary: [], bookmarks: {}, scripts: {}, patches: [],
     cart: init.cart ?? null,
-    ...(init.asm ? { asm: { lang: init.asm.lang, main: init.asm.main ?? null } } : {}),
+    ...(init.asm ? { asm: asmInfo(init.asm) } : {}),
     settings: Object.assign({}, DEFAULT_SETTINGS, init.settings || {}),
   };
 }
-/** an Assembler project's info as it is kept: the language one of the two, the main file a path or nothing */
-const asmInfo = (a: AsmProjectInfo): AsmProjectInfo => ({ lang: a.lang === '64tass' ? '64tass' : 'kickass', main: a.main || null });
+/** an Assembler project's info as it is kept: the language one of the two, the main file a path or nothing, its own
+ *  arguments for the assembler if it has any */
+function asmInfo(a: AsmProjectInfo): AsmProjectInfo {
+  const args = a.args?.trim();
+  return { lang: a.lang === '64tass' ? '64tass' : 'kickass', main: a.main || null, ...(args ? { args } : {}) };
+}
 
 export function demoProject(settings?: Partial<Settings>): Project {
   const d = makeDemo();
@@ -56,7 +60,7 @@ export function serializeProject(p: Project): SerializedProject {
     ...(p.patches?.length ? { patches: p.patches.map(({ id: _, bytes, old, ...q }) => ({ ...q, bytes: b64enc(bytes), old: b64enc(old) })) } : {}),
     ...(p.userScripts?.length ? { userScripts: p.userScripts.map(({ pads, ...u }) => ({ ...u, pads: pads.map(({ bytes, data, ...d }) => ({ ...d, ...(bytes ? { bytes: b64enc(bytes) } : {}), ...(data ? { data: b64enc(data) } : {}) })) })) } : {}),
     ...(p.cart ? { cart: { name: p.cart.name, data: b64enc(p.cart.crt) } } : {}),
-    ...(p.asm ? { asm: (({ lang, main }) => ({ lang, ...(main ? { main } : {}) }))(asmInfo(p.asm)) } : {}),
+    ...(p.asm ? { asm: (({ lang, main, args }) => ({ lang, ...(main ? { main } : {}), ...(args ? { args } : {}) }))(asmInfo(p.asm)) } : {}),
     settings: p.settings,
   };
 }

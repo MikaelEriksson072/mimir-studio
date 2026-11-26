@@ -1121,3 +1121,66 @@ test('files dropped on an Assembler project are copied into its folder: on a fol
   await shot(page, '30-asm-dropped');
   await closeProject(page, 'dropped');
 });
+
+test('the Assembler project\'s settings: its button opens them in Settings, -define DEBUG there is the check\'s and the build\'s, the main file and where Debug runs', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'defines');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [
+    'BasicUpstart2(start)',
+    'start:',
+    '#if DEBUG',
+    '        inc $d020',
+    '        jmp start',
+    '#endif',
+    '        rts',
+    '',
+  ].join('\n'));
+  writeFileSync(join(dir, 'tables.asm'), '.byte 1, 2, 3\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  await expect(problems).toContainText('The program assembles: 13 bytes');
+  // the Assembler's settings button: Settings at the project's page, no Analysis or Assembler output (a re-assembled program's)
+  await page.getByRole('button', { name: 'Assembler project settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await expect(settings.getByRole('tab', { name: 'Assembler project' })).toHaveAttribute('aria-selected', 'true');
+  await expect(settings.getByRole('tab', { name: 'Analysis' })).toHaveCount(0);
+  await expect(settings.getByRole('tab', { name: 'Assembler output' })).toHaveCount(0);
+  await expect(settings.locator('#set-asmLang')).toHaveValue('kickass');
+  await expect(settings.locator('#set-asmMain option')).toHaveText(['main.asm (found)', 'main.asm', 'tables.asm']);
+  await expect(settings.locator('#set-asmArgs-help')).toContainText('-define DEBUG');
+  await settings.locator('#set-asmArgs').fill('-define DEBUG');
+  await settings.locator('#set-asmMachine').selectOption('c64');
+  await shot(page, '31-asm-settings');
+  await settings.getByRole('button', { name: 'Save settings' }).click();
+  await expect(settings).toBeHidden();
+  // the check takes the define: the #if DEBUG lines are in the program
+  await expect(problems).toContainText('The program assembles: 19 bytes');
+  await expect(page.locator('select.asm-machine')).toHaveValue('c64');
+  await expect(page.getByRole('button', { name: 'Assembler project settings' })).toHaveAttribute('title', /now -define DEBUG/);
+  // Build gives KickAss.jar the argument after the toolchain's: the same program
+  await page.getByRole('button', { name: 'Build', exact: true }).click();
+  await expect(page.locator('.scr-run-stat')).toContainText('Built main.prg', { timeout: 60_000 });
+  const prg = readFileSync(join(dir, 'out', 'main.prg'));
+  // (BasicUpstart2 puts the code at $080e)
+  expect(prg.length).toBe(2 + 20);
+  expect([...prg.subarray(2 + 13)]).toEqual([0xee, 0x20, 0xd0, 0x4c, 0x0e, 0x08, 0x60]);
+  // kept in the project file
+  await expect.poll(() => JSON.parse(readFileSync(join(dir, 'defines.mimir.json'), 'utf8')).asm).toEqual({ lang: 'kickass', args: '-define DEBUG' });
+  // the palette opens the page too; the main file picked there is the one Run builds, none: found again
+  await page.keyboard.press('Control+Shift+P');
+  const q = page.getByRole('textbox', { name: 'Command' });
+  await q.fill('Assembler project settings');
+  await q.press('Enter');
+  await expect(settings.getByRole('tab', { name: 'Assembler project' })).toHaveAttribute('aria-selected', 'true');
+  await expect(settings.locator('#set-asmArgs')).toHaveValue('-define DEBUG');
+  await expect(settings.locator('#set-asmMachine')).toHaveValue('c64');
+  await settings.locator('#set-asmArgs').fill('');
+  await settings.getByRole('button', { name: 'Save settings' }).click();
+  await expect(problems).toContainText('The program assembles: 13 bytes');
+  await expect.poll(() => JSON.parse(readFileSync(join(dir, 'defines.mimir.json'), 'utf8')).asm).toEqual({ lang: 'kickass' });
+  await closeProject(page, 'defines');
+});

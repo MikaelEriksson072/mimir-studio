@@ -510,6 +510,10 @@ export interface AsmProjectInfo {
   /** the source Run and Build build, a path in the project's folder (with `/`); missing or null: the one Mimir finds
    *  (the source that starts a program and no other imports) */
   main?: string | null;
+  /** more arguments for the assembler in this project (as typed, split as a shell does): put after the toolchain's own
+   *  (Settings → Toolchain), and the defines in them (-define NAME for KickAss, -D NAME=value for 64tass) Mimir's own
+   *  check knows too, so it gives the program the build makes */
+  args?: string | null;
 }
 
 /** What `analyze()` and `render()` need; tests and the CLI build these directly. */

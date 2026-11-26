@@ -108,6 +108,10 @@ export interface AssembleOptions {
   /** the lines, statement starts and instructions of every file the code imports, not only the entry file's, with
    *  `fileOf` and `fileNames` saying whose each byte is (the Assembler's debugger: a breakpoint in an imported file) */
   allFiles?: boolean;
+  /** what the assembler's command line defines (the project's arguments): Kick Assembler's `-define NAME` a symbol
+   *  #if tests, 64tass's `-D NAME=value` a constant of the root scope, defined before the first line (a line defining
+   *  it again is an error, as in 64tass; one in .weak gives way). `value` missing: 0, as 64tass gives `-D NAME` */
+  defines?: readonly { name: string; value?: string }[];
 }
 
 /** the folder part of a path in the files (`lib/macros.asm` → `lib/`; none: '') */
@@ -216,7 +220,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   const warnings: AsmError[] = [];
   const stmts: Stmt[] = [];
   // preprocessor: #define/#undef and #if/#elif/#else/#endif over defined symbols (!, &&, ||, parentheses)
-  const defines = new Set<string>();
+  const defines = new Set<string>(opts.defines?.map(d => d.name));
   const cond: { active: boolean; taken: boolean; outer: boolean }[] = [];
   const on = () => cond.every(c => c.active);
   const test = (src: string): boolean => {
