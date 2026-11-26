@@ -3748,8 +3748,8 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass de långa
-  pseudohoppen `gcc`, `gne` …): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass kommandoradens
+  `--long-branch`): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3853,6 +3853,13 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     4510 mot 65CE02, 65EL02 mot 65C02); de handskrivna tabellerna för de andra stämde med mätningen. Integrationstestet
     assemblerar varje instruktion i varje läge för alla tio processorerna med kontrollen och med 64tass: samma bytes.
     Kontrollen varnar på `.cpu`-raden (C64 DTV, C65/MEGA65, eller att 6510:an inte kör dem) och *Debug* väntar.
+  - *64tass alltid tagna hopp* (2026-11-26): `gcc`, `gcs`, `geq`, `gne`, `gmi`, `gpl`, `gvc`, `gvs`, `glt`, `gge` och
+    `gra` (där det finns BRA), för där man vet hur flaggan står: grenen när den når, annars `jmp` (`brl` på 65816:an);
+    ett som framåt inte hoppar över något blir ingen kod, ett som hoppar över en byte bara motsatta grenens opkod (den
+    byten blir dess offset; på 65CE02/4510 också två byte, med den långa grenens), `gra` över en byte `nop #` på
+    R65C02/W65C02. Ett mål bakåt (också etiketten på samma rad) är alltid en gren: kontrollen ser om namnet redan är
+    definierat i passet (`lookedForward`), och hur många byte hoppet hoppar över räknas från var det slutade förra passet.
+    Mätt: alla elva på alla tio processorerna, nära, långt fram och bak, över 0–3 byte, samma bytes som 64tass.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

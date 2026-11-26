@@ -39,7 +39,7 @@
  * ===================================================================== */
 import type { AsmError, AssembleResult, Vfs } from '../types';
 import { TASS_ENC } from '../cpu/opcodes';
-import { ACCU_IMM, CPU_MODE_LEN, cpuOp, INDEX_IMM, REL16_FROM, tassCpu, WIDE_CPUS, type CpuMode, type TassCpu } from './tass-cpu';
+import { ACCU_IMM, alwaysBranch, CPU_MODE_LEN, cpuOp, INDEX_IMM, REL16_FROM, tassCpu, WIDE_CPUS, type CpuMode, type TassCpu } from './tass-cpu';
 import { h4 } from '../util/hex';
 import { importPath, type AssembleOptions } from './kick-subset-assembler';
 
@@ -581,9 +581,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   };
   /** the names looked up in this pass and the last (a .proc is compiled where its name is used), .with's namespaces */
   let refsNow = new Set<string>(), refsPrev: Set<string> | null = null, withs: string[][] = [];
+  /** the names this pass has defined so far, and whether a value just looked up was one it has not yet (a forward
+   *  reference: a gcc, gne … to it may skip nothing, or one byte) */
+  let defsNow: Set<string> | null = null, lookedForward = false;
+  /** where each always taken branch (gcc, gra …) ended in the last pass and this one, by its line (each time it runs) */
+  let gPrev = new Map<Stmt, number[]>(), gNow = new Map<Stmt, number[]>();
   /** a name looked up: its key, and (`p1.in1`) the names before each dot in it */
   const used = (k: string, dotted = false) => {
     refsNow.add(k);
+    if (defsNow && !defsNow.has(k)) lookedForward = true;
     if (dotted) for (let j = k.indexOf('.'); j > 0; j = k.indexOf('.', j + 1)) refsNow.add(k.slice(0, j));
   };
   /** a dictionary's key for a value */
@@ -615,7 +621,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         // `-` the n-th `-` label back from here; `+` the n-th `+` label ahead (from the last pass)
         let left = node.n;
         if (node.dir === '-') { for (let i = anon.length - 1; i >= 0; i--) if (anon[i].dir === '-' && !--left) return anon[i].v; }
-        else for (let i = anon.length; i < anonPrev.length; i++) if (anonPrev[i].dir === '+' && !--left) return anonPrev[i].v;
+        else { lookedForward = true; for (let i = anon.length; i < anonPrev.length; i++) if (anonPrev[i].dir === '+' && !--left) return anonPrev[i].v; }
         unresolved.push(node.dir.repeat(node.n)); return null;
       }
       case 'mem': {
@@ -798,9 +804,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (cpu0 !== '6502' && cpu0 !== '6502i') { cpusUsed.push(cpu0); if (final) warnings.push({ file: entryPath, line: 0, msg: `${cpuNote(cpu0)} (the arguments ask for it)` }); }
     if (opts.cpu && !tassCpu(opts.cpu) && final) E(`unknown processor '${opts.cpu}' (the arguments)`);
     missing = false; first = -1; spaces = []; scope = '';
-    anonPrev = anon; anon = [];
+    anonPrev = anon; anon = []; gPrev = gNow; gNow = new Map();
     let changed = false;
     const defs = new Set<string>();
+    defsNow = defs;
     const define = (name: string, v: Value, st: Stmt, variable = false) => {
       const k = keyIn(spaces, name);
       // (a name defined twice keeps its first value, as 64tass; one in .weak gives way to one outside it, wherever it is)
@@ -957,7 +964,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     /** a line starting with a word that is a mnemonic of the processor now (one 64tass's 6502 has not: `phx` on the
      *  65816, an alias such as `bge`) without a colon: that instruction, as 64tass reads it, else the label it was */
     const asInstruction = (st: Stmt): Stmt => {
-      if (!st.bare || !st.label || /^(\.|:?=)/.test(st.body) || !cpuOp(cpu, st.label.toUpperCase())) return st;
+      if (!st.bare || !st.label || /^(\.|:?=)/.test(st.body) || !(cpuOp(cpu, st.label.toUpperCase()) || (/^g[a-z]{2}$/.test(st.label) && alwaysBranch(cpu, st.label.slice(1))))) return st;
       const { label, bare: _, ...rest } = st;
       return { ...rest, body: `${label} ${st.body}`.trim() };
     };
@@ -1312,6 +1319,30 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             const o = args[1] ? evn(args[1]) ?? 0 : 0; const len = args[2] ? evn(args[2]) ?? 0 : u.length - o;
             for (let i = 0; i < len && o + i < u.length; i++) emit(u[o + i], st);
           }
+          report(st);
+          continue;
+        }
+        // 64tass's always taken branches (gcc, gne, gra …, for where the flag is known): the branch when it reaches, else
+        // JMP (BRL on the 65816); one that skips nothing ahead is no code, one that skips a byte (on the 65CE02 two too)
+        // the opposite branch's opcode alone (gra: NOP # on the R65C02 and W65C02); the bytes it skips as in the last pass
+        if ((m = s.match(/^g(eq|ne|cc|cs|pl|mi|vc|vs|lt|ge|ra)(?:\s+(.*))?$/)) && alwaysBranch(cpu, m[1])) {
+          const g = alwaysBranch(cpu, m[1])!, at = pc;
+          lookedForward = false;
+          const raw = m[2] ? ev(P(m[2].trim())) : null, v = raw == null ? null : numberOf(raw), ahead = lookedForward;
+          const occ = gNow.get(st)?.length ?? 0, endPrev = gPrev.get(st)?.[occ];
+          const skips = v != null && ahead && endPrev != null ? v - endPrev : null;
+          const near = (x: number) => x - (at + 2) >= -128 && x - (at + 2) <= 127;
+          let out: number[];
+          if (!m[2]) { E(`g${m[1]} needs where it goes`, st); continue; }
+          if (v == null) out = [g.rel, 0];
+          else if (skips === 0) out = [];
+          else if (skips === 1 && g.skip1 != null) out = [g.skip1];
+          else if (skips === 2 && g.skip2 != null) out = [g.skip2];
+          else if (near(v)) out = [g.rel, (v - (at + 2)) & 0xff];
+          else if (g.brl != null) { const o = v - (at + 3); out = [g.brl, o & 0xff, (o >> 8) & 0xff]; }
+          else { if (final && Math.floor(v / 0x10000) !== Math.floor(at / 0x10000)) E(`address in different program bank '$${v.toString(16)}'`, st); out = [g.jmp, v & 0xff, (v >> 8) & 0xff]; }
+          out.forEach((b, i) => { emit(b, st); if (!i && pass === 'final' && mine(site(st)) && !virt.length) ops[(pc - off - 1) & 0xffff] = 1; });
+          gNow.set(st, [...(gNow.get(st) ?? []), at + out.length]);
           report(st);
           continue;
         }

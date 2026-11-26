@@ -145,13 +145,33 @@ export function cpuOp(cpu: TassCpu, mn: string): { mn: string; modes: Partial<Re
   const [only, as] = one.split('>') as [CpuMode, CpuMode | undefined];
   return { mn: to, modes: modes[only] !== undefined ? { [as ?? only]: modes[only] } : {} };
 }
+/** 64tass's always taken branches (gcc, gne, gra …): the branch, the opcode alone that skips one byte (the opposite
+ *  branch; gra: NOP # where there is one) and two (the 65CE02's opposite 16 bit branch), BRL where there is one, else
+ *  JMP; null: none on the processor (gra needs BRA) */
+const G_COND: Record<string, [string, string]> = {
+  eq: ['BEQ', 'BNE'], ne: ['BNE', 'BEQ'], cc: ['BCC', 'BCS'], lt: ['BCC', 'BCS'], cs: ['BCS', 'BCC'], ge: ['BCS', 'BCC'],
+  pl: ['BPL', 'BMI'], mi: ['BMI', 'BPL'], vc: ['BVC', 'BVS'], vs: ['BVS', 'BVC'],
+};
+export function alwaysBranch(cpu: TassCpu, cc: string): { rel: number; skip1?: number; skip2?: number; brl?: number; jmp: number } | null {
+  const jmp = TABLES[cpu].JMP?.abs, brl = TABLES[cpu].BRL?.rell;
+  if (jmp == null) return null;
+  if (cc === 'ra') {
+    const bra = TABLES[cpu].BRA?.rel;
+    return bra == null ? null : { rel: bra, skip1: TABLES[cpu].NOP?.imm, brl, jmp };
+  }
+  const c = G_COND[cc]; if (!c) return null;
+  const rel = TABLES[cpu][c[0]]?.rel, opp = TABLES[cpu][c[1]];
+  return rel == null ? null : { rel, skip1: opp?.rel, skip2: opp?.rell, brl, jmp };
+}
+export const ALWAYS_BRANCHES = ['geq', 'gne', 'gcc', 'gcs', 'gpl', 'gmi', 'gvc', 'gvs', 'glt', 'gge', 'gra'];
+
 /** the mnemonics a processor has, with its aliases (upper case) */
 export const cpuMnemonics = (cpu: TassCpu): string[] => [...Object.keys(TABLES[cpu]), ...Object.keys(ALIASES_OF[cpu]).filter(a => cpuOp(cpu, a))];
 
 /** every mnemonic the processors other than the 6502 have, with the aliases (lower case): the editor colours them */
 export const TASS_CPU_MNEMONICS: readonly string[] = [...new Set([
   ...(['65c02', 'r65c02', 'w65c02', '65816', '65dtv02', '65ce02', '4510', '65el02'] as const).flatMap(c => Object.keys(TABLES[c])),
-  ...Object.values(ALIASES).flatMap(a => Object.keys(a)),
+  ...Object.values(ALIASES).flatMap(a => Object.keys(a)), ...ALWAYS_BRANCHES,
 ].map(m => m.toLowerCase()))].sort();
 
 /** the instructions whose immediate is the accumulator's size (.al: 16 bits) and the index registers' (.xl) */

@@ -127,3 +127,20 @@ describe('the operators x and `', () => {
       2, 3, 2, 2, 2, 2, 2, 2, 0x41, 0x42, 0x41, 0x42, 0x12, 0x13]);
   });
 });
+
+describe('the always taken branches (gcc, gne, gra …)', () => {
+  const lines = (g: string) => ['back nop', ` ${g} t0`, 't0', ` ${g} t1`, ' nop', 't1', ` ${g} t2`, ' lda #1', 't2', ` ${g} back`, ` ${g} far`, ' .fill 300', 'far rts'];
+  const shown = (b: number[]) => [...b.slice(0, 15), '…', ...b.slice(-1)];
+  it('the branch when it reaches, else JMP; skipping nothing no code, one byte the opposite branch\'s opcode alone', () => {
+    // nop; gcc t0: nothing; gcc t1: bcs (the nop its offset); gcc t2: bcc +2; gcc back; gcc far: jmp
+    expect(shown(ok(lines('gcc')))).toEqual(shown([0xea, 0xb0, 0xea, 0x90, 0x02, 0xa9, 0x01, 0x90, 0xf7, 0x4c, 0x38, 0x11, ...Array(300).fill(0), 0x60]));
+  });
+  it('on the 65816 BRL instead of JMP; on the 65CE02 a two byte skip as well; gra: NOP # on the R65C02', () => {
+    expect(ok([' .cpu "65816"', ...lines('gne')]).slice(9, 12)).toEqual([0x82, 0x2c, 0x01]);
+    expect(ok([' .cpu "65ce02"', ...lines('gne')]).slice(0, 6)).toEqual([0xea, 0xf0, 0xea, 0xf3, 0xa9, 0x01]);
+    expect(ok([' .cpu "r65c02"', ...lines('gra')]).slice(0, 3)).toEqual([0xea, 0x82, 0xea]);
+    // (a branch to itself is one: the label is before it)
+    expect(ok(['self gne self'])).toEqual([0xd0, 0xfe]);
+    expect(tass(['l gra l']).c.ok).toBe(false);
+  });
+});

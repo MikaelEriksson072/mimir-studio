@@ -91,3 +91,26 @@ describe.skipIf(!tass)('every instruction of every processor 64tass has, in ever
     }, 60_000);
   }
 });
+
+describe.skipIf(!tass)('the always taken branches (gcc, gne, gra …) on every processor, built with the real 64tass', () => {
+  for (const cpu of TASS_CPUS) {
+    it(`give the bytes Mimir's check gives, near, far, skipping nothing, one byte, two and three: ${cpu}`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'mimir-g-'));
+      try {
+        for (const g of ['gcc', 'gcs', 'geq', 'gne', 'gmi', 'gpl', 'gvc', 'gvs', 'glt', 'gge', 'gra']) {
+          const text = [` .cpu "${cpu}"`, ' * = $1000', 'back nop', ` ${g} t0`, 't0', ` ${g} t1`, ' nop', 't1', ` ${g} t2`, ' lda #1', 't2', ` ${g} t3`, ' lda $1234', 't3',
+            ` ${g} back`, `self ${g} self`, ` ${g} +`, ' nop', '+', ` ${g} far`, ' .fill 300', 'far rts', ` ${g} back`, ''].join('\n');
+          await writeFile(join(dir, 'main.asm'), text);
+          const r = spawnSync(tass!, ['-a', '-C', '-o', 'main.prg', 'main.asm'], { cwd: dir, windowsHide: true, encoding: 'utf8' });
+          const c = checkAsm({ 'main.asm': text }, 'main.asm', '64tass');
+          // (gra needs BRA: none on the 6502)
+          if (r.status !== 0) { expect(c.ok, `${g}: 64tass says no`).toBe(false); continue; }
+          expect(c.problems, g).toEqual([]);
+          expect([...c.asm.prg!], g).toEqual([...new Uint8Array(await readFile(join(dir, 'main.prg')))]);
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+  }
+});
