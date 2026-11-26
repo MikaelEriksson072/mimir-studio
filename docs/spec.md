@@ -175,7 +175,7 @@ mimir-studio/
 │  ├─ src/analyze/{memory.ts, trace.ts, evidence.ts, pointers.ts, music.ts,
 │  │               vic.ts, classify.ts, labels.ts, diagnostics.ts, index.ts}
 │  ├─ src/render/{lines.ts, kick.ts, include.ts}
-│  ├─ src/verify/{kick-subset-assembler.ts, tass-subset-assembler.ts, kick-d64.ts, verify.ts}
+│  ├─ src/verify/{kick-subset-assembler.ts, tass-subset-assembler.ts, tass-cpu.ts, kick-d64.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
 │  ├─ src/asm-release.ts           Assemblern: Release-avbilderna (disk, band, cartridge, PRG) och när LOAD och RUN inte startar programmet (10.7)
@@ -3748,8 +3748,8 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass 65816-instruktionerna och
-  `random()`): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass processorerna 65CE02, 4510,
+  65DTV02 och 65EL02): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3821,8 +3821,26 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     starkare definition vinner var den än står), `.with` … `.endwith`, `.endn`, `.switch`/`.case`/`.default`/`.endswitch`,
     `.end`, `.binclude` (en källa i ett eget block), egna teckentabeller (`.encode` … `.endencode`, en etikett som står
     för den och är en funktion, `.tdef`, `.edef` med escapes) och dictionaries (`{1: 15, :0}[x]`, `{.x: 24}.x`).
-    65816-, listnings- och TASM-direktiven som inte gör något på en 6502 (`.al`, `.xs`, `.dpage`, `.databank`, `.proff`,
-    `.seed`, `.assert` …) godtas.
+    Listnings- och TASM-direktiven som inte gör något här (`.proff`, `.pron`, `.hidemac`, `.assert` …) godtas.
+  - *64tass andra processorer, `random()`* (2026-11-26, `tass-cpu.ts`): `.cpu "65816"` (SuperCPU:ns W65C816),
+    `"65c02"`, `"r65c02"` och `"w65c02"` (Rockwells `rmb 7,$20`, `smb`, `bbr 3,$20,mål`, `bbs`, och `wai`/`stp`), eller
+    argumentens `-x`/`--m65816`, `-c`/`--m65c02`, `--mr65c02`, `--mw65c02`; varje processor en tabell med 64tass namn och
+    alias (`ina`, `clr`, `jml`, `swa`, `tad` …; `bge`, `blt`, `cpa`, `shl`, `shr` på alla). 65816:s adresseringssätt:
+    long (`lda $123456`, `,x`), `[dp]`, `[dp],y`, `n,s`, `(n,s),y`, `(dp)`, `jml`/`jsl`, `jmp [abs]`, `jsr (abs,x)`,
+    `mvn #källa,#mål`, `pea`, `pei (dp)`, `per`/`brl` (16 bitars hopp), `brk #n`, formerna `#n,d`, `#n,b`, `#n,k`, `(#n,d),y`
+    … och `@b`/`@w`/`@l`. Adressens storlek väljs som 64tass gör: direct page när den ligger i `.dpage`s 256 byte, annars
+    absolut när den ligger i `.databank`s bank, annars long (`.dpage ?`/`.databank ?`: ingen; `.dpage` gäller också på
+    6502:an); `jmp`/`jsr` till en annan programbank är fel, som i 64tass. Immediate-värdena är 16 bitar med `.al`/`.xl`,
+    eller som REP och SEP sätter dem med `.autsiz` (`.mansiz` slutar). En adress över `$ffff` hamnar i PRG:n inom
+    64 KiB som 64tass skriver den (`* = $018000` vid `$8000`). En mnemonic bara en annan processor har i början av en rad
+    är instruktionen (`phx` på 65816:an), på 6502:an en etikett; `($12)+1` är ett uttryck, inte indirekt. Kontrollen
+    varnar på `.cpu`-raden att 65816-instruktionerna kör på en SuperCPU (VICE:s xscpu64), inte på C64:ans 6510, och
+    *Debug* väntar (Mimirs debugger kör en 6510); *Run* bygger ändå med 64tass. **`random()`** drar som 64tass (dess
+    xorshift128+ med samma startvärden, börjad om varje pass; ett område som inte är en tvåpotens med avvisning över
+    32 bitar; `random()` ett flyttal, `random(e)`, `random(s, e)`, `random(s, e, steg)`, över listor element för element)
+    och **`.seed`** sätter talen (upp till 128 bitar). Operatorerna **`x`** (upprepa en lista, en sträng eller bytes:
+    `random([16] x 8)`) och **`` ` ``** (bankbyten). Mätt mot 64tass 1.57 (`asm-cpu.integration.test.ts`): samma bytes
+    för varje form, och fel där 64tass säger fel. Editorn färgar 65C02:ans och 65816:ans mnemonics.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

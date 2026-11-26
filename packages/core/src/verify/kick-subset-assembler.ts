@@ -105,6 +105,8 @@ export interface AssembleOptions {
   names?: ReadonlyMap<string, number>;
   /** where the program counter starts before the first .pc (0 when missing) */
   pc?: number;
+  /** (64tass) the processor before a .cpu: the command line's (--m65816, -x …); missing: the 6502 */
+  cpu?: string;
   /** the lines, statement starts and instructions of every file the code imports, not only the entry file's, with
    *  `fileOf` and `fileNames` saying whose each byte is (the Assembler's debugger: a breakpoint in an imported file) */
   allFiles?: boolean;

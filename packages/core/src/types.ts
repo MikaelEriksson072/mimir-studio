@@ -1256,6 +1256,8 @@ export interface AssembleResult {
    *  program (`mem`, `written`, `prg`) is: <main>.prg from the Default segment, else the first PRG of those (null: none) */
   files?: { name: string; type: 'prg' | 'bin' | 'd64'; segments: string[]; bytes: Uint8Array | null }[];
   programFile?: string | null;
+  /** (64tass) the processors other than the 6502 the code is written for (.cpu "65816", the command line's --m65816) */
+  cpus?: string[];
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

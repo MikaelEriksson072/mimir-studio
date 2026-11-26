@@ -877,6 +877,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (dbgRef.current || building.current || starting.current) return;
     if (!check) { toast('There is no main file to debug: + makes a source', 'warn'); return; }
     if (!check.ok) { const p = check.problems[0]; toast(`The program does not assemble in Mimir${p ? `: ${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}` : ''}`, 'warn'); if (p?.file && p.line) openFile(p.file, { line: p.line }); return; }
+    if (check.cpus.length) { toast(`The program is written for the ${check.cpus.join(' and ')} (.cpu): Mimir's debugger runs a 6510, as the C64 has`, 'warn'); return; }
     let m: ScriptMachine | AsmC64;
     const c = check;
     if (machineKind === 'c64') {
@@ -1228,8 +1229,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
               <Icon name="play" />{build?.running ? 'Building…' : 'Run'}<kbd>Ctrl+Enter</kbd></button>
             <button className="btn asm-build" disabled={!main || !!build?.running} onClick={() => void doBuild(false)} title={main ? `Build ${main} with ${tool}, without starting it (Ctrl+Shift+B): the PRG goes in out\\ beside it` : 'There is no source to build'}>Build</button>
             <button className="btn asm-release" disabled={!main || !!build?.running} onClick={onRelease} title={main ? `Release: build ${main} and make a disk image (.d64), a tape image (.tap), a cartridge (.crt) or a PRG of it, packed or not, in out\\, and start it in VICE; or write build.bat and build.sh` : 'There is no source to build'}>Release…</button>
-            <button className="btn scr-debug-btn" disabled={!check?.ok} onClick={() => void startDebug()}
+            <button className="btn scr-debug-btn" disabled={!check?.ok || !!check.cpus.length} onClick={() => void startDebug()}
               title={!check?.ok ? 'The program must assemble in Mimir before it can be debugged: see the problems'
+                : check.cpus.length ? `The program is written for the ${check.cpus.join(' and ')} (.cpu): Mimir's debugger runs a 6510, as the C64 has. Run builds it with 64tass`
                 : machineKind === 'c64' ? 'Debug in the whole C64: Sindri\'s C64 with VICE\'s ROMs, the VIC, the CIAs and their interrupts. The program is loaded as LOAD does, started with RUN (or SYS) typed at READY and stopped before its first instruction; then an instruction at a time (F8), over a JSR (F6), or on in the C64\'s own time with the screen live (Ctrl+Enter) to a breakpoint (click left of a line number).'
                 : 'Debug: start the program in Mimir\'s 6510 and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). Memory only: no ROMs or I/O, the KERNAL\'s printing routines are done on the C64 screen (Runs in: Whole C64 has the rest)'}>Debug<kbd>F8</kbd></button>
             <select className="asm-machine" aria-label="Runs in" value={machineKind} onChange={e => ui.setMachine(dir, e.target.value === 'c64' ? 'c64' : 'memory')}

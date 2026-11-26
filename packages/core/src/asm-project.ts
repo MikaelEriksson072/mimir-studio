@@ -10,6 +10,7 @@ import { assembleIn, langIs } from './code-lang';
 import { guessAssembler } from './render/dialect';
 import { parseBasic } from './c64/basic';
 import { importPath } from './verify/kick-subset-assembler';
+import { CPU_OPTIONS } from './verify/tass-cpu';
 import type { DebugSource } from './c64/debugger-dbg';
 import { maskRanges, ScriptMachine, SCRIPT_LIMIT, type ScriptCheck, type ScriptRange, type ScriptRun, type StackEntry } from './script';
 import { SCREEN_C64, SCREEN_ROUTINES, type ScreenSize } from './script-screen';
@@ -182,6 +183,8 @@ export interface AsmCheck {
   fileOf: Uint16Array;
   /** what `.print` printed */
   prints: string[];
+  /** (64tass) the processors other than the 6502 the code is written for (.cpu "65816"): Mimir's 6510 does not run it */
+  cpus: string[];
   asm: AssembleResult;
   /** what a run in Mimir's 6510 takes (ScriptMachine, asmMachine) */
   check: ScriptCheck;
@@ -211,12 +214,20 @@ export function asmArgDefines(lang: ScriptLang, args: readonly string[]): { name
   return out;
 }
 
+/** The processor 64tass's command line sets (the last of --m65816, -x, --m65c02 …; null: none, the 6502) */
+export function asmArgCpu(args: readonly string[]): string | null {
+  let cpu: string | null = null;
+  for (const a of args) if (a in CPU_OPTIONS) cpu = CPU_OPTIONS[a];
+  return cpu;
+}
+
 /** Assemble the program (`main` and what it imports, all in `vfs`) with Mimir's own assembler and check it; `args`:
- *  the assembler's arguments the build gives (their defines are the check's too) */
+ *  the assembler's arguments the build gives (their defines are the check's too, and 64tass's processor) */
 export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang, o: { args?: readonly string[] } = {}): AsmCheck {
   const defines = o.args?.length ? asmArgDefines(lang, o.args) : [];
+  const cpu = lang === '64tass' && o.args?.length ? asmArgCpu(o.args) : null;
   // (Kick Assembler starts the program counter at $2000 until a * = moves it)
-  const asm = assembleIn(langIs(lang), vfs, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }), ...(defines.length ? { defines } : {}) });
+  const asm = assembleIn(langIs(lang), vfs, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }), ...(defines.length ? { defines } : {}), ...(cpu ? { cpu } : {}) });
   const problems: AsmProblem[] = asm.errors.map(e => ({ file: e.file, line: e.line, msg: e.msg }));
   const warnings: AsmProblem[] = (asm.warnings ?? []).map(e => ({ file: e.file, line: e.line, msg: e.msg }));
   const base = main.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') + '.prg';
@@ -244,7 +255,7 @@ export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang, o: { args?: r
     ok, problems: problems.map(p => ({ level: 'error' as const, msg: p.msg, ...(p.line ? { line: p.line } : {}) })), entry, code: ranges, bytes, place: 'own', prints: asm.prints,
     mem, written, lines: asm.lines, starts: asm.starts, ops: asm.ops, labels, uses: [], access: [], actions: [],
   };
-  return { ok, problems, warnings, programFile, entry, entryFrom, ranges, bytes, names, files, fileOf, prints: asm.prints, asm, check };
+  return { ok, problems, warnings, programFile, entry, entryFrom, ranges, bytes, names, files, fileOf, prints: asm.prints, cpus: asm.cpus ?? [], asm, check };
 }
 
 /** where in the sources the byte at `a` comes from (null: no line there) */

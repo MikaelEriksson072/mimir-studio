@@ -3,8 +3,10 @@
  * labels at the start of a line (`name:` or `name`), `name = value`, `name := value`, the anonymous labels `+` and
  * `-` (`bne -`, `.word (+)`), `* = address`, `.logical`/`.here`, `.if`/`.elsif`/`.else`/`.endif`, `.namespace` and
  * `.block` scopes read as `name.label`, `.include`, `.cpu`, `.enc "none"`/`"screen"` (the -a tables), `.byte`,
- * `.word`, `.text`, `.null`, `.fill`, `.binary`, `.comment`/`.endc`, `@w`/`@b` before an operand, every addressing
- * mode of the NMOS 6510 with 64tass's names of the undocumented opcodes (with `.cpu "6502i"`), and the expressions
+ * `.word`, `.text`, `.null`, `.fill`, `.binary`, `.comment`/`.endc`, `@w`/`@b`/`@l` before an operand, every addressing
+ * mode of the NMOS 6510 with 64tass's names of the undocumented opcodes (with `.cpu "6502i"`) and of the 65C02, R65C02,
+ * W65C02 and 65816 (`.cpu "65816"`, tass-cpu.ts: the address's size from `.dpage` and `.databank`, the immediates'
+ * from `.al`/`.xl` or REP/SEP with `.autsiz`), and the expressions
  * it uses: numbers, strings, `*`, `<` and `>` over all of the expression after them (as 64tass: `<label+1` is the
  * low byte of label+1), the arithmetic, bit, shift, comparison and logical operators, `? :`, lists, byte strings
  * indexed, by lists and sliced (`sid[[7, 6]]`, `sid[offset + 2:]`), binary(), len() and format(). Macros: `name
@@ -29,18 +31,20 @@
  * `.eor` over all that is written; `.proc` … `.pend` compiled only where its name is used, `.page` … `.endp`, `.offs`,
  * `.weak` … `.endweak` (a stronger definition wins), `.with`, `.endn`, `.switch`/`.case`/`.default`, `.end`,
  * `.option allow_branch_across_page`, `.binclude`, own encodings (`.encode` … `.endencode`, `.tdef`, `.edef`) and
- * dictionaries (`{1: 15, :0}[x]`, `{.x: 24}.x`); the 65816 and listing directives are taken and do nothing on a 6502.
+ * dictionaries (`{1: 15, :0}[x]`, `{.x: 24}.x`); `random()` and `.seed` as 64tass draws (its xorshift128+), the operators
+ * `x` (repeat) and ` (bank byte); the listing directives are taken and do nothing.
  * Sections: `.dsection name` where the bytes of every `.section name` … `.send` go, as 64tass, nested too; `.byte ?`,
  * `.word ?`, `.addr ?` take room only. Several passes until the sizes settle, as 64tass. The desktop app and the CLI
  * can additionally run the real 64tass.
  * ===================================================================== */
 import type { AsmError, AssembleResult, Vfs } from '../types';
-import { MODE_LEN, OPC, TASS_ENC, type AddrMode } from '../cpu/opcodes';
+import { TASS_ENC } from '../cpu/opcodes';
+import { ACCU_IMM, CPU_BRANCH, CPU_MODE_LEN, CPU_OPTIONS, cpuOp, INDEX_IMM, tassCpu, type CpuMode, type TassCpu } from './tass-cpu';
 import { h4 } from '../util/hex';
 import { importPath, type AssembleOptions } from './kick-subset-assembler';
 
 /** a statement: its label, its body and (`cmt`) the comment after it, which a `* =` line's names its block by */
-interface Stmt { file: string; line: number; src: string; label?: string; body: string; cmt?: string }
+interface Stmt { file: string; line: number; src: string; label?: string; body: string; cmt?: string; bare?: boolean }
 
 type Tok = { t: 'n'; v: number; f?: boolean } | { t: 's'; v: string } | { t: 'id'; v: string } | { t: 'op'; v: string };
 type Node =
@@ -55,7 +59,7 @@ type Value = any;
 
 /** binary operators by precedence (higher binds tighter) */
 const BIN: Record<string, number> = {
-  '||': 1, '^^': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6, '<': 6, '<=': 6, '>': 6, '>=': 6, '<<': 7, '>>': 7, '+': 8, '-': 8, '*': 9, '/': 9, '%': 9, '**': 10,
+  '||': 1, '^^': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6, '<': 6, '<=': 6, '>': 6, '>=': 6, '<<': 7, '>>': 7, '+': 8, '-': 8, '*': 9, '/': 9, '%': 9, x: 9, '**': 10,
 };
 
 /** the character tables of `.enc "none"` and `.enc "screen"` with -a (measured with 64tass 1.57.2900, every printable
@@ -79,8 +83,6 @@ const ENCODINGS: Record<string, (c: string) => number | null> = {
   },
 };
 
-const IMPLIED_ACC = new Set(['ASL', 'LSR', 'ROL', 'ROR']);
-const BRANCH = new Set(['BPL', 'BMI', 'BVC', 'BVS', 'BCC', 'BCS', 'BNE', 'BEQ']);
 /** the namespace a `.namespace` or `.block` label (or a macro call's) stands for, and the address where it starts */
 interface Space { space: string; v?: number }
 /** a macro (`.macro`: a block of its own; `.segment`: none): its parameters with their defaults and its lines */
@@ -127,6 +129,31 @@ function splitTop(s: string, sep: string): string[] {
   }
   if (cur.trim() || out.length) out.push(cur.trim());
   return out;
+}
+
+/** where the bracket opening at `i` closes (outside strings), or -1 */
+function closer(s: string, i: number): number {
+  let depth = 0, q = '';
+  for (let k = i; k < s.length; k++) {
+    const c = s[k];
+    if (q) { if (c === q) q = ''; continue; }
+    if (c === '"' || c === "'") { q = c; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if ((c === ')' || c === ']' || c === '}') && --depth === 0) return k;
+  }
+  return -1;
+}
+/** how an instruction's operand is taken: from the direct page or data bank 64tass is set to (`auto`), as it is written
+ *  (`#n,d`, `#n,b`, `#n,s`), as a jump's address in its program bank (`k`), or as an address in bank 0 (`jmp ($1234)`) */
+type How = 'auto' | 'as-is' | 'k' | 'bank0';
+/** an instruction's operand as 64tass reads it: `(`…`)` or `[`…`]` around all of it (or before `,y`), the parts inside
+ *  split at the commas, and those after it; `($12)+1` is an expression */
+function operandOf(arg: string): { br: '' | '(' | '['; inner: string[]; after: string[] } {
+  if (arg[0] === '(' || arg[0] === '[') {
+    const j = closer(arg, 0), rest = j > 0 ? arg.slice(j + 1).trim() : null;
+    if (rest != null && (!rest || rest[0] === ',')) return { br: arg[0] as '(' | '[', inner: splitTop(arg.slice(1, j), ','), after: rest ? splitTop(rest.slice(1), ',').map(x => x.toLowerCase()) : [] };
+  }
+  return { br: '', inner: splitTop(arg, ','), after: [] };
 }
 
 /** the line without its comment (`;` outside strings) */
@@ -177,14 +204,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const parseLine = (raw: string, path: string, no: number): Stmt => {
     const line = stripComment(raw).replace(/\s+$/, '');
     const cmt = raw.slice(stripComment(raw).length).replace(/^;\s*/, '').trim();
-    let label: string | undefined, rest = line;
+    let label: string | undefined, rest = line, bare = false;
     if (line && !/^\s/.test(line)) {
       // at the start of a line: a label (`name:`, `name`, `+`, `-`), else `*` or a directive
-      // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1` at the start of a line)
+      // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1` at the start of a line; one only
+      // another processor has is looked at again where it is run: `bare`, a label without its colon)
       const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=)/);
-      if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) { label = m[1]; rest = line.slice(m[0].length); }
+      if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) { label = m[1]; rest = line.slice(m[0].length); bare = !m[2] && /^[a-z]{3}$/.test(m[1]); }
     }
-    return { file: path, line: no, src: raw, ...(label ? { label } : {}), body: rest.trim(), ...(cmt ? { cmt } : {}) };
+    return { file: path, line: no, src: raw, ...(label ? { label } : {}), body: rest.trim(), ...(cmt ? { cmt } : {}), ...(bare ? { bare } : {}) };
   };
   const loadFile = (path: string, depth: number) => {
     const src = vfs[path];
@@ -327,7 +355,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       const three = s.slice(i, i + 3), two = s.slice(i, i + 2);
       if (['<=>'].includes(three)) { out.push({ t: 'op', v: three }); i += 3; continue; }
       if (['<<', '>>', '==', '!=', '<=', '>=', '&&', '||', '^^', '**'].includes(two)) { out.push({ t: 'op', v: two }); i += 2; continue; }
-      if ('+-*/%&|^<>(),.!~?:[]{}'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
+      if ('+-*/%&|^<>(),.!~?:[]{}`'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
       throw new Error(`unexpected "${c}" in expression "${s}"`);
     }
     return out;
@@ -374,7 +402,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         return post({ k: 'list', items });
       }
       // `<` and `>` take all of the expression after them (64tass: `<label+10` is `<(label+10)`)
-      if (t.v === '<' || t.v === '>') return { k: 'u', op: t.v, a: full() };
+      if (t.v === '<' || t.v === '>' || t.v === '`') return { k: 'u', op: t.v, a: full() };
       if (t.v === '~' || t.v === '!') return { k: 'u', op: t.v, a: primary() };
       throw new Error(`unexpected "${t.v}" in "${s}"`);
     };
@@ -402,8 +430,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       let left = primary();
       for (;;) {
         const t = peek();
-        if (!t || t.t !== 'op' || !BIN[t.v] || BIN[t.v] < minP) break;
-        next(); const right = expr(t.v === '**' ? BIN[t.v] : BIN[t.v] + 1); left = { k: 'b', op: t.v, a: left, b: right };
+        // (`x`, the repeat, is a word with spaces around it: [0] x 8)
+        const o = t?.t === 'id' && t.v === 'x' ? 'x' : t?.t === 'op' ? t.v : null;
+        if (!o || !BIN[o] || BIN[o] < minP) break;
+        next(); const right = expr(o === '**' ? BIN[o] : BIN[o] + 1); left = { k: 'b', op: o, a: left, b: right };
       }
       return left;
     };
@@ -424,7 +454,30 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   let pc = 0, unresolved: string[] = [], missing = false;
   /** a loop went round too many times: no more passes before the final one, which says so */
   let stuck = false;
-  let enc = 'none', cpu = '6502';
+  let enc = 'none';
+  // the processor (.cpu, or the command line's), and the 65816's: the direct page and data bank addresses are chosen in
+  // (null: none), the accumulator's and index registers' immediates 16 bits, REP/SEP setting those (.autsiz)
+  const cpu0: TassCpu = (opts.cpu && tassCpu(opts.cpu)) || '6502';
+  let cpu: TassCpu = cpu0, dpage: number | null = 0, databank: number | null = 0, longaccu = false, longindex = false, autosize = false;
+  /** the processors other than the 6502 the code is written for (.cpu), in the order they came */
+  const cpusUsed: TassCpu[] = [];
+  /** 64tass's pseudo random numbers (xorshift128+), started again each pass as 64tass does; .seed sets them */
+  const SEED: [bigint, bigint] = [0x5229a30f996ad7ebn, 0xc03bbc753f671f6fn], M64 = (1n << 64n) - 1n;
+  let rng: [bigint, bigint] = [...SEED];
+  const reseed = (v: bigint) => {
+    rng = [...SEED];
+    const d = (i: number) => (v >> BigInt(32 * i)) & 0xffffffffn;
+    rng[0] ^= d(0) | (d(1) << 32n); rng[1] ^= d(2) | (d(3) << 32n);
+  };
+  const random64 = (): bigint => {
+    let a = rng[0]; const b = rng[1];
+    rng[0] = b; a ^= (a << 23n) & M64; a ^= a >> 17n; a ^= b ^ (b >> 26n); rng[1] = a;
+    return (a + b) & M64;
+  };
+  const warnings: AsmError[] = [];
+  /** what the check says of a processor that is not the C64's */
+  const cpuNote = (c: TassCpu) => (c === '65816' ? 'The 65816\'s instructions run on a SuperCPU (VICE\'s xscpu64), not on the C64\'s 6510: Mimir\'s debugger and x64sc run a 6510'
+    : `The ${c.toUpperCase()}'s instructions do not run on the C64's 6510 (Mimir's debugger and VICE's x64sc run a 6510)`);
   const names = opts.names;
   let curStmt: Stmt | null = null;
   const external = new Map<string, number>();
@@ -471,6 +524,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const fnum = (v: Value): number => (isFlt(v) ? v.f : typeof v === 'number' ? v : numberOf(v));
   /** a function of one value, over a list each item's */
   const each = (f: (x: Value) => Value) => { const g = (x: Value): Value => (Array.isArray(x) ? x.map(g) : f(x)); return g; };
+  /** a function over its arguments as 64tass broadcasts one: the lists' elements in turn (a list of one with each of the
+   *  others' elements), the other arguments as they are */
+  const broadcast = (args: Value[], f: (x: Value[]) => Value): Value => {
+    const lists = args.filter((a): a is Value[] => Array.isArray(a));
+    if (!lists.length) return f(args);
+    const n = Math.max(...lists.map(l => l.length));
+    if (lists.some(l => l.length !== n && l.length !== 1)) throw new Error('lists of different lengths can\'t be broadcast');
+    return Array.from({ length: n }, (_, i) => broadcast(args.map(a => (Array.isArray(a) ? a[a.length === 1 ? 0 : i] : a)), f));
+  };
   /** a float's function (its result a float), and one that keeps an integer an integer */
   const fl = (g: (x: number) => number) => each(x => new Flt(g(fnum(x))));
   const keep = (g: (x: number) => number) => each(x => (isFlt(x) ? new Flt(g(x.f)) : g(fnum(x))));
@@ -491,6 +553,22 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     },
     len: (x: Value) => { if (x instanceof Uint8Array || typeof x === 'string' || Array.isArray(x)) return x.length; throw new Error(`len() of a ${typeName(x)}`); },
     format: (f: string, ...args: Value[]) => format(f, args),
+    // random(): a float 0 <= x < 1; random(e), random(s, e), random(s, e, t) an integer, as 64tass draws it (over lists
+    // each element's in turn)
+    random: (...a: Value[]) => broadcast(a, (x: Value[]) => {
+      if (!x.length) return new Flt(Number(random64() & ((1n << 53n) - 1n)) * 2 ** -53);
+      const [st, en, step] = x.length === 1 ? [0, numberOf(x[0]), 1] : [numberOf(x[0]), numberOf(x[1]), x[2] == null ? 1 : numberOf(x[2])];
+      if (!step) throw new Error('random() with a step of 0');
+      let e = en;
+      const n = step > 0 ? (e < st ? (e = st, 0) : Math.floor((e - st + step - 1) / step)) : (e > st ? (e = st, 0) : Math.floor((st - e - step - 1) / -step));
+      if (!n) throw new Error('random() of an empty range');
+      if (step !== 1 || (n & (n - 1)) !== 0) {
+        const U = 0xffffffffn, q = U / BigInt(n), lim = q * BigInt(n);
+        let r: bigint; do r = random64() & U; while (r >= lim);
+        return st + Number(r / q) * step;
+      }
+      return st + Number(random64() & BigInt(n - 1));
+    }),
     range: (...a: Value[]) => {
       const [s, e, t] = a.length === 1 ? [0, numberOf(a[0]), 1] : [numberOf(a[0]), numberOf(a[1]), a[2] == null ? 1 : numberOf(a[2])];
       if (!t) throw new Error('range() with a step of 0');
@@ -595,7 +673,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (Array.isArray(v)) return each(x => (isFlt(x) && (node.op === '-' || node.op === '+') ? new Flt(node.op === '-' ? -x.f : x.f) : ev({ k: 'u', op: node.op, a: { k: 'n', v: numberOf(x) } })))(v);
         if (isFlt(v) && (node.op === '-' || node.op === '+')) return new Flt(node.op === '-' ? -v.f : v.f);
         const n = numberOf(v);
-        return node.op === '<' ? n & 0xff : node.op === '>' ? (n >> 8) & 0xff : node.op === '~' ? ~n : node.op === '+' ? n : -n;
+        return node.op === '<' ? n & 0xff : node.op === '>' ? (n >> 8) & 0xff : node.op === '`' ? (n >> 16) & 0xff : node.op === '~' ? ~n : node.op === '+' ? n : -n;
       }
       case 'b': {
         if (node.op === '&&' || node.op === '||') {
@@ -611,6 +689,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   };
   /** a binary operator's value: over a list, a list of each item's (two lists item by item) */
   const bin = (op: string, x: Value, y: Value): Value => {
+    // x n: a list, a string or bytes repeated n times
+    if (op === 'x') {
+      const n = numberOf(y);
+      if (n < 0) throw new Error(`repeat ${n} times`);
+      if (Array.isArray(x)) return Array.from({ length: n * x.length }, (_, i) => x[i % x.length]);
+      if (typeof x === 'string') return x.repeat(n);
+      if (x instanceof Uint8Array) { const o = new Uint8Array(x.length * n); for (let i = 0; i < n; i++) o.set(x, i * x.length); return o; }
+      throw new Error(`a ${typeName(x)} can't be repeated`);
+    }
     if (Array.isArray(x) || Array.isArray(y)) {
       if (Array.isArray(x) && Array.isArray(y) && x.length !== y.length) throw new Error(`lists of ${x.length} and ${y.length} values`);
       const n = Array.isArray(x) ? x.length : y.length;
@@ -683,7 +770,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const emit = (b: number, st: Stmt) => {
     b = (b ^ eorVal) & 0xff;
     if (virt.length) { fresh = false; pc++; return; }
-    const a = pc - off;
+    // (the 65816's addresses go round in 64 KiB in the PRG, as 64tass writes it: * = $018000 is at $8000)
+    const a = cpu === '65816' ? (pc - off) & 0xffff : pc - off;
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
     if (written[a] && pass === 'final' && !aggs.some(x => x.kind === 'union')) E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
@@ -703,7 +791,11 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
 
   const runPass = (final: boolean) => {
     mem = new Uint8Array(0x10000); written = new Uint8Array(0x10000); blocks = [];
-    pc = opts.pc ?? 0; off = 0; outer = []; enc = 'none'; cpu = '6502'; unresolved = []; missing = false; first = -1; spaces = []; scope = '';
+    pc = opts.pc ?? 0; off = 0; outer = []; enc = 'none'; unresolved = [];
+    cpu = cpu0; dpage = 0; databank = 0; longaccu = false; longindex = false; autosize = false; rng = [...SEED]; cpusUsed.length = 0; warnings.length = 0;
+    if (cpu0 !== '6502' && cpu0 !== '6502i') { cpusUsed.push(cpu0); if (final) warnings.push({ file: entryPath, line: 0, msg: `${cpuNote(cpu0)} (the arguments ask for it)` }); }
+    if (opts.cpu && !tassCpu(opts.cpu) && final) E(`the arguments ask for the ${opts.cpu}: Mimir's check knows the 6502, 6502i, 65c02, r65c02, w65c02 and 65816 (64tass builds the others)`);
+    missing = false; first = -1; spaces = []; scope = '';
     anonPrev = anon; anon = [];
     let changed = false;
     const defs = new Set<string>();
@@ -860,7 +952,14 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       return scopes;
     };
 
-    const runList = (list: readonly Stmt[]): void => { for (let ix = 0; ix < list.length; ix++) { const st = list[ix];
+    /** a line starting with a word that is a mnemonic of the processor now (one 64tass's 6502 has not: `phx` on the
+     *  65816, an alias such as `bge`) without a colon: that instruction, as 64tass reads it, else the label it was */
+    const asInstruction = (st: Stmt): Stmt => {
+      if (!st.bare || !st.label || /^(\.|:?=)/.test(st.body) || !cpuOp(cpu, st.label.toUpperCase())) return st;
+      const { label, bare: _, ...rest } = st;
+      return { ...rest, body: `${label} ${st.body}`.trim() };
+    };
+    const runList = (list: readonly Stmt[]): void => { for (let ix = 0; ix < list.length; ix++) { const st = asInstruction(list[ix]);
       if (ended) return;
       curStmt = st; fresh = true;
       const s = st.body;
@@ -1066,8 +1165,29 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if ((m = s.match(/^\.eor\s+(.+)$/))) { const v = evn(m[1]); report(st); eorVal = (v ?? 0) & 0xff; continue; }
         if (/^\.end$/.test(s)) { ended = true; return; }
         if ((m = s.match(/^\.option\s+([A-Za-z_]\w*)\s*=\s*(.+)$/))) { const v = ev(P(m[2])); report(st); if (m[1] === 'allow_branch_across_page' && v != null) branchAcross = truth(v); continue; }
-        // (65816, listing and TASM directives that change nothing on a 6502)
-        if (/^\.(al|as|xl|xs|autsiz|mansiz|proff|pron|hidemac|showmac)$/.test(s) || /^\.(dpage|databank|seed|assert|check)\b/.test(s)) continue;
+        // the 65816's: the accumulator's and index registers' immediates 8 or 16 bits, set by REP and SEP or not
+        if ((m = s.match(/^\.(al|as|xl|xs|autsiz|mansiz)$/))) { if (m[1] === 'al' || m[1] === 'as') longaccu = m[1] === 'al'; else if (m[1] === 'xl' || m[1] === 'xs') longindex = m[1] === 'xl'; else autosize = m[1] === 'autsiz'; continue; }
+        // .dpage a, .databank b: the 256 bytes direct page addresses are in, the 64 KiB data bank (? none); every processor
+        if ((m = s.match(/^\.(dpage|databank)\s+(.+)$/))) {
+          const none = m[2].trim() === '?', v = none ? null : evn(m[2]); report(st);
+          if (!none && v == null) continue;
+          if (m[1] === 'dpage') dpage = v == null ? null : v & 0xffff; else databank = v == null ? null : v & 0xff;
+          continue;
+        }
+        // .seed n: random() draws another sequence
+        if ((m = s.match(/^\.seed\s+(.+)$/))) {
+          // (a number written out is read with all its bits: a seed has up to 128)
+          const lit = m[1].trim().replace(/_/g, '').match(/^(?:\$([0-9a-f]+)|%([01]+)|(\d+))$/i);
+          if (lit) { reseed(BigInt(lit[1] ? `0x${lit[1]}` : lit[2] ? `0b${lit[2]}` : lit[3])); continue; }
+          const v = ev(P(m[1])); report(st);
+          if (v == null) continue;
+          const n = typeof v === 'number' || isFlt(v) ? numberOf(v) : null;
+          if (n == null || n < 0) { E('.seed needs an unsigned integer', st); continue; }
+          reseed(BigInt(n));
+          continue;
+        }
+        // (listing and TASM directives that change nothing here)
+        if (/^\.(proff|pron|hidemac|showmac)$/.test(s) || /^\.(assert|check)\b/.test(s)) continue;
         // a namespace opened again by its name (`.namespace bank03`: a bank's next chip)
         if ((m = s.match(/^\.namespace\s+(.+)$/))) {
           const v = ev(P(m[1])); report(st);
@@ -1110,7 +1230,19 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if ((m = s.match(/^\.logical\s+(.+)$/))) { const v = evn(m[1]); report(st); outer.push(off); if (v != null) { off += v - pc; pc = v; } continue; }
         if (/^\.(here|endlogical)$/.test(s)) { if (!outer.length) { E(`${s} without .logical`, st); continue; } const was = outer.pop()!; pc -= off - was; off = was; continue; }
         if ((m = s.match(/^\.enc\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') enc = v; else if (isEnc(v)) enc = v.name; report(st); continue; }
-        if ((m = s.match(/^\.cpu\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') cpu = v === 'default' ? '6502' : v; continue; }
+        // .cpu "name": the instructions of that processor from here ("default": the command line's)
+        if ((m = s.match(/^\.cpu\s+(.+)$/))) {
+          const v = ev(P(m[1])); report(st);
+          if (typeof v !== 'string') continue;
+          const c = v === 'default' ? cpu0 : tassCpu(v);
+          if (!c) { E(`.cpu "${v}": Mimir's check knows the 6502, 6502i, 65c02, r65c02, w65c02 and 65816 (64tass builds the others)`, st); continue; }
+          cpu = c;
+          if (c !== '6502' && c !== '6502i' && !cpusUsed.includes(c)) {
+            cpusUsed.push(c);
+            if (final) warnings.push({ file: st.file, line: st.line, msg: cpuNote(c) });
+          }
+          continue;
+        }
         // .align n: on to the next multiple of n, the gap not written (as 64tass leaves it); .align n, v fills it with v
         if ((m = s.match(/^\.align\b\s*(.*)$/))) {
           const [na, fa] = splitTop(m[1], ',').map(a => a.trim());
@@ -1182,44 +1314,119 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           continue;
         }
         // an instruction: its mnemonic (lower case with -C), then the operand
-        if ((m = s.match(/^([a-z]{3})(?:\s+(.*))?$/)) && TASS_ENC[m[1].toUpperCase()]) {
-          const mn = m[1].toUpperCase(), modes = TASS_ENC[mn]!;
-          let arg = (m[2] || '').trim(), force: 'w' | 'b' | '' = '';
+        if ((m = s.match(/^([a-z]{3})(?:\s+(.*))?$/)) && (cpuOp(cpu, m[1].toUpperCase()) || TASS_ENC[m[1].toUpperCase()])) {
+          const found = cpuOp(cpu, m[1].toUpperCase());
+          if (!found) { E(cpu === '6502' && cpuOp('6502i', m[1].toUpperCase()) ? `${m[1]} is an undocumented opcode: it needs .cpu "6502i"` : `${m[1]} is not an instruction of the ${cpu}`, st); continue; }
+          const { mn, modes } = found, at = pc;
+          let arg = (m[2] || '').trim(), force: 'b' | 'w' | 'l' | '' = '';
           const f = arg.match(/^@([wbl])\s*(.*)$/);
-          if (f) { force = f[1] === 'b' ? 'b' : 'w'; arg = f[2].trim(); }
-          let mode: string, ex: string | null = null;
-          if (!arg || (arg === 'a' && IMPLIED_ACC.has(mn))) mode = IMPLIED_ACC.has(mn) ? 'acc' : 'imp';
-          else if (arg[0] === '#') { mode = 'imm'; ex = arg.slice(1); }
-          else if ((m = arg.match(/^\((.+),\s*x\s*\)$/))) { mode = 'izx'; ex = m[1]; }
-          else if ((m = arg.match(/^\((.+)\)\s*,\s*y$/))) { mode = 'izy'; ex = m[1]; }
-          else if ((m = arg.match(/^\((.+)\)$/)) && mn === 'JMP') { mode = 'ind'; ex = m[1]; }
-          else if ((m = arg.match(/^(.+),\s*([xy])$/))) { ex = m[1]; mode = m[2]; }
-          else { ex = arg; mode = 'plain'; }
-          // (a function's argument written #1 is immediate: lda value is lda #1)
-          const raw = ex != null ? ev(P(ex)) : null;
-          if (isImm(raw) && mode === 'plain') mode = 'imm';
-          const v = raw == null ? null : numberOf(raw);
-          if (BRANCH.has(mn)) mode = 'rel';
-          else if (mode === 'plain' || mode === 'x' || mode === 'y') {
-            const suf = mode === 'plain' ? '' : mode;
-            const zpOk = modes[('zp' + suf) as AddrMode] !== undefined, absOk = modes[('ab' + (suf || 's')) as AddrMode] !== undefined;
-            const wantZp = force === 'b' || (force !== 'w' && v != null && v >= 0 && v < 0x100);
-            mode = (wantZp && zpOk) ? 'zp' + suf : absOk ? (suf ? 'ab' + suf : 'abs') : 'zp' + suf;
+          if (f) { force = f[1] as 'b' | 'w' | 'l'; arg = f[2].trim(); }
+          const has = (x: CpuMode | null): x is CpuMode => x != null && modes[x] !== undefined;
+          const val = (src: string): number | null => { const r = ev(P(src)); return r == null ? null : numberOf(r); };
+          const hex = (n: number) => `$${n.toString(16).padStart(n > 0xffff ? 6 : n > 0xff ? 4 : 2, '0')}`;
+          /** the mode, the operand's value, and how it is taken: from the direct page or data bank 64tass is set to,
+           *  as it is (`#n,d`, `#n,b`, `#n,s`), or as an address the jump's program bank must have */
+          let mode: CpuMode | null = null, v: number | null = null, how: How = 'auto', op: number | undefined;
+          /** the bytes after it: mvn/mvp's banks, a bit instruction's direct page */
+          let tail: (number | null)[] = [], bitNo: number | null = null;
+          const isJump = mn === 'JMP' || mn === 'JSR';
+          if (!arg || (arg === 'a' && has('acc'))) mode = arg === 'a' || !has('imp') ? 'acc' : 'imp';
+          else if (has('move')) {
+            const parts = splitTop(arg, ',');
+            if (parts.length !== 2) { E(`${m[1]} needs two banks (${m[1]} #source, #destination)`, st); continue; }
+            const [src, dst] = parts.map(p => val(p.replace(/^#/, '')));
+            mode = 'move'; tail = [dst, src];
+          } else if (has('bit') || has('bitrel')) {
+            const parts = splitTop(arg, ',');
+            if (parts.length !== (has('bit') ? 2 : 3)) { E(`${m[1]} needs ${has('bit') ? 'a bit and an address (rmb 7,$20)' : 'a bit, an address and where to branch (bbs 7,$20,label)'}`, st); continue; }
+            bitNo = val(parts[0]); mode = has('bit') ? 'bit' : 'bitrel'; tail = [val(parts[1])];
+            if (mode === 'bitrel') v = val(parts[2]);
+          } else {
+            const o = operandOf(arg), sfx = o.inner.slice(1).map(x => x.toLowerCase());
+            const key = `${o.br}E${sfx.map(x => `,${x}`).join('')}${o.br === '(' ? ')' : o.br === '[' ? ']' : ''}${o.after.map(x => `,${x}`).join('')}`;
+            const e0 = o.inner[0] ?? '';
+            if (key === 'E' && e0.startsWith('#')) { mode = 'imm'; v = val(e0.slice(1)); }
+            else {
+              // (#n is written in the forms that take n as it is: lda #1,s, lda (#$12,d),y)
+              if (e0.startsWith('#') && !/,[sbdk]/.test(key)) { E(`general syntax: ${s}`, st); continue; }
+              const raw = ev(P(e0.replace(/^#/, '')));
+              v = raw == null ? null : numberOf(raw);
+              const jump = isJump || mn === 'JML', x = v;
+              /** a plain address's mode (x or y indexed): the direct page when it is in it, else the data bank's, else long */
+              const pick = (suf: '' | 'x' | 'y'): CpuMode | null => {
+                const dpM = `dp${suf}` as CpuMode, abM = (suf ? `ab${suf}` : 'abs') as CpuMode, lgM: CpuMode | null = suf === 'y' ? null : suf ? 'longx' : 'long';
+                if (force === 'b') return has(dpM) ? dpM : null;
+                if (force === 'w') return has(abM) ? abM : null;
+                if (force === 'l') return has(lgM) ? lgM : null;
+                if (x == null) return has(abM) ? abM : has(lgM) ? lgM : has(dpM) ? dpM : null;
+                if (has(dpM) && dpage != null && x >= dpage && x - dpage <= 0xff) return dpM;
+                if (has(abM) && databank != null && Math.floor(x / 0x10000) === databank) return abM;
+                if (has(lgM)) return lgM;
+                return has(abM) ? abM : has(dpM) ? dpM : null;
+              };
+              const forms: Record<string, () => [CpuMode | null, How?]> = {
+                // (a function's argument written #1 is immediate: lda value is lda #1)
+                E: () => (isImm(raw) || mn === 'PEA' ? ['imm'] : CPU_BRANCH.has(mn) ? ['rel'] : has('rell') ? ['rell']
+                  : isJump ? [force === 'l' ? null : 'abs', 'k'] : mn === 'JML' || mn === 'JSL' ? ['long'] : [pick('')]),
+                'E,x': () => [pick('x')], 'E,y': () => [pick('y')], 'E,s': () => ['sr', 'as-is'],
+                'E,b': () => ['abs', 'as-is'], 'E,b,x': () => ['abx', 'as-is'], 'E,b,y': () => ['aby', 'as-is'],
+                'E,d': () => ['dp', 'as-is'], 'E,d,x': () => ['dpx', 'as-is'], 'E,d,y': () => ['dpy', 'as-is'], 'E,k': () => ['abs', 'as-is'],
+                '(E)': () => (jump ? ['absi', 'bank0'] : ['dpi']), '(E,x)': () => (jump ? ['absix', 'k'] : ['dpix']),
+                '(E),y': () => ['dpiy'], '(E,s),y': () => ['sriy', 'as-is'],
+                '(E,d)': () => ['dpi', 'as-is'], '(E,d,x)': () => ['dpix', 'as-is'], '(E,d),y': () => ['dpiy', 'as-is'], '(E,k,x)': () => ['absix', 'as-is'],
+                '[E]': () => (jump ? ['absil', 'bank0'] : ['dpil']), '[E],y': () => ['dpily'], '[E,d]': () => ['dpil', 'as-is'], '[E,d],y': () => ['dpily', 'as-is'],
+              };
+              const form = forms[key];
+              if (!form) { E(`general syntax: ${s}`, st); continue; }
+              const [fm, fh] = form();
+              mode = fm; how = fh ?? 'auto';
+            }
           }
-          const op = modes[mode as AddrMode];
-          if (op === undefined) { E(`not a valid addressing mode for ${mn.toLowerCase()} (${mode})`, st); continue; }
-          if (OPC[op].ill && cpu !== '6502i') { E(`${mn.toLowerCase()} is an undocumented opcode: it needs .cpu "6502i"`, st); continue; }
+          op = mode ? modes[mode as CpuMode] : undefined;
+          if (mode === 'bit' || mode === 'bitrel') op = op! + ((bitNo ?? 0) & 7) * 16;
+          if (op === undefined) {
+            E(cpu === '6502' && cpuOp('6502i', mn)?.modes[mode as CpuMode] !== undefined ? `${m[1]} is an undocumented opcode: it needs .cpu "6502i"`
+              : `no ${force === 'l' ? 'long sized ' : ''}${mode ? `${mode} ` : ''}addressing mode for opcode '${m[1]}'`, st);
+            continue;
+          }
+          const md = mode as CpuMode;
+          // the immediate's size: 16 bits for the 65816's accumulator (.al) or index registers (.xl), PEA's always
+          const wide = md === 'imm' && (mn === 'PEA' || force === 'w' || (force !== 'b' && cpu === '65816' && ((ACCU_IMM.has(mn) && longaccu) || (INDEX_IMM.has(mn) && longindex))));
+          // the operand as it is written in the instruction, and whether it fits
+          let n = v ?? 0, bad = '';
+          const dpClass = /^dp/.test(md), absClass = md === 'abs' || md === 'abx' || md === 'aby' || md === 'absi' || md === 'absix' || md === 'absil';
+          if (v != null) {
+            if (md === 'imm') { if (wide ? v < -32768 || v > 0xffff : v < -128 || v > 0xff) bad = `too large for a ${wide ? 16 : 8} bit unsigned integer '${v}'`; }
+            else if (md === 'sr' || md === 'sriy') { if (v < 0 || v > 0xff) bad = `too large for a 8 bit unsigned integer '${v}'`; }
+            else if (dpClass) {
+              if (how !== 'as-is') { if (dpage == null || v < dpage || v - dpage > 0xff) bad = `not a direct page address '${hex(v)}'`; else n = v - dpage; }
+              else if (v < 0 || v > 0xff) bad = `too large for a 8 bit unsigned integer '${v}'`;
+            } else if (absClass) {
+              if (how === 'as-is' || how === 'bank0') { if (v < 0 || v > 0xffff) bad = `too large for a 16 bit unsigned integer '${v}'`; }
+              else if (how === 'k') { if (Math.floor(v / 0x10000) !== Math.floor(at / 0x10000)) bad = cpu === '65816' ? `address in different program bank '${hex(v)}'` : `too large for a 16 bit unsigned integer '${v}'`; }
+              else if (databank == null || Math.floor(v / 0x10000) !== databank) bad = cpu === '65816' || databank !== 0 ? `not a data bank address '${hex(v)}'` : `too large for a 16 bit unsigned integer '${v}'`;
+              n = v & 0xffff;
+            } else if (md === 'long' || md === 'longx') { if (v < 0 || v > 0xffffff) bad = `too large for a 24 bit unsigned integer '${v}'`; }
+          }
+          if (final && bad) E(bad, st);
           emit(op, st);
           if (pass === 'final' && mine(site(st)) && !virt.length) ops[(pc - off - 1) & 0xffff] = 1;
-          const len = MODE_LEN[mode as AddrMode];
-          if (mode === 'rel') {
-            const o = v == null ? 0 : v - (pc + 1);
+          const bytes = (x: number, k: number) => { for (let i = 0; i < k; i++) emit((x >> (8 * i)) & 0xff, st); };
+          if (md === 'rel' || md === 'bitrel') {
+            if (md === 'bitrel') { const d = tail[0]; if (final && d != null && (dpage == null || d < dpage || d - dpage > 0xff)) E(`not a direct page address '${hex(d)}'`, st); bytes((d ?? 0) - (dpage ?? 0), 1); }
+            const nx = pc + 1, o = v == null ? 0 : v - nx;
             if (final && (o < -128 || o > 127)) E(`branch too far (${o})`, st);
-            const nx = pc + 1;
-            if (final && !branchAcross && v != null && (nx & 0xff00) !== (v & 0xff00)) { const by = v > nx ? v - (nx | 0xff) : v - (nx & 0xff00); E(`branch crosses page by ${by > 0 ? '+' : ''}${by} bytes`, st); }
-            emit(o & 0xff, st);
-          } else if (len === 2) { if (final && v != null && (v < -128 || v > 255)) E(`too large for a 8 bit unsigned integer '${v}'`, st); emit(v ?? 0, st); }
-          else if (len === 3) { if (final && v != null && (v < 0 || v > 0xffff)) E(`too large for a 16 bit unsigned integer '${v}'`, st); emit((v ?? 0) & 0xff, st); emit(((v ?? 0) >> 8) & 0xff, st); }
+            if (final && md === 'rel' && !branchAcross && v != null && (nx & 0xff00) !== (v & 0xff00)) { const by = v > nx ? v - (nx | 0xff) : v - (nx & 0xff00); E(`branch crosses page by ${by > 0 ? '+' : ''}${by} bytes`, st); }
+            bytes(o, 1);
+          } else if (md === 'rell') bytes(v == null ? 0 : v - (pc + 2), 2);
+          else if (md === 'move') { for (const b of tail) { if (final && b != null && (b < 0 || b > 0xff)) E(`too large for a 8 bit unsigned integer '${b}'`, st); bytes(b ?? 0, 1); } }
+          else if (md === 'bit') { const d = tail[0]; if (final && d != null && (dpage == null || d < dpage || d - dpage > 0xff)) E(`not a direct page address '${hex(d)}'`, st); bytes((d ?? 0) - (dpage ?? 0), 1); }
+          else bytes(n, md === 'imm' ? (wide ? 2 : 1) : CPU_MODE_LEN[md]);
+          // .autsiz: REP and SEP set the immediates' sizes
+          if (cpu === '65816' && autosize && md === 'imm' && v != null && (mn === 'REP' || mn === 'SEP')) {
+            if (v & 0x20) longaccu = mn === 'REP';
+            if (v & 0x10) longindex = mn === 'REP';
+          }
           report(st);
           continue;
         }
@@ -1251,5 +1458,5 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
   // the memory map: each `* =` with a name as its comment (`* = $0810 ; Code`), to the next one
   const blockList = blocks.filter(b => b.name).map((b, i, arr) => ({ start: b.start, name: b.name, end: i + 1 < arr.length ? arr[i + 1].start - 1 : max }));
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops, linePcs, endPc, ...(fileOf ? { fileOf, fileNames } : {}) };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops, linePcs, endPc, ...(fileOf ? { fileOf, fileNames } : {}), warnings: [...warnings], ...(cpusUsed.length ? { cpus: [...cpusUsed] } : {}) };
 }

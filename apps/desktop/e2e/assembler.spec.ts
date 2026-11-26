@@ -1184,3 +1184,47 @@ test('the Assembler project\'s settings: its button opens them in Settings, -def
   await expect.poll(() => JSON.parse(readFileSync(join(dir, 'defines.mimir.json'), 'utf8')).asm).toEqual({ lang: 'kickass' });
   await closeProject(page, 'defines');
 });
+
+test('the 65816 in an Assembler project in 64tass: Mimir\'s check writes its instructions as 64tass does, says they need a SuperCPU, Debug waits, Build gives the same program', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'scpu');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [
+    '        * = $0801',
+    '        .word (+), 2026',
+    '        .null $9e, format("%4d", start)',
+    '+       .word 0',
+    '        .cpu "65816"',
+    '        .autsiz',
+    'start   clc',
+    '        xce',
+    '        rep #$30',
+    '        lda #$1234',
+    '        sta $d020',
+    '        lda $123456,x',
+    '        sep #$30',
+    '        lda #random(256)',
+    '        sec',
+    '        xce',
+    '        rts',
+    '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  // 12 bytes of BASIC line, then 1+1+2+3+3+4+2+2+1+1+1
+  await expect(problems).toContainText('The program assembles: 33 bytes');
+  await expect(problems).toContainText('SuperCPU');
+  const debug = page.locator('.scr-debug-btn');
+  await expect(debug).toBeDisabled();
+  await expect(debug).toHaveAttribute('title', /written for the 65816/);
+  await shot(page, '32-asm-65816');
+  // the real 64tass builds the same bytes
+  await page.getByRole('button', { name: 'Build', exact: true }).click();
+  await expect(page.locator('.scr-run-stat')).toContainText('Built main.prg', { timeout: 60_000 });
+  const prg = readFileSync(join(dir, 'out', 'main.prg'));
+  expect([...prg.subarray(2 + 12)]).toEqual([0x18, 0xfb, 0xc2, 0x30, 0xa9, 0x34, 0x12, 0x8d, 0x20, 0xd0, 0xbf, 0x56, 0x34, 0x12, 0xe2, 0x30, 0xa9, 0x2d, 0x38, 0xfb, 0x60]);
+  await closeProject(page, 'scpu');
+});

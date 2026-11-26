@@ -1,8 +1,8 @@
 /* Monarch definition for 64tass (spec 14.3, 11.8): `;` comments and `.comment` … `.endc`, its directives, label
  * definitions (`name:`, `name = value` at the start of a line, the anonymous `+` and `-`), documented and undocumented
- * mnemonics by 64tass's names (isb, asr, sbx …), `@w`/`@b`, its functions, hardware symbols, numbers, strings. */
+ * mnemonics by 64tass's names (isb, asr, sbx …), the 65C02's and 65816's, `@w`/`@b`/`@l`, its functions, hardware symbols, numbers, strings. */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { OPC, SYM, TASS_NAMES } from '@mimir/core';
+import { OPC, SYM, TASS_CPU_MNEMONICS, TASS_NAMES } from '@mimir/core';
 
 export const TASS64 = 'tass64';
 
@@ -20,7 +20,8 @@ const FUNCTIONS = ['abs', 'acos', 'all', 'any', 'asin', 'atan', 'atan2', 'binary
   'log', 'log10', 'pow', 'rad', 'random', 'range', 'repr', 'round', 'sign', 'sin', 'sinh', 'size', 'sort', 'sqrt', 'tan', 'tanh', 'trunc', 'true', 'false', 'int', 'bits', 'bytes', 'str', 'bool', 'list', 'tuple'];
 
 export function register64tass(monaco: typeof Monaco): void {
-  const mnemonics = [...new Set(OPC.filter(o => o.tass && !o.ill).map(o => tassMn(o.mn)))];
+  // (the 65C02's and the 65816's too, with 64tass's aliases: .cpu "65816")
+  const mnemonics = [...new Set([...OPC.filter(o => o.tass && !o.ill).map(o => tassMn(o.mn)), ...TASS_CPU_MNEMONICS])];
   const illegals = [...new Set(OPC.filter(o => o.tass && o.ill).map(o => tassMn(o.mn)))].filter(m => !mnemonics.includes(m));
   const hw = [...SYM.exact.values()].map(s => s.name).concat(SYM.regions.map(r => r.name));
   monaco.languages.register({ id: TASS64, aliases: ['64tass'] });
