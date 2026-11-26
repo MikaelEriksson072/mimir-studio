@@ -62,9 +62,27 @@ describe('the 65816', () => {
     expect(bytes).toEqual([0xeb, 0xa7, 0x12]);
     expect(c.cpus).toEqual(['65816']);
     expect(c.warnings[0].msg).toMatch(/SuperCPU/);
-    // a .cpu the check does not know is said so (64tass builds it)
-    expect(tass([' .cpu "4510"', ' nop']).c.problems[0].msg).toMatch(/Mimir's check knows the 6502, 6502i, 65c02, r65c02, w65c02 and 65816/);
-    expect(tass([' nop'], ['--m4510']).c.problems[0].msg).toMatch(/the arguments ask for the 4510/);
+    // a processor 64tass does not know is an error, as in 64tass; --m4510 is the 4510
+    expect(tass([' .cpu "z80"', ' nop']).c.problems[0].msg).toMatch(/unknown processor 'z80'/);
+    expect(tass([' map'], ['--m4510']).bytes).toEqual([0x5c]);
+  });
+});
+
+describe('the 65DTV02, the 65CE02, the 4510 and the 65EL02', () => {
+  it('the 65DTV02 (the C64 DTV): BRA, SAC, SIR, the undocumented opcodes it has', () => {
+    expect(ok([' .cpu "65dtv02"', 'l bra l', ' sac #1', ' sir #2', ' lax $12', ' dcm $12'])).toEqual([0x12, 0xfe, 0x32, 1, 0x42, 2, 0xa7, 0x12, 0xc7, 0x12]);
+    expect(tass([' .cpu "65dtv02"', ' anc #1']).c.ok).toBe(false);
+  });
+  it('the 65CE02 and the 4510: the Z register, (dp),z, n,s, 16 bit branches as far as they must go, words, MAP', () => {
+    expect(ok([' .cpu "65ce02"', ' bne near', ' bne far', 'near nop', ' .fill 200', 'far rts', ' bsr near', ' lda (#$12,s),y', ' lda ($12),z', ' ldz #1', ' inw $12', ' phw #$1234', ' rtn #2']).filter((_, i) => i < 6 || i > 205)).toEqual([
+      0xd0, 0x03, 0xd3, 0xca, 0x00, 0xea, 0x60, 0x63, 0x34, 0xff, 0xe2, 0x12, 0xb2, 0x12, 0xa3, 1, 0xe3, 0x12, 0xf4, 0x34, 0x12, 0x62, 2]);
+    expect(ok([' .cpu "4510"', ' map', ' eom', ' neg', ' asr a', ' taz'])).toEqual([0x5c, 0xea, 0x42, 0x43, 0x4b]);
+    // (dp) is (dp),z there
+    expect(tass([' .cpu "65ce02"', ' lda ($12)']).c.ok).toBe(false);
+  });
+  it('the 65EL02: the return stack, MUL and DIV, 16 bit immediates as on the 65816', () => {
+    expect(ok([' .cpu "65el02"', ' lda #$12,r', ' sta (#3,r),y', ' mul $12', ' div $1234,x', ' .al', ' lda #$1234', ' rhi', ' rer *'])).toEqual([
+      0xa7, 0x12, 0x97, 3, 0x0f, 0x12, 0x7f, 0x34, 0x12, 0xa9, 0x34, 0x12, 0x0b, 0x82, 0xfe]);
   });
 });
 

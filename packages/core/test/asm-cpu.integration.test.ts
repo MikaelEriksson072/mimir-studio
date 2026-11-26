@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkAsm } from '../src/asm-project';
 import { find64tass } from '../src/node';
+import { cpuMnemonics, cpuOp, TASS_CPUS, type CpuMode } from '../src/verify/tass-cpu';
 
 const tass = find64tass();
 
@@ -55,4 +56,38 @@ describe.skipIf(!tass)("64tass's processors, random() and .seed built with the r
       }
     }
   }, 60_000);
+});
+
+/** an operand of each addressing mode (a branch to itself; one the 65CE02 has 16 bits of too, far for those) */
+const OPERAND: Record<CpuMode, string> = {
+  imp: '', acc: 'a', imm: '#$12', dp: '$12', dpx: '$12,x', dpy: '$12,y', abs: '$1234', abx: '$1234,x', aby: '$1234,y', long: '$123456', longx: '$123456,x',
+  dpi: '($12)', dpix: '($12,x)', dpiy: '($12),y', dpiz: '($12),z', dpil: '[$12]', dpily: '[$12],y', sr: '#$12,s', sriy: '(#$12,s),y', rr: '#$12,r', rriy: '(#$12,r),y',
+  rel: '*', rell: '*', absi: '($1234)', absix: '($1234,x)', absil: '[$1234]', move: '#$12,#$34', bit: '3,$12', bitrel: '3,$12,*',
+};
+describe.skipIf(!tass)('every instruction of every processor 64tass has, in every addressing mode, built with the real 64tass', () => {
+  for (const cpu of TASS_CPUS) {
+    it(`gives the bytes Mimir's check gives: ${cpu}`, async () => {
+      const lines: string[] = [];
+      for (const mn of cpuMnemonics(cpu)) {
+        const modes = cpuOp(cpu, mn)!.modes;
+        for (const mode of Object.keys(modes) as CpuMode[]) lines.push(` ${mn.toLowerCase()} ${mode === 'rell' && modes.rel !== undefined ? '*+$1000' : OPERAND[mode]}`);
+      }
+      const text = [` .cpu "${cpu}"`, ' * = $1000', ...lines, ''].join('\n');
+      const c = checkAsm({ 'main.asm': text }, 'main.asm', '64tass');
+      expect(c.problems).toEqual([]);
+      const dir = await mkdtemp(join(tmpdir(), 'mimir-cpus-'));
+      try {
+        await writeFile(join(dir, 'main.asm'), text);
+        const r = spawnSync(tass!, ['-a', '-C', '-o', 'main.prg', 'main.asm'], { cwd: dir, windowsHide: true, encoding: 'utf8' });
+        expect(r.status, r.stdout + r.stderr).toBe(0);
+        const real = new Uint8Array(await readFile(join(dir, 'main.prg'))), got = c.asm.prg!;
+        // (where they first differ: that line)
+        const at = [...real].findIndex((b, i) => b !== got[i]), pc = 0x1000 + at - 2;
+        const line = at < 0 ? null : [...(c.asm.linePcs ?? [])].filter(([, p]) => p <= pc).sort((a, b) => b[1] - a[1])[0]?.[0];
+        expect(at < 0 && real.length === got.length ? '' : `line ${line}: ${text.split('\n')[(line ?? 1) - 1]}`, `${lines.length} instructions`).toBe('');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+  }
 });

@@ -3748,8 +3748,8 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass processorerna 65CE02, 4510,
-  65DTV02 och 65EL02): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass de långa
+  pseudohoppen `gcc`, `gne` …): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3841,6 +3841,18 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     och **`.seed`** sätter talen (upp till 128 bitar). Operatorerna **`x`** (upprepa en lista, en sträng eller bytes:
     `random([16] x 8)`) och **`` ` ``** (bankbyten). Mätt mot 64tass 1.57 (`asm-cpu.integration.test.ts`): samma bytes
     för varje form, och fel där 64tass säger fel. Editorn färgar 65C02:ans och 65816:ans mnemonics.
+  - *64tass övriga processorer* (2026-11-26): också `.cpu "65dtv02"` (C64 DTV: `bra`, `sac #n`, `sir #n` och de
+    odokumenterade opkoder den har), `"65ce02"` och `"4510"` (C65:ans; Z-registret: `ldz`, `inz`, `taz` …, `(dp),z` i stället
+    för `(dp)`, `(n,s),y`, `inw`/`dew`, `asw`/`row`, `phw #nnnn`, `neg`, `asr`, `bsr`, `rtn #n`, `map`, `eom`; ett
+    villkorligt hopp blir 16 bitar när målet ligger för långt bort för 8, eller med `@w`, räknat från instruktionens sista
+    byte) och `"65el02"` (returstacken `n,r` och `(n,r),y`, `mul`, `div`, `rhi`, `rer` …, 16 bitars immediate med
+    `.al`/`.xl`/`.autsiz` som 65816:an), och argumenten `-t`/`--m65dtv02`, `--m65ce02`, `--m4510`, `-e`/`--m65el02`; 6502i fick
+    64tass namn för de odokumenterade opkoderna (`isc`, `dcm`, `lxa`, `xaa`, `alr`, `axs`, `ahx`, `las`, `tas`), `ina`/`dea`
+    bara utan operand. Tabellerna är **uppmätta**: varje mnemonic i varje adresseringsläge assemblerad med 64tass 1.57
+    (51 030 körningar), och varje ny processor är skillnaden mot den den bygger på (65DTV02 mot 6502i, 65CE02 mot R65C02,
+    4510 mot 65CE02, 65EL02 mot 65C02); de handskrivna tabellerna för de andra stämde med mätningen. Integrationstestet
+    assemblerar varje instruktion i varje läge för alla tio processorerna med kontrollen och med 64tass: samma bytes.
+    Kontrollen varnar på `.cpu`-raden (C64 DTV, C65/MEGA65, eller att 6510:an inte kör dem) och *Debug* väntar.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

@@ -39,7 +39,7 @@
  * ===================================================================== */
 import type { AsmError, AssembleResult, Vfs } from '../types';
 import { TASS_ENC } from '../cpu/opcodes';
-import { ACCU_IMM, CPU_BRANCH, CPU_MODE_LEN, CPU_OPTIONS, cpuOp, INDEX_IMM, tassCpu, type CpuMode, type TassCpu } from './tass-cpu';
+import { ACCU_IMM, CPU_MODE_LEN, cpuOp, INDEX_IMM, REL16_FROM, tassCpu, WIDE_CPUS, type CpuMode, type TassCpu } from './tass-cpu';
 import { h4 } from '../util/hex';
 import { importPath, type AssembleOptions } from './kick-subset-assembler';
 
@@ -477,7 +477,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const warnings: AsmError[] = [];
   /** what the check says of a processor that is not the C64's */
   const cpuNote = (c: TassCpu) => (c === '65816' ? 'The 65816\'s instructions run on a SuperCPU (VICE\'s xscpu64), not on the C64\'s 6510: Mimir\'s debugger and x64sc run a 6510'
-    : `The ${c.toUpperCase()}'s instructions do not run on the C64's 6510 (Mimir's debugger and VICE's x64sc run a 6510)`);
+    : c === '65dtv02' ? 'The 65DTV02\'s instructions (BRA, SAC, SIR) run on a C64 DTV, not on the C64\'s 6510: Mimir\'s debugger and x64sc run a 6510'
+      : c === '4510' ? 'The 4510\'s instructions run on a C65 or a MEGA65, not on the C64\'s 6510: Mimir\'s debugger and x64sc run a 6510'
+        : `The ${c.toUpperCase()}'s instructions do not run on the C64's 6510 (Mimir's debugger and VICE's x64sc run a 6510)`);
   const names = opts.names;
   let curStmt: Stmt | null = null;
   const external = new Map<string, number>();
@@ -794,7 +796,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     pc = opts.pc ?? 0; off = 0; outer = []; enc = 'none'; unresolved = [];
     cpu = cpu0; dpage = 0; databank = 0; longaccu = false; longindex = false; autosize = false; rng = [...SEED]; cpusUsed.length = 0; warnings.length = 0;
     if (cpu0 !== '6502' && cpu0 !== '6502i') { cpusUsed.push(cpu0); if (final) warnings.push({ file: entryPath, line: 0, msg: `${cpuNote(cpu0)} (the arguments ask for it)` }); }
-    if (opts.cpu && !tassCpu(opts.cpu) && final) E(`the arguments ask for the ${opts.cpu}: Mimir's check knows the 6502, 6502i, 65c02, r65c02, w65c02 and 65816 (64tass builds the others)`);
+    if (opts.cpu && !tassCpu(opts.cpu) && final) E(`unknown processor '${opts.cpu}' (the arguments)`);
     missing = false; first = -1; spaces = []; scope = '';
     anonPrev = anon; anon = [];
     let changed = false;
@@ -1235,7 +1237,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           const v = ev(P(m[1])); report(st);
           if (typeof v !== 'string') continue;
           const c = v === 'default' ? cpu0 : tassCpu(v);
-          if (!c) { E(`.cpu "${v}": Mimir's check knows the 6502, 6502i, 65c02, r65c02, w65c02 and 65816 (64tass builds the others)`, st); continue; }
+          if (!c) { E(`unknown processor '${v}' (64tass knows 6502, 6502i, 65c02, r65c02, w65c02, 65816, 65dtv02, 65ce02, 4510 and 65el02)`, st); continue; }
           cpu = c;
           if (c !== '6502' && c !== '6502i' && !cpusUsed.includes(c)) {
             cpusUsed.push(c);
@@ -1348,7 +1350,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             if (key === 'E' && e0.startsWith('#')) { mode = 'imm'; v = val(e0.slice(1)); }
             else {
               // (#n is written in the forms that take n as it is: lda #1,s, lda (#$12,d),y)
-              if (e0.startsWith('#') && !/,[sbdk]/.test(key)) { E(`general syntax: ${s}`, st); continue; }
+              if (e0.startsWith('#') && !/,[sbdkr]/.test(key)) { E(`general syntax: ${s}`, st); continue; }
               const raw = ev(P(e0.replace(/^#/, '')));
               v = raw == null ? null : numberOf(raw);
               const jump = isJump || mn === 'JML', x = v;
@@ -1366,13 +1368,18 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
               };
               const forms: Record<string, () => [CpuMode | null, How?]> = {
                 // (a function's argument written #1 is immediate: lda value is lda #1)
-                E: () => (isImm(raw) || mn === 'PEA' ? ['imm'] : CPU_BRANCH.has(mn) ? ['rel'] : has('rell') ? ['rell']
+                // (a branch the 65CE02 has 16 bits of too: those when its target is too far for 8, or with @w)
+                E: () => (isImm(raw) || mn === 'PEA' ? ['imm']
+                  : has('rel') && has('rell') ? [force === 'w' ? 'rell' : force === 'b' || x == null || (x - (at + 2) >= -128 && x - (at + 2) <= 127) ? 'rel' : 'rell']
+                  : has('rel') ? ['rel'] : has('rell') ? ['rell']
                   : isJump ? [force === 'l' ? null : 'abs', 'k'] : mn === 'JML' || mn === 'JSL' ? ['long'] : [pick('')]),
                 'E,x': () => [pick('x')], 'E,y': () => [pick('y')], 'E,s': () => ['sr', 'as-is'],
                 'E,b': () => ['abs', 'as-is'], 'E,b,x': () => ['abx', 'as-is'], 'E,b,y': () => ['aby', 'as-is'],
                 'E,d': () => ['dp', 'as-is'], 'E,d,x': () => ['dpx', 'as-is'], 'E,d,y': () => ['dpy', 'as-is'], 'E,k': () => ['abs', 'as-is'],
                 '(E)': () => (jump ? ['absi', 'bank0'] : ['dpi']), '(E,x)': () => (jump ? ['absix', 'k'] : ['dpix']),
-                '(E),y': () => ['dpiy'], '(E,s),y': () => ['sriy', 'as-is'],
+                '(E),y': () => ['dpiy'], '(E,s),y': () => ['sriy', 'as-is'], '(E),z': () => ['dpiz'],
+                // (the 65EL02's return stack)
+                'E,r': () => ['rr', 'as-is'], '(E,r),y': () => ['rriy', 'as-is'],
                 '(E,d)': () => ['dpi', 'as-is'], '(E,d,x)': () => ['dpix', 'as-is'], '(E,d),y': () => ['dpiy', 'as-is'], '(E,k,x)': () => ['absix', 'as-is'],
                 '[E]': () => (jump ? ['absil', 'bank0'] : ['dpil']), '[E],y': () => ['dpily'], '[E,d]': () => ['dpil', 'as-is'], '[E,d],y': () => ['dpily', 'as-is'],
               };
@@ -1390,14 +1397,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             continue;
           }
           const md = mode as CpuMode;
-          // the immediate's size: 16 bits for the 65816's accumulator (.al) or index registers (.xl), PEA's always
-          const wide = md === 'imm' && (mn === 'PEA' || force === 'w' || (force !== 'b' && cpu === '65816' && ((ACCU_IMM.has(mn) && longaccu) || (INDEX_IMM.has(mn) && longindex))));
+          // the immediate's size: 16 bits for the 65816's (and 65EL02's) accumulator (.al) or index registers (.xl), PEA's
+          // and PHW's always
+          const wide = md === 'imm' && (mn === 'PEA' || mn === 'PHW' || force === 'w' || (force !== 'b' && WIDE_CPUS.has(cpu) && ((ACCU_IMM.has(mn) && longaccu) || (INDEX_IMM.has(mn) && longindex))));
           // the operand as it is written in the instruction, and whether it fits
           let n = v ?? 0, bad = '';
           const dpClass = /^dp/.test(md), absClass = md === 'abs' || md === 'abx' || md === 'aby' || md === 'absi' || md === 'absix' || md === 'absil';
           if (v != null) {
             if (md === 'imm') { if (wide ? v < -32768 || v > 0xffff : v < -128 || v > 0xff) bad = `too large for a ${wide ? 16 : 8} bit unsigned integer '${v}'`; }
-            else if (md === 'sr' || md === 'sriy') { if (v < 0 || v > 0xff) bad = `too large for a 8 bit unsigned integer '${v}'`; }
+            else if (md === 'sr' || md === 'sriy' || md === 'rr' || md === 'rriy') { if (v < 0 || v > 0xff) bad = `too large for a 8 bit unsigned integer '${v}'`; }
             else if (dpClass) {
               if (how !== 'as-is') { if (dpage == null || v < dpage || v - dpage > 0xff) bad = `not a direct page address '${hex(v)}'`; else n = v - dpage; }
               else if (v < 0 || v > 0xff) bad = `too large for a 8 bit unsigned integer '${v}'`;
@@ -1418,12 +1426,12 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             if (final && (o < -128 || o > 127)) E(`branch too far (${o})`, st);
             if (final && md === 'rel' && !branchAcross && v != null && (nx & 0xff00) !== (v & 0xff00)) { const by = v > nx ? v - (nx | 0xff) : v - (nx & 0xff00); E(`branch crosses page by ${by > 0 ? '+' : ''}${by} bytes`, st); }
             bytes(o, 1);
-          } else if (md === 'rell') bytes(v == null ? 0 : v - (pc + 2), 2);
+          } else if (md === 'rell') bytes(v == null ? 0 : v - (at + (REL16_FROM[cpu] ?? 3)), 2);
           else if (md === 'move') { for (const b of tail) { if (final && b != null && (b < 0 || b > 0xff)) E(`too large for a 8 bit unsigned integer '${b}'`, st); bytes(b ?? 0, 1); } }
           else if (md === 'bit') { const d = tail[0]; if (final && d != null && (dpage == null || d < dpage || d - dpage > 0xff)) E(`not a direct page address '${hex(d)}'`, st); bytes((d ?? 0) - (dpage ?? 0), 1); }
           else bytes(n, md === 'imm' ? (wide ? 2 : 1) : CPU_MODE_LEN[md]);
           // .autsiz: REP and SEP set the immediates' sizes
-          if (cpu === '65816' && autosize && md === 'imm' && v != null && (mn === 'REP' || mn === 'SEP')) {
+          if (WIDE_CPUS.has(cpu) && autosize && md === 'imm' && v != null && (mn === 'REP' || mn === 'SEP')) {
             if (v & 0x20) longaccu = mn === 'REP';
             if (v & 0x10) longindex = mn === 'REP';
           }
