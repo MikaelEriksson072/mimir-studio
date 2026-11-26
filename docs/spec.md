@@ -155,6 +155,7 @@ mimir-studio/
 │  │  ├─ main/vice-monitor.ts     binary monitor-protokoll (TCP 6502)
 │  │  ├─ main/project-fs.ts       öppna/spara .mimir, exportera projektmapp
 │  │  ├─ main/assembler.ts        Assemblerns mapp: listan, filerna bara med sin väg i mappen, mapparna som öppnats (10.7)
+│  │  ├─ main/code-library.ts     makro- och kodbiblioteken: mapparna Macros och Code i bibliotekets mapp (10.8)
 │  │  └─ preload/index.ts         contextBridge → window.kr
 │  └─ src/                        renderer
 │     ├─ App.tsx
@@ -167,6 +168,7 @@ mimir-studio/
 │     ├─ components/AsmBlockDialog.tsx   Insert block: sprites, charset, bitmap, skärm, musik, data i källan (10.7)
 │     ├─ components/AsmRelease.tsx       Release: bygget som D64, TAP, CRT eller PRG, packat eller inte (10.7)
 │     ├─ store/asmlink.ts          Assembler-projektet i projektfönstret: programmet till vyerna, visa en rad, Run (10.7)
+│     ├─ components/{CodeLibView, CodeLibDialog}.tsx, store/codelib.ts   makro- och kodbiblioteken: vyn och dialogen (10.8)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
 │     └─ styles/{tokens.css, tailwind.css}
 ├─ packages/core/
@@ -185,6 +187,7 @@ mimir-studio/
 │  ├─ src/asm-cycles.ts            Assemblern: varje rads cykler, koden i valda rader (cyclePath) (10.7)
 │  ├─ src/asm-names.ts             Assemblern: var ett namn står och definieras (referenser, namnbyte, översikt) (10.7)
 │  ├─ src/asm-c64check.ts          Assemblern: C64-kontrollerna av programmet (VIC-bank, tecken-ROM, I/O, ROM) (10.7)
+│  ├─ src/code-library.ts          makro- och kodbiblioteken: filformatet, makrona i en kod, kod gjord till makro, anropen, bokstavsgrupperna, sökningen (10.8)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -4050,6 +4053,52 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
 - **C64-skärmen** bredvid koden är skripteditorns (samma inställningar): vad programmet skriver ut och skriver till
   skärmminnet medan det körs i Mimir.
 
+### 10.8 Makro- och kodbiblioteken
+
+Makron och bitar av kod man skrivit en gång ska man hitta igen och ta in i nästa program, i vilket Assembler-projekt
+som helst. De ligger därför, som skripten (10.3) och biblioteket (10.6), som filer i bibliotekets mapp: `Macros` för
+makrobiblioteket och `Code` för kodbiblioteket, en fil var, som går att dela, lägga under versionshantering, skriva i
+vilken editor som helst och importera från en källa som de är. Det rena står i `packages/core/src/code-library.ts`;
+mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.ts`), och appen visar dem
+(`store/codelib.ts`, `components/CodeLibView.tsx`, `components/CodeLibDialog.tsx`).
+
+- **Filen** är koden som den är, med en rad överst som säger resten, en kommentar för assemblern:
+  `// mimir-library {"lang":"kickass","created":"2026-11-26T20:14:00.000Z","color":"teal","description":"…","from":"…"}`
+  (`; mimir-library …` i 64tass): vilken assembler den är skriven för, när den gjordes, dess färg (en bokmärkesfärg
+  eller `#rrggbb`; ingen: ingen färg), beskrivningen och varifrån koden togs (`projekt · main.asm:12–30`). Namnet är
+  filens (`WaitRaster.asm`, det som ett filnamn inte kan ha blir `_`, ett namn som finns blir `(2)`). En fil utan raden
+  (lagd där för hand: `.asm`, `.s`, `.inc`, `.a`, `.a65`, `.tas`, `.65s`) läses också: assemblern gissas ur koden
+  (`guessAsmLang`) och den gjordes när filen gjordes. Det som inte är som det ska i raden lämnas därhän. Mätt
+  (`code-library.integration.test.ts`): en fil som Mimir skriver den importeras av riktiga KickAss.jar (`#import`) och
+  64tass (`.include`), och anropet ger samma bytes som koden där den stod.
+- **Makrona i en kod** (`codeLibMacros`): Kick Assemblers `.macro Namn(a, b) { … }` (`.pseudocommand`, `.function`;
+  kroppen till klammern som stänger den, kommentarer och strängar räknas inte), 64tass `Namn .macro a, b` … `.endm`
+  (`.segment` … `.endsegment`, `.function` … `.endf`, `.sfunction` på en rad; makron i makron). Anropet:
+  `Namn(a, b)`, ett pseudokommando `Namn a : b`, i 64tass `#Namn a, b` (en funktion `Namn(a)`).
+- **Att lägga till.** Markera rader i Assemblern, högerklicka och välj *Add to the macro library…* eller *Add to the
+  code library…* (eller paletten, eller `+` i vyn). En markering som slutar i början av en rad tar inte med den raden;
+  ingen markering och markören i ett makro: hela makrot. Raderna tas utan det indrag de alla har (`codeLibTake`). Kod som
+  inte är ett makro blir ett i makrobiblioteket (`codeLibWrap`): `.macro Namn(parametrar) {` med koden indragen en gång,
+  `}`; i 64tass `Namn .macro parametrar` med `.macro` där kodens instruktioner börjar, koden som den är och `.endm`
+  under. Namnet och parametrarna man skriver är makrots tills man ändrar koden för hand. Dialogen har biblioteket,
+  namnet (makrots namn, annars den första etiketten), assemblern (projektets; en kod som ser ut som den andra sägs),
+  koden, beskrivningen och färgen (bokmärkenas, och *ingen*), och säger när den gjordes och varifrån. Ctrl+Enter sparar
+  (inte Enter: ett Enter som öppnade dialogen från paletten fick inte spara den). Rader i en fil utanför projektets mapp
+  (läses bara, 10.7) går att lägga till som andra.
+- **Vyn** (aktivitetsfältet, *Macros and code*, bara i ett Assembler-projekt; Ctrl+Shift+M söker) har ett bibliotek
+  i taget med antalet i var flik, sökrutan (alla ord i namnet, beskrivningen, varifrån den kom eller koden; *found in
+  the code* när bara koden har det), färgerna biblioteket har (en klickad: bara de i den färgen) och bokstäverna: listan
+  är i bokstavsordning i grupper, en bokstav var (A–Z, Å, Ä, Ö, sist `#` för det som börjar med en siffra eller annat;
+  é som e; `_init` under I; svensk ordning med tal i ordning, `codeLibGroups`), och en bokstav går till sin grupp.
+  En rad visar namnet, makrots anrop, beskrivningens första rad, datumet den gjordes och en färgrand; skriven för den
+  andra assemblern står det på raden. Ett klick öppnar den: hela beskrivningen, koden, när den gjordes och ändrades,
+  varifrån. *Insert call* sätter in anropet där markören är, parametrarna som platser att skriva i (Tab går vidare);
+  *Insert definition* (och en kods *Insert*) sätter in raderna vid markörens rad: på en tom rad i dess ställe, efter
+  raden när markören står i dess slut, annars före den, med indraget som koden där har när den inte har en egen
+  layout, ett makros definition med en tom rad före och efter; raderna markeras. Ett dubbelklick gör anropet när
+  projektets källor definierar makrot, annars definitionen. Kod för Kick Assembler i ett 64tass-projekt görs om
+  (`kickToTass`) där det går; annars sägs det. Högerklick: sätt in, kopiera, *Edit…*, visa filen, till papperskorgen.
+
 ## 11. Kick Assembler-generatorn
 
 ### 11.1 Filens struktur
@@ -4722,6 +4771,10 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `scripts:save` | renderer → main | `{ file, text, was? }` → listan: filen skrivs (ett rent filnamn, `.asm` eller `.js`); `was`, filen den ersätter under ett annat namn, till papperskorgen |
 | `scripts:remove` | renderer → main | `{ file }` → listan: filen till papperskorgen |
 | `scripts:reveal` | renderer → main | mappen `Scripts` visas i filhanteraren (görs om den inte finns) |
+| `codelib:list` | renderer → main | → `{ dir, folders, items }`: makrona och koden i bibliotekets mappar `Macros` och `Code`, en fil var (10.8) |
+| `codelib:save` | renderer → main | `{ kind, name, code, lang, description, color?, from?, was? }` → `{ item, listing }`: en ny fil (unikt namn, gjord nu) eller `was` på sin plats (omdöpt, flyttad till det andra biblioteket; när den gjordes står kvar) |
+| `codelib:remove` | renderer → main | `{ kind, file }` → listan: filen till papperskorgen |
+| `codelib:reveal` | renderer → main | `{ kind, file? }`: filhanteraren vid filen, eller vid sortens mapp (görs om den inte finns) |
 | `assembler:start` | renderer → main | → `{ recent, parent }`: mapparna som öppnats i Assemblern (10.7) och var en ny hamnar |
 | `assembler:open` | renderer → main | `{ path? }` → `{ dir, name, entries, more }` eller `null`: en mapp som öppnats förut (ingen dialog) eller en mappdialog; mappen bevakas (`fs:changed`) |
 | `assembler:create` | renderer → main | `{ name, parent, files }` → mappens innehåll: en ny mapp `<parent>/<name>` med `files` (den första källfilen) |

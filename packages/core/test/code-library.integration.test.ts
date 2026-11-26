@@ -1,0 +1,73 @@
+/* Integration (spec 10.8): a file of the macro library, as Mimir writes it (the line that says what it is at its top), is
+ * a source the real KickAss.jar and 64tass import as it is; code taken from a source and made a macro, called, gives
+ * the bytes the code gave where it was, in Mimir's own check and in the real assemblers. Runs when the assemblers are
+ * found (KICKASS_JAR / JAVA / TASS64 env vars or the usual install folders); otherwise skipped. */
+import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { checkAsm } from '../src/asm-project';
+import { codeLibCall, codeLibFileText, codeLibIsMacro, codeLibTake, codeLibWrap } from '../src/code-library';
+import { find64tass, findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
+import type { ScriptLang, Vfs } from '../src/types';
+
+const jar = process.env.KICKASS_JAR || findKickAssJar();
+const java = process.env.JAVA || 'java';
+const kick = !!jar && spawnSync(java, ['-version'], { windowsHide: true }).status === 0;
+const tass = find64tass();
+
+/** the program the real assembler makes of `vfs` (main.asm), without its load address */
+async function build(lang: ScriptLang, vfs: Vfs): Promise<Uint8Array> {
+  const dir = await mkdtemp(join(tmpdir(), 'mimir-codelib-'));
+  try {
+    await writeVfs(dir, vfs);
+    if (lang === 'kickass') {
+      const r = await runKickAssembler({ java, jar: jar!, cwd: dir, entry: 'main.asm', outDir: 'out' });
+      expect(r.output ?? '').not.toMatch(/error/i);
+      return new Uint8Array(await readFile(join(dir, 'out', 'main.prg'))).subarray(2);
+    }
+    const r = spawnSync(tass!, ['-a', '-C', '-o', 'main.prg', 'main.asm'], { cwd: dir, windowsHide: true, encoding: 'utf8' });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(existsSync(join(dir, 'main.prg'))).toBe(true);
+    return new Uint8Array(await readFile(join(dir, 'main.prg'))).subarray(2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+const CASES: { lang: ScriptLang; source: string; from: number; to: number; params: string[]; args: string; include: (f: string) => string }[] = [
+  { lang: 'kickass', source: '* = $1000\nstart:  sei\n        lda #$00\n        sta $d020\n        sta $d021\n!:      inc $d020\n        jmp !-\n', from: 3, to: 7, params: [], args: '', include: f => `#import "${f}"` },
+  { lang: '64tass', source: '* = $1000\nstart   sei\n        lda #$00\n        sta $d020\n        sta $d021\n-       inc $d020\n        jmp -\n', from: 3, to: 7, params: [], args: '', include: f => `.include "${f}"` },
+];
+
+describe('the macro library\'s files in Mimir\'s check', () => {
+  for (const c of CASES) it(`(${c.lang}) imported and called, give the bytes the code gave`, () => {
+    const code = codeLibTake(c.source, c.from, c.to), macro = codeLibWrap(code, 'Black', c.params, c.lang);
+    const d = codeLibIsMacro(macro, c.lang)!;
+    const file = codeLibFileText({ lang: c.lang, description: 'Border and background black\nthen a loop', created: Date.UTC(2026, 10, 26), color: 'teal', from: 'test · main.asm' }, macro);
+    const lines = c.source.split('\n');
+    const main = [...lines.slice(0, c.from - 1), `        ${codeLibCall(d, c.lang)}`, ...lines.slice(c.to), c.include('Macros/Black.asm'), ''].join('\n');
+    const inline = checkAsm({ 'main.asm': c.source }, 'main.asm', c.lang), called = checkAsm({ 'main.asm': main, 'Macros/Black.asm': file }, 'main.asm', c.lang);
+    expect(called.problems).toEqual([]);
+    expect([...called.asm.mem.slice(0x1000, 0x1000 + inline.bytes)]).toEqual([...inline.asm.mem.slice(0x1000, 0x1000 + inline.bytes)]);
+    expect(called.bytes).toBe(inline.bytes);
+  });
+});
+
+for (const c of CASES) {
+  const there = c.lang === 'kickass' ? kick : !!tass;
+  describe.skipIf(!there)(`the macro library's files with the real ${c.lang === '64tass' ? '64tass' : 'Kick Assembler'}`, () => {
+    it('imports one as Mimir writes it, and its call gives the bytes the code gave', async () => {
+      const code = codeLibTake(c.source, c.from, c.to), macro = codeLibWrap(code, 'Black', c.params, c.lang);
+      const d = codeLibIsMacro(macro, c.lang)!;
+      const file = codeLibFileText({ lang: c.lang, description: 'Border and background black\nthen a loop "quoted" {braces}', created: Date.UTC(2026, 10, 26), color: '#a0b1c2', from: 'test · main.asm:3–7' }, macro);
+      const lines = c.source.split('\n');
+      const main = [...lines.slice(0, c.from - 1), `        ${codeLibCall(d, c.lang)}`, ...lines.slice(c.to), c.include('Macros/Black.asm'), ''].join('\n');
+      const inline = await build(c.lang, { 'main.asm': c.source });
+      const called = await build(c.lang, { 'main.asm': main, 'Macros/Black.asm': file });
+      expect([...called]).toEqual([...inline]);
+    }, 60_000);
+  });
+}

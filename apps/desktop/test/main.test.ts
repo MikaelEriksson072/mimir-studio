@@ -13,12 +13,13 @@ import { RecentFolders } from '../electron/main/recent';
 import { answerClose, askBeforeClose, CLOSE_ANSWER_MS, type ClosingWindow } from '../electron/main/closing';
 import { findInFolder, startFolder, toolLook } from '../electron/main/locate';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { deepSidPlaySchema, diskOpenSchema, libraryAddSchema, libraryFileSchema, libraryRevealSchema, libraryUpdateSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
+import { codelibFileSchema, codelibRevealSchema, codelibSaveSchema, deepSidPlaySchema, diskOpenSchema, libraryAddSchema, libraryFileSchema, libraryRevealSchema, libraryUpdateSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
 import { buildWithAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
 import { defaultLibraryDir, LibraryStore } from '../electron/main/library';
+import { CodeLibStore } from '../electron/main/code-library';
 import { createProjectFolder, gatherWork, homeOf, isOwnTemp, nearestFolder, ProjectStore, RECENT_PROJECTS } from '../electron/main/projects';
 import { projectNameOf, projectNameProblem } from '../shared/projects';
 import { smartKind, smartPlan } from '../shared/smart-attach';
@@ -28,7 +29,7 @@ const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings =>
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing', 'git:version', 'git:status', 'git:init', 'git:stage', 'git:unstage', 'git:commit', 'git:push', 'git:remote', 'git:diff', 'git:compare', 'library:list', 'library:add', 'library:update', 'library:remove', 'library:reveal', 'library:pick', 'scripts:list', 'scripts:save', 'scripts:remove', 'scripts:reveal', 'assembler:start', 'assembler:open', 'assembler:create', 'assembler:forget', 'assembler:close', 'assembler:list', 'assembler:read', 'assembler:readOutside', 'assembler:write', 'assembler:change', 'assembler:reveal', 'assembler:pickData'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing', 'git:version', 'git:status', 'git:init', 'git:stage', 'git:unstage', 'git:commit', 'git:push', 'git:remote', 'git:diff', 'git:compare', 'library:list', 'library:add', 'library:update', 'library:remove', 'library:reveal', 'library:pick', 'scripts:list', 'scripts:save', 'scripts:remove', 'scripts:reveal', 'codelib:list', 'codelib:save', 'codelib:remove', 'codelib:reveal', 'assembler:start', 'assembler:open', 'assembler:create', 'assembler:forget', 'assembler:close', 'assembler:list', 'assembler:read', 'assembler:readOutside', 'assembler:write', 'assembler:change', 'assembler:reveal', 'assembler:pickData'].sort());
   });
 });
 
@@ -1215,5 +1216,82 @@ describe('the library (spec 10.6)', () => {
     expect(libraryUpdateSchema.safeParse({ kind: 'chars', file: 'x.64c', colors: { bg: 0, fg: 1, mc1: 2, mc2: 16 } }).success).toBe(false);
     expect(libraryRevealSchema.safeParse({}).success).toBe(true);
     expect(libraryRevealSchema.safeParse({ file: 'x.sid' }).success).toBe(false);
+  });
+});
+
+describe('the macro and code libraries (spec 10.8)', () => {
+  let clock = Date.UTC(2026, 10, 26, 20, 0);
+  const store = (dir: string, trashed: string[] = []) => new CodeLibStore(() => dir, async p => { trashed.push(p); rmSync(p); }, () => clock);
+  const macro = '.macro WaitRaster(line) {\n!:      lda $d012\n        cmp #line\n        bne !-\n}';
+
+  it('lists nothing before anything is added, and writes nothing then', async () => {
+    const dir = join(tmp(), 'Library');
+    expect(await store(dir).list()).toEqual({ dir, folders: { macro: join(dir, 'Macros'), code: join(dir, 'Code') }, items: [] });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('writes an item in its kind\'s folder with the line that says the rest, made now, under a name of its own', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    const r = await lib.save({ kind: 'macro', name: 'WaitRaster', code: macro, lang: 'kickass', description: 'Waits for a line', color: 'teal', from: 'demo · main.asm:3–7' });
+    expect(r.item).toMatchObject({ kind: 'macro', file: 'WaitRaster.asm', name: 'WaitRaster', code: macro, lang: 'kickass', description: 'Waits for a line', color: 'teal', created: clock, from: 'demo · main.asm:3–7' });
+    const text = readFileSync(join(dir, 'Macros', 'WaitRaster.asm'), 'utf8');
+    expect(text).toBe(`// mimir-library {"lang":"kickass","created":"2026-11-26T20:00:00.000Z","color":"teal","description":"Waits for a line","from":"demo · main.asm:3–7"}\n${macro}\n`);
+    // the same name again: a file of its own; a name a file cannot have made safe
+    const again = await lib.save({ kind: 'macro', name: 'waitraster', code: macro, lang: 'kickass', description: '' });
+    expect(again.item.file).toBe('waitraster (2).asm');
+    const code = await lib.save({ kind: 'code', name: 'clear: screen?', code: '        lda #$20\n', lang: '64tass', description: '' });
+    expect(code.item).toMatchObject({ kind: 'code', file: 'clear_ screen_.asm', lang: '64tass', code: '        lda #$20' });
+    expect(readFileSync(join(dir, 'Code', 'clear_ screen_.asm'), 'utf8').startsWith('; mimir-library {"lang":"64tass"')).toBe(true);
+    expect(code.listing.items.map(i => `${i.kind}/${i.file}`).sort()).toEqual(['code/clear_ screen_.asm', 'macro/WaitRaster.asm', 'macro/waitraster (2).asm']);
+  });
+
+  it('changes an item in its place: renamed, moved to the other library, when it was made kept', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    const made = clock;
+    const { item } = await lib.save({ kind: 'macro', name: 'Wait', code: macro, lang: 'kickass', description: '' });
+    clock += 60_000;
+    const r = await lib.save({ kind: 'macro', name: 'Wait for raster', code: macro, lang: 'kickass', description: 'now with a note', color: '#a0b1c2', was: { kind: 'macro', file: item.file } });
+    expect(r.item).toMatchObject({ file: 'Wait for raster.asm', description: 'now with a note', color: '#a0b1c2', created: made });
+    expect(existsSync(join(dir, 'Macros', 'Wait.asm'))).toBe(false);
+    // only the letters' case
+    const c = await lib.save({ kind: 'macro', name: 'WAIT FOR RASTER', code: macro, lang: 'kickass', description: '', was: { kind: 'macro', file: r.item.file } });
+    expect(c.item.file).toBe('WAIT FOR RASTER.asm');
+    // to the code library
+    const m = await lib.save({ kind: 'code', name: 'WAIT FOR RASTER', code: 'nop', lang: 'kickass', description: '', was: { kind: 'macro', file: c.item.file } });
+    expect(m.item).toMatchObject({ kind: 'code', file: 'WAIT FOR RASTER.asm', created: made, code: 'nop' });
+    expect(m.listing.items.map(i => `${i.kind}/${i.file}`)).toEqual(['code/WAIT FOR RASTER.asm']);
+    // one that is not there any more
+    await expect(lib.save({ kind: 'code', name: 'x', code: 'nop', lang: 'kickass', description: '', was: { kind: 'macro', file: 'gone.asm' } })).rejects.toThrow(/not in the Macros library/);
+  });
+
+  it('lists files put there by hand, keeps their extension, and moves one to the Recycle Bin', async () => {
+    const dir = join(tmp(), 'Library'), trashed: string[] = [], lib = store(dir, trashed);
+    mkdirSync(join(dir, 'Macros'), { recursive: true });
+    writeFileSync(join(dir, 'Macros', 'irq.s'), 'SetIrq  .macro line\n        lda #\\1\n        sta $d012\n        .endm\n');
+    writeFileSync(join(dir, 'Macros', 'notes.txt'), 'not code');
+    const l = await lib.list();
+    expect(l.items).toHaveLength(1);
+    expect(l.items[0]).toMatchObject({ kind: 'macro', file: 'irq.s', name: 'irq', lang: '64tass', own: true });
+    // given a description: the line written, the file's name and extension kept
+    const r = await lib.save({ kind: 'macro', name: 'irq', code: l.items[0].code, lang: '64tass', description: 'Sets the raster IRQ line', was: { kind: 'macro', file: 'irq.s' } });
+    expect(r.item).toMatchObject({ file: 'irq.s', description: 'Sets the raster IRQ line' });
+    expect(r.item).not.toHaveProperty('own');
+    const after = await lib.remove({ kind: 'macro', file: 'irq.s' });
+    expect(trashed).toEqual([join(dir, 'Macros', 'irq.s')]);
+    expect(after.items).toEqual([]);
+    expect(() => lib.path('macro', '../x.asm')).toThrow();
+  });
+
+  it('takes only plain file names of the libraries over IPC', () => {
+    expect(codelibSaveSchema.safeParse({ kind: 'macro', name: 'x', code: 'nop', lang: 'kickass', description: '' }).success).toBe(true);
+    expect(codelibSaveSchema.safeParse({ kind: 'macro', name: ' ', code: 'nop', lang: 'kickass', description: '' }).success).toBe(false);
+    expect(codelibSaveSchema.safeParse({ kind: 'macros', name: 'x', code: 'nop', lang: 'kickass', description: '' }).success).toBe(false);
+    expect(codelibSaveSchema.safeParse({ kind: 'code', name: 'x', code: 'nop', lang: 'acme', description: '' }).success).toBe(false);
+    expect(codelibSaveSchema.safeParse({ kind: 'code', name: 'x', code: 'nop', lang: 'kickass', description: '', color: 'rainbow' }).success).toBe(false);
+    expect(codelibSaveSchema.safeParse({ kind: 'code', name: 'x', code: 'nop', lang: 'kickass', description: '', color: '#a0b1c2', was: { kind: 'code', file: 'x.asm' } }).success).toBe(true);
+    expect(codelibFileSchema.safeParse({ kind: 'code', file: '..\\x.asm' }).success).toBe(false);
+    expect(codelibFileSchema.safeParse({ kind: 'code', file: 'x.txt' }).success).toBe(false);
+    expect(codelibRevealSchema.safeParse({ kind: 'macro' }).success).toBe(true);
+    expect(codelibRevealSchema.safeParse({}).success).toBe(false);
   });
 });

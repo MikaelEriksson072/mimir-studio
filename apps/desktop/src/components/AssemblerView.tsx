@@ -18,7 +18,7 @@ import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx, errorText, fmtBytes } from '../lib/util';
 import { NO_TABS, useAssembler, type AsmMachineKind, type AsmTabs } from '../store/assembler';
-import { useAsmLink, type AsmBuilt, type AsmDropped } from '../store/asmlink';
+import { useAsmLink, type AsmBuilt, type AsmDropped, type AsmInsert } from '../store/asmlink';
 import { runScreenSize, useScripts } from '../store/scripts';
 import { useUi } from '../store/ui';
 import { Splitter } from './Splitter';
@@ -29,7 +29,8 @@ import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type As
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
 import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
-import { isBookmarkColor, type AsmBlockKind, type AsmBookmark } from '@mimir/core';
+import { codeLibMacroAt, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
+import { useCodeLib } from '../store/codelib';
 import { asmBookmarkSpan } from './AsmBookmarks';
 
 const kr = window.kr;
@@ -419,6 +420,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   // arguments: -libdir, -I), read as the build reads it, by the names the sources give them; read again when the window
   // comes back (they may have been changed in another editor)
   const [outside, setOutside] = useState<Record<string, string | Uint8Array>>({});
+  const outsideRef = useRef(outside); outsideRef.current = outside;
   /** the names asked for already (found or not), and where each was found */
   const askedOut = useRef(new Set<string>()), foundOut = useRef<Record<string, string>>({});
   const libdirs = useMemo(() => asmArgLibdirs(lang, args), [lang, args]);
@@ -491,7 +493,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
   const keys = useRef({ debugger: () => { }, block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { },
-    bookmark: () => { }, bmJump: (_dir: 1 | -1) => { }, bmClick: (_line: number) => { }, bmSync: () => { }, bmFlush: () => { } });
+    bookmark: () => { }, bmJump: (_dir: 1 | -1) => { }, bmClick: (_line: number) => { }, bmSync: () => { }, bmFlush: () => { }, codeLib: (_kind: CodeLibKind) => { } });
 
   useEffect(() => {
     if (!loaded) return;
@@ -550,6 +552,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       // bookmarks, as the re-assembler's on its lines: Ctrl+F2 adds or edits the one on the caret's line (a selection: an
       // area), Alt+F2 / Alt+Shift+F2 go to the next / previous one (F2 renames here)
       editor.addAction({ id: 'mimir.bookmark', label: 'Bookmark this line…', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2], contextMenuGroupId: '1_modification', contextMenuOrder: 0.5, run: () => keys.current.bookmark() });
+      // the macro and code libraries (10.8): the lines selected (none: the macro the caret is in) made an item of one
+      editor.addAction({ id: 'mimir.codeLibMacro', label: 'Add to the macro library…', contextMenuGroupId: '1_modification', contextMenuOrder: 0.6, run: () => keys.current.codeLib('macro') });
+      editor.addAction({ id: 'mimir.codeLibCode', label: 'Add to the code library…', contextMenuGroupId: '1_modification', contextMenuOrder: 0.7, run: () => keys.current.codeLib('code') });
       editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F2, () => keys.current.bmJump(1));
       editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.F2, () => keys.current.bmJump(-1));
       // a click in the gutter left of the line numbers sets or clears a breakpoint
@@ -1164,7 +1169,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
   };
   const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
-  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
+  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); }, codeLib: (k: CodeLibKind) => codeLibAdd(k) };
   // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
   // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
   const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
@@ -1184,6 +1189,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (ask.what === 'bmAdd') { bookmarkHere(); return; }
     if (ask.what === 'bmGo') { if (ask.id) goBookmark(ask.id); return; }
     if (ask.what === 'bmJump') { jumpBookmark(ask.dir ?? 1); return; }
+    // the macro and code libraries': a new item of the lines selected, an item put in the source
+    if (ask.what === 'codeLib') { codeLibAdd(ask.libKind ?? 'macro'); return; }
+    if (ask.what === 'insert') { if (ask.insert) insertLib(ask.insert); return; }
     if (ask.what === 'line') {
       if (!ask.at || !ask.line || !paths.has(ask.at)) return;
       openFile(ask.at, { line: ask.line, soft: true });
@@ -1206,6 +1214,11 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     useAsmLink.getState().set({
       linesOf: f => { const t = textOf(f); return t == null ? null : t.split('\n').length; },
       titleAt: (f, l) => { const label = splitLabel(lineOf(f, l), langRef.current).label; return label && !/^[!+-]/.test(label) ? label : `${f}:${l}`; },
+      // (the folder's sources and those imported from outside it)
+      macroDefined: n => {
+        for (const f of [...Object.keys(textsRef.current), ...Object.keys(outsideRef.current)]) { const t = textOf(f) ?? (typeof outsideRef.current[f] === 'string' ? outsideRef.current[f] as string : null); if (t != null && ASM_SOURCE.test(f) && definesMacro(t, langRef.current, n)) return f; }
+        return null;
+      },
     });
   }, []);
   // the sources and the main file Mimir finds, for Settings → Assembler project
@@ -1325,6 +1338,74 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const at = line + (before ? 1 : 0) + b.labelLine;
     e.setPosition({ lineNumber: at, column: 1 }); e.revealLineInCenter(at); e.focus();
     toast(`Inserted the ${b.what}${b.file ? `, its bytes in ${b.file.path}` : ''}: Graphics and Memory show it once the program assembles`, 'ok');
+  };
+  /* ---- the macro and code libraries (spec 10.8): lines of a source made an item, an item put in the source ---- */
+  /** the dialog for a new item of `kind`'s library: the lines selected (a selection ending at a line's start leaves
+   *  that line out), none: the macro (…) the caret is in, else nothing to start with */
+  const codeLibAdd = (kind: CodeLibKind) => {
+    const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
+    if (!e || !m || !p || !s) { useCodeLib.getState().set({ editing: { kind, lang, code: '' } }); return; }
+    const text = m.getValue();
+    let from = s.startLineNumber, to = s.endColumn === 1 && s.endLineNumber > from ? s.endLineNumber - 1 : s.endLineNumber;
+    if (s.isEmpty()) {
+      const d = codeLibMacroAt(text, lang, from);
+      if (!d) { toast('Nothing is selected: select the lines to keep (or click in a macro to take all of it)', 'info'); useCodeLib.getState().set({ editing: { kind, lang, code: '' } }); return; }
+      from = d.line; to = d.end;
+    }
+    const where = typeof outside[p] === 'string' ? foundOut.current[p] ?? p : p;
+    useCodeLib.getState().set({ editing: { kind, lang, code: codeLibTake(text, from, to), from: `${name} · ${where}:${from}${to > from ? `–${to}` : ''}` } });
+  };
+  /** an item put in the source shown: a macro's call where the caret is (its parameters places to type in, Tab goes
+   *  on), else its lines at the caret's line (on an empty line in its place, after the line when the caret is at its
+   *  end, else before it), indented as the code there when it has no layout of its own, selected. Code written for Kick
+   *  Assembler is made 64tass for a 64tass project where it can be. */
+  const insertLib = (ins: AsmInsert) => {
+    const p = shownRef.current, e = ed.current, monaco = monacoRef.current, m = p ? models.current[p] : null;
+    if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
+    if (!p || !e || !monaco || !m || e.getModel() !== m || !(p in textsRef.current) || !ASM_SOURCE.test(p)) { toast(`Open a source of the project to put ${ins.name} in: it goes where the caret is`, 'warn'); return; }
+    let text = ins.text.replace(/\r\n/g, '\n'), note = '', warn = '';
+    if (ins.lang !== lang) {
+      const c = !ins.call && !ins.macro && ins.lang === 'kickass' && lang === '64tass' ? kickToTass(text) : null;
+      if (c && 'source' in c) { text = c.source.replace(/\n+$/, ''); note = ` (made ${LANG_TITLE[lang]})`; }
+      else warn = `${ins.name} is written for ${LANG_TITLE[ins.lang]}, the project for ${LANG_TITLE[lang]}${c && 'error' in c ? ` (${c.error} on its line ${c.line})` : ''}: check the lines put in`;
+    }
+    e.focus();
+    if (ins.call) {
+      const sc = e.getContribution('snippetController2') as { insert: (template: string) => void } | null;
+      e.pushUndoStop();
+      if (sc) sc.insert(text); else e.executeEdits('code-library', [{ range: e.getSelection() ?? new monaco.Range(1, 1, 1, 1), text, forceMoveMarkers: true }]);
+      e.pushUndoStop();
+      const there = ins.macro ? useAsmLink.getState().macroDefined(ins.macro) : 'yes';
+      toast(warn || (there ? `Put in the call of ${ins.macro ?? ins.name}: Tab goes to the next parameter` : `Put in the call of ${ins.macro}, which the project does not define: Insert definition puts it in a source (or import its file)`), warn || !there ? 'warn' : 'ok');
+      return;
+    }
+    const pos = e.getPosition() ?? { lineNumber: m.getLineCount(), column: 1 };
+    const line = Math.min(pos.lineNumber, m.getLineCount()), lc = m.getLineCount(), cur = m.getLineContent(line);
+    const blank = !cur.trim(), after = !blank && pos.column > cur.replace(/\s+$/, '').length;
+    const lineAt = (n: number) => (n >= 1 && n <= lc ? m.getLineContent(n) : '');
+    // (the code there: the line's indent, or where its code starts after a label; an empty line's: the line above it,
+    // else the one below)
+    const indentOf = (l: string) => { const w = /^[ \t]*/.exec(l)![0]; if (w || !l.trim()) return w; const s = splitLabel(l, lang); return s.label && s.rest.trim() ? ' '.repeat(s.lead.length) : ''; };
+    let near = cur;
+    if (blank) { for (let n = line - 1; n >= 1; n--) if (lineAt(n).trim()) { near = lineAt(n); break; } if (!near.trim()) for (let n = line + 1; n <= lc; n++) if (lineAt(n).trim()) { near = lineAt(n); break; } }
+    const lines = text.split('\n');
+    // code with a layout of its own (a line at its start that is a label), and a macro's definition, stay as they are
+    const own = ins.block || lines.some(l => /^\S/.test(l) && !!splitLabel(l, lang).label);
+    const ind = own ? '' : indentOf(near);
+    const body = lines.map(l => (l.trim() && ind ? ind + l : l)).join('\n');
+    const prev = blank || !after ? lineAt(line - 1) : cur, next = blank || after ? lineAt(line + 1) : cur;
+    const pre = ins.block && prev.trim() ? '\n' : '', post = ins.block && next.trim() ? '\n' : '';
+    let range: Monaco.Range, edit: string, first: number;
+    if (blank) { range = new monaco.Range(line, 1, line, m.getLineMaxColumn(line)); edit = pre + body + post; first = line + (pre ? 1 : 0); }
+    else if (after) { range = new monaco.Range(line, m.getLineMaxColumn(line), line, m.getLineMaxColumn(line)); edit = `\n${pre}${body}${post}`; first = line + 1 + (pre ? 1 : 0); }
+    else { range = new monaco.Range(line, 1, line, 1); edit = `${pre}${body}\n${post}`; first = line + (pre ? 1 : 0); }
+    e.pushUndoStop();
+    e.executeEdits('code-library', [{ range, text: edit, forceMoveMarkers: true }]);
+    e.pushUndoStop();
+    const last = first + lines.length - 1;
+    e.setSelection(new monaco.Range(first, 1, last, m.getLineMaxColumn(Math.min(last, m.getLineCount()))));
+    e.revealRangeInCenterIfOutsideViewport(new monaco.Range(first, 1, last, 1));
+    toast(warn || `Put in ${ins.name} from the ${ins.library}${note}, lines ${first}–${last}`, warn ? 'warn' : 'ok');
   };
   // the code cannot change while it is being debugged
   // read only while debugging, and a file from outside the folder always (it is edited where it is)

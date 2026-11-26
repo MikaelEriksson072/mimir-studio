@@ -2,7 +2,7 @@ import { Icon, type IconName } from '../lib/icons';
 import { cx } from '../lib/util';
 import type { Activity } from '../store/ui';
 
-const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer'], ['blocks', 'blocks', 'Blocks'], ['symbols', 'tag', 'Symbols'], ['bookmarks', 'bookmark', 'Bookmarks (Ctrl+B)'], ['scripts', 'script', 'Scripts'], ['pack', 'pack', 'Pack (Brokkr or Exomizer)'], ['library', 'library', 'Library (SIDs, sprites, charsets)']];
+const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer'], ['blocks', 'blocks', 'Blocks'], ['symbols', 'tag', 'Symbols'], ['bookmarks', 'bookmark', 'Bookmarks (Ctrl+B)'], ['scripts', 'script', 'Scripts'], ['pack', 'pack', 'Pack (Brokkr or Exomizer)'], ['library', 'library', 'Library (SIDs, sprites, charsets)'], ['codelib', 'codelib', 'Macros and code (Ctrl+Shift+M)']];
 /** what a view at work is doing, in its button's tip */
 const BUSY: Partial<Record<Activity, string>> = { pack: 'packing', scripts: 'a script is running' };
 

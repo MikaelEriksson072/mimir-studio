@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, PictureFormat, Project, Roms, StartIo, ToolchainSettings } from '@mimir/core';
+import type { AssemblerId, Cartridge, CodeLibItem, CodeLibKind, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, PictureFormat, Project, Roms, StartIo, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -66,6 +66,10 @@ export const CHANNELS = {
   scriptsSave: 'scripts:save',
   scriptsRemove: 'scripts:remove',
   scriptsReveal: 'scripts:reveal',
+  codelibList: 'codelib:list',
+  codelibSave: 'codelib:save',
+  codelibRemove: 'codelib:remove',
+  codelibReveal: 'codelib:reveal',
   assemblerStart: 'assembler:start',
   assemblerOpen: 'assembler:open',
   assemblerCreate: 'assembler:create',
@@ -449,6 +453,16 @@ export interface LibraryChangeResult { item: LibraryItem; listing: LibraryListin
 /** the file manager at a file of the library, or at its folder (a kind's, or the library's) */
 export interface LibraryRevealRequest { kind?: LibraryKind; file?: string }
 
+/** the macro and code libraries (spec 10.8): the library's folder, the two folders, the items in them (code-library.ts) */
+export interface CodeLibListing { dir: string; folders: Record<CodeLibKind, string>; items: CodeLibItem[] }
+/** an item of them, by its kind and its file's plain name in that kind's folder */
+export interface CodeLibFileRequest { kind: CodeLibKind; file: string }
+/** an item written: its kind (its folder), name (its file's, made unique there), code and what it is besides; `was`:
+ *  the item it is (missing: a new one, made now) */
+export interface CodeLibSaveRequest { kind: CodeLibKind; name: string; code: string; lang: 'kickass' | '64tass'; description: string; color?: string; from?: string; was?: CodeLibFileRequest }
+/** the item written, and the libraries after it */
+export interface CodeLibChange { item: CodeLibItem; listing: CodeLibListing }
+
 /* ---------------------------------------------------------------------
  * The Assembler (spec 10.7): a folder of Kick Assembler or 64tass sources. The renderer names a file by its path inside
  * the folder (`src/main.asm`, with /), never by a path of its own; the folder is one picked in a dialog or one the
@@ -585,6 +599,12 @@ export interface KrApi {
   scriptsSave(req: { file: string; text: string; was?: string }): Promise<ScriptsListing>;
   scriptsRemove(req: { file: string }): Promise<ScriptsListing>;
   scriptsReveal(): Promise<void>;
+  /** the macro and code libraries (10.8), a file an item in the library's folders Macros and Code: listed, written,
+   *  moved to the Recycle Bin, shown in the file manager (an item's file, a kind's folder) */
+  codelibList(): Promise<CodeLibListing>;
+  codelibSave(req: CodeLibSaveRequest): Promise<CodeLibChange>;
+  codelibRemove(req: CodeLibFileRequest): Promise<CodeLibListing>;
+  codelibReveal(req: { kind: CodeLibKind; file?: string }): Promise<void>;
   /** the Assembler (10.7): the folders opened in it before, and where a new one goes */
   assemblerStart(): Promise<AsmStartInfo>;
   /** a folder opened (a dialog when `path` is not one opened before; null: cancelled): it is watched for changes made

@@ -3,19 +3,25 @@
  * Graphics, Memory, the inspector and the Explorer, show it); the window asks it to show an address's line in the
  * sources, to run or build, and to write what is not written yet before the window closes or the project does. */
 import { create } from 'zustand';
-import type { Addr, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram } from '@mimir/core';
+import type { Addr, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram, CodeLibKind, ScriptLang } from '@mimir/core';
 import type { LibraryRef } from './library';
 
 /** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
  *  (a pack's) after the last build's, under Build; `write`: bytes drawn (the enlarged sprite or character) written into
  *  the lines that write them; `drop`: files dropped on the window copied into the folder; the bookmarks': `bmAdd` the
  *  editor for the caret's line, `bmGo` the line of bookmark `id`, `bmJump` the next (`dir` 1) or previous one,
- *  `line` a file's `line` shown (to `end`, selected) while a bookmark is edited */
+ *  `line` a file's `line` shown (to `end`, selected) while a bookmark is edited; the macro and code libraries' (10.8):
+ *  `codeLib` the dialog for a new item of the lines selected (`libKind` its library), `insert` an item put in the source */
 export interface AsmAsk {
-  what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop' | 'bmAdd' | 'bmGo' | 'bmJump' | 'line'; n: number;
+  what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop' | 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib' | 'insert'; n: number;
   kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[]; files?: AsmDropped[]; at?: string | null;
-  id?: string; dir?: 1 | -1; line?: number; end?: number | null;
+  id?: string; dir?: 1 | -1; line?: number; end?: number | null; libKind?: CodeLibKind; insert?: AsmInsert;
 }
+/** an item of the macro or code library put in the source shown, where the caret is: `call` a macro's call (`text` a
+ *  snippet: its parameters places to type in), else its lines at the caret's line (`block`: a macro's definition, an
+ *  empty line before and after it where the lines beside it have text); `lang` the assembler it is written for,
+ *  `macro` the name of the macro it calls or defines */
+export interface AsmInsert { text: string; call: boolean; block: boolean; lang: ScriptLang; name: string; macro: string | null; library: string }
 /** a file dropped on the window: copied into the project's folder (`drop`; `at`: the folder or file it was dropped on in the file list) */
 export interface AsmDropped { name: string; bytes: Uint8Array }
 export interface AsmLive { mem: Uint8Array; pc: Addr; where: string | null; whole: boolean; running: boolean; n: number }
@@ -46,6 +52,9 @@ interface AsmLinkState {
   textFiles: string[];
   linesOf: (file: string) => number | null;
   titleAt: (file: string, line: number) => string;
+  /** the source that defines a macro (a pseudo command, a function, a segment) of that name (null: none does), for
+   *  the macro library (spec 10.8) */
+  macroDefined: (name: string) => string | null;
   /** the caret's line in the Assembler, and the lines selected (`to` > `from`: more than one) */
   caret: { file: string; line: number } | null;
   selection: { file: string; from: number; to: number } | null;
@@ -59,7 +68,7 @@ interface AsmLinkState {
   /** the main file built (what is not written yet is written first); null: it was not (the tab said why) */
   buildPrg: () => Promise<AsmBuilt | null>;
   set: (p: Partial<Omit<AsmLinkState, 'set' | 'reset' | 'request' | 'showAddr'>>) => void;
-  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at' | 'id' | 'dir' | 'line' | 'end'>) => void;
+  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at' | 'id' | 'dir' | 'line' | 'end' | 'libKind' | 'insert'>) => void;
   showAddr: (addr: Addr) => void;
   /** the project closed: nothing is kept */
   reset: () => void;
@@ -68,7 +77,7 @@ interface AsmLinkState {
 const none = () => Promise.resolve();
 const noBuild = () => Promise.resolve(null);
 /** no folder open: no text files, no caret */
-const NO_TEXT = { textFiles: [], linesOf: () => null, titleAt: (file: string, line: number) => `${file}:${line}`, caret: null, selection: null };
+const NO_TEXT = { textFiles: [], linesOf: () => null, titleAt: (file: string, line: number) => `${file}:${line}`, macroDefined: () => null, caret: null, selection: null };
 export const useAsmLink = create<AsmLinkState>(set => ({
   program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], live: null, flush: none, buildPrg: noBuild,
   set: p => set(p),

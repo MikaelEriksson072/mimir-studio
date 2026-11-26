@@ -28,9 +28,10 @@ import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
   gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema,
-  scriptsFileSchema, scriptsSaveSchema, libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema,
+  scriptsFileSchema, scriptsSaveSchema, libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema, codelibFileSchema, codelibRevealSchema, codelibSaveSchema,
 } from './schemas';
 import type { LibraryStore } from './library';
+import type { CodeLibStore } from './code-library';
 import type { ScriptStore } from './scripts';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
@@ -55,6 +56,8 @@ export interface IpcDeps {
   git: GitService;
   /** the library's folder (spec 10.6) */
   library: LibraryStore;
+  /** the macro and code libraries, files in its folders Macros and Code (spec 10.8) */
+  codelib: CodeLibStore;
   /** the library's scripts, files in its folder Scripts (spec 10.3) */
   scripts: ScriptStore;
   /** the folders opened in the Assembler (spec 10.7), and the watcher of the one open there (fs:changed) */
@@ -104,7 +107,7 @@ async function sourceAssembler(path: string): Promise<AssemblerId> {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { policy, settings, watcher, recent, quicksave, history, projects, git, library, scripts, asm, asmWatcher, trash } = deps;
+  const { policy, settings, watcher, recent, quicksave, history, projects, git, library, codelib, scripts, asm, asmWatcher, trash } = deps;
   quicksave.watch(quicksaveFiles(settings.get().viceQuicksave));
   // the quicksave there is now (from before the app started, or in a newly set file) joins the kept ones
   const keepCurrent = () => quicksaveInfo(quicksaveFiles(settings.get().viceQuicksave)).then(i => (i.found && i.saved ? history.add(i.path, i.saved) : null)).catch(() => null);
@@ -388,6 +391,16 @@ export function registerIpc(deps: IpcDeps): void {
     const dir = req.kind ? library.folder(req.kind) : library.root();
     await mkdir(dir, { recursive: true });
     const problem = await shell.openPath(dir);
+    if (problem) throw new Error(problem);
+  });
+  // the macro and code libraries (10.8): a file only by its kind and plain name in the folder Macros or Code
+  handle(CHANNELS.codelibList, none, () => codelib.list());
+  handle(CHANNELS.codelibSave, codelibSaveSchema, req => codelib.save(req));
+  handle(CHANNELS.codelibRemove, codelibFileSchema, req => codelib.remove(req));
+  handle(CHANNELS.codelibReveal, codelibRevealSchema, async req => {
+    if (req.file && existsSync(codelib.path(req.kind, req.file))) { shell.showItemInFolder(codelib.path(req.kind, req.file)); return; }
+    await mkdir(codelib.folder(req.kind), { recursive: true });
+    const problem = await shell.openPath(codelib.folder(req.kind));
     if (problem) throw new Error(problem);
   });
   // the library's scripts (10.3): a file only by its plain name in the folder Scripts

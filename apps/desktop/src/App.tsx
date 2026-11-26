@@ -21,6 +21,7 @@ import {
   debugSources, asmLineAt, type AsmProgram,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
+  codeLibCall, type CodeLibItem, type CodeLibKind,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepDeclinedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type EditorTab, type InspectorMode } from './store/ui';
@@ -79,6 +80,9 @@ import { MemoryDump } from './components/MemoryDump';
 import { LibraryTab } from './components/LibraryTab';
 import { LibraryAddModal, type LibraryAnswer, type LibraryDraft } from './components/LibraryAdd';
 import { useLibrary, type LibraryRef } from './store/library';
+import { useCodeLib } from './store/codelib';
+import { CODE_LIB_TITLE, focusCodeLibSearch, itemMacro } from './components/CodeLibView';
+import { CodeLibDialog } from './components/CodeLibDialog';
 import { deepSidName, LIB_COLORS, LIB_KIND, libraryKindOf, sameInLibrary } from './lib/library';
 import type { BankChoice } from './components/ViewModes';
 import { bookmarkList, bookmarkSpan } from './components/Bookmarks';
@@ -155,6 +159,8 @@ const ASM_TABS: readonly EditorTab[] = ['asm', 'gfx', 'mem', 'scripts', 'git', '
 /** the side panel's views an Assembler project has not (none now: its bookmarks are on lines of the sources, moving with
  *  them, and the Pack view packs what the Assembler builds) */
 const ASM_HIDDEN_VIEWS: readonly Activity[] = [];
+/** the views only an Assembler project has: the macro and code libraries (spec 10.8) */
+const ASM_ONLY_VIEWS: readonly Activity[] = ['codelib'];
 const NO_ASM_BOOKMARKS: Record<string, AsmBookmark> = {};
 /** every byte loaded: the memory of a program being debugged is all there is (Memory and Graphics show any of it) */
 const ALL_LOADED = new Int16Array(0x10000);
@@ -2386,7 +2392,21 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the bookmark whose note the list shows, and the one the editor is open on (`id` null: a new one) */
   const [asmBmSel, setAsmBmSel] = useState<string | null>(null);
   const [asmBmEdit, setAsmBmEdit] = useState<{ id: string | null; file: string; line: number; end: number | null } | null>(null);
-  const asmAsk2 = (what: 'bmAdd' | 'bmGo' | 'bmJump' | 'line', o?: { id?: string; dir?: 1 | -1; at?: string; line?: number; end?: number | null }) => { setUi({ tab: 'asm' }); useAsmLink.getState().request(what, o); };
+  const asmAsk2 = (what: 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib', o?: { id?: string; dir?: 1 | -1; at?: string; line?: number; end?: number | null; libKind?: CodeLibKind }) => { setUi({ tab: 'asm' }); useAsmLink.getState().request(what, o); };
+  /* ---- the macro and code libraries (spec 10.8): the view, the dialog, an item put in the source ---- */
+  const codeLibEditing = useCodeLib(s => s.editing);
+  const codeLibCount = useCodeLib(s => s.listing?.items.length ?? 0);
+  // (a dialog of its own each time one opens)
+  const codeLibKey = useMemo(() => uid(), [codeLibEditing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (asmMode) void useCodeLib.getState().load(); }, [asmMode]);
+  /** the libraries' view in the side panel (`search`: its search field focused) */
+  const showCodeLib = (search = false) => { setUi({ activity: 'codelib', sidePanel: true }); if (narrow) setDrawer('side'); if (search) focusCodeLibSearch(); };
+  /** an item put in the source where the Assembler's caret is (`call`: a macro's call, its parameters to type in) */
+  const insertCodeLib = (item: CodeLibItem, how: 'code' | 'call') => {
+    const m = itemMacro(item), call = how === 'call' && !!m;
+    setUi({ tab: 'asm' });
+    useAsmLink.getState().request('insert', { insert: { text: call && m ? codeLibCall(m, item.lang, true) : item.code, call, block: !call && item.kind === 'macro', lang: item.lang, name: item.name, macro: m?.name ?? null, library: CODE_LIB_TITLE[item.kind].lib } });
+  };
   /** the editor in the Bookmarks view: for the bookmark `id`, else a new one on the line (to `end`) */
   const openAsmBookmark = (at: { file: string; line: number; end: number | null; id: string | null }) => {
     const b = at.id ? asmBms[at.id] : undefined;
@@ -4350,6 +4370,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (asmMode && !ASM_TABS.includes(tab)) setUi({ tab: 'asm' });
     else if (!asmMode && tab === 'asm') setUi({ tab: 'listing' });
     if (asmMode && ASM_HIDDEN_VIEWS.includes(activity)) setUi({ activity: 'explorer' });
+    else if (!asmMode && ASM_ONLY_VIEWS.includes(activity)) setUi({ activity: 'explorer' });
   }, [asmMode, tab, activity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- commands & keys ---- */
@@ -4497,6 +4518,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'bookmarks', label: 'Show bookmarks (notes on lines of the sources)', key: 'Ctrl+B', run: () => showBookmarks() },
     { id: 'bookmark-next', label: 'Go to the next bookmark', key: 'Alt+F2', run: () => asmAsk2('bmJump', { dir: 1 }) },
     { id: 'bookmark-prev', label: 'Go to the previous bookmark', key: 'Alt+Shift+F2', run: () => asmAsk2('bmJump', { dir: -1 }) },
+    { id: 'codelib', label: 'Show the macro and code libraries (macros and pieces of code kept for every project)', run: () => showCodeLib() },
+    { id: 'codelib-search', label: 'Search the macro and code libraries', key: 'Ctrl+Shift+M', run: () => showCodeLib(true) },
+    { id: 'codelib-macro', label: 'Add the lines selected in the Assembler to the macro library… (none selected: the macro the caret is in)', run: () => asmAsk2('codeLib', { libKind: 'macro' }) },
+    { id: 'codelib-code', label: 'Add the lines selected in the Assembler to the code library…', run: () => asmAsk2('codeLib', { libKind: 'code' }) },
     { id: 'asm-settings', label: `Assembler project settings: the language, the main file, more ${asmTool2} arguments (defines for the check too), where Debug runs`, run: asmSettings },
     { id: 'asm-debugger', label: `Run in ${debuggerName}: build the main file with ${asmTool2} and start it there with the sources and the breakpoints`, key: 'Shift+F5', run: () => asmAsk('debugger') },
     { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
@@ -4586,6 +4611,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (e.key === 'F1') { e.preventDefault(); setModal('palette'); return; }
       // an Assembler project's Assembler tab has keys of its own (the code, Run, Build, Debug): only Settings and the
       // bottom panel are the window's there
+      if (k.asm && ctrl && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') { run('codelib-search'); return; }
       if (k.asm && k.tab === 'asm') { if (ctrl && !e.shiftKey && !e.altKey && (e.key === ',' || /^[jb]$/i.test(e.key))) run(e.key === ',' ? 'settings' : e.key.toLowerCase() === 'j' ? 'panel' : 'bookmarks'); return; }
       // Ctrl+F finds in the listing, and in the source and drive code tabs with Monaco's find (in the editor Monaco takes it itself)
       if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source' || k.tab === 'drive') run('find'); return; }
@@ -5109,7 +5135,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onOverview={() => setModal('overview')} canOverview={project.files.length > 0 || !!project.cart}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : undefined} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: asmMode ? Object.keys(asmBms).length : Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
+      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : ASM_ONLY_VIEWS} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: asmMode ? Object.keys(asmBms).length : Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0, codelib: codeLibCount }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
           // the view shown: its button collapses the side panel; collapsed, any view's button brings it back. The
           // Library's button shows the Library tab too (10.6)
           if (a === 'library' && !(sidePanel && a === activity && !narrow)) { setLibTabSeen(true); setUi({ tab: 'library' }); }
@@ -5139,6 +5165,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           onDiskFileMenu={(f, x, y) => fileScriptMenu(`dir/${f.track}/${f.sector}`, f.name, x, y)} onTapeFileMenu={(f, x, y) => fileScriptMenu(`tape/${tape?.img.files.indexOf(f)}`, f.name, x, y)}
           asmBm={asmMode ? { bookmarks: asmBms, selected: asmBmSel, onSelect: setAsmBmSel, onGo: id => asmAsk2('bmGo', { id }), onAdd: () => asmAsk2('bmAdd'), onEdit: editAsmBookmark, onDelete: deleteAsmBookmark,
             editing: asmBmEdit ? { ...asmBmEdit, onSave: saveAsmBookmark, onCancel: () => setAsmBmEdit(null), onPreview: (file, line, end) => asmAsk2('line', { at: file, line, end }) } : null } : null}
+          codelib={asmMode ? { desktop: !!kr, lang: stored.asm?.lang ?? 'kickass', onInsert: insertCodeLib, onNew: kind => asmAsk2('codeLib', { libKind: kind }), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast } : undefined}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),
@@ -5383,6 +5410,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         fill={t => renderTemplate(templateText(t, S, !!project.cart), S, { names: R.fileNames, cart: cartBuild({ ...project, settings: S }), entry: sfxEntry(project) })}
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
+      {codeLibEditing && <CodeLibDialog key={codeLibKey} editing={codeLibEditing} toast={toast} onSaved={() => setUi({ activity: 'codelib', sidePanel: true })} onClose={() => useCodeLib.getState().set({ editing: null })} />}
       {asmRelease && asmMode && <AsmReleaseModal main={asmMain ?? stored.asm?.main ?? 'main.asm'} packer={packPrefs.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} busy={buildBusy}
         basic={(c => (c ? c.entryFrom === 'basic' : null))(useAsmLink.getState().check)}
         onRelease={c => void releaseAsm(c)} onScripts={() => void asmScripts()} onClose={() => setAsmRelease(false)} />}

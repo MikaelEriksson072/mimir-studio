@@ -1,6 +1,6 @@
 /* zod schemas for everything that crosses the IPC boundary or is read from disk (spec 4.2). */
 import { z } from 'zod';
-import { extraProblem, isBookmarkColor, isLibraryFileName, isScriptFileName, SCRIPT_FILE_MAX, LEGACY_PROJECT_FORMAT, LIBRARY_MAX_BYTES, MAX_BLANKS, type BlockKind } from '@mimir/core';
+import { CODE_LIB_DESCRIPTION_MAX, CODE_LIB_FILE_MAX, CODE_LIB_NAME_MAX, extraProblem, isBookmarkColor, isCodeLibFileName, isLibraryFileName, isScriptFileName, SCRIPT_FILE_MAX, LEGACY_PROJECT_FORMAT, LIBRARY_MAX_BYTES, MAX_BLANKS, type BlockKind } from '@mimir/core';
 
 const addr = z.number().int().min(0).max(0x10000);
 /** an address in the project's work: in a cartridge's bank s, s * $10000 + the address (spec 13.9b) */
@@ -381,6 +381,21 @@ export const libraryRevealSchema = z.object({ kind: libraryKind.optional(), file
 const scriptFile = z.string().min(1).max(130).refine(isScriptFileName, 'not a plain name of a script\'s file');
 export const scriptsSaveSchema = z.object({ file: scriptFile, text: z.string().max(SCRIPT_FILE_MAX), was: scriptFile.optional() }).strict();
 export const scriptsFileSchema = z.object({ file: scriptFile }).strict();
+/* ---- the macro and code libraries (spec 10.8): a file by its kind and plain name in that kind's folder ---- */
+const codelibKind = z.enum(['macro', 'code']);
+const codelibFile = z.string().min(1).max(130).refine(isCodeLibFileName, 'not a plain file name of the libraries');
+export const codelibFileSchema = z.object({ kind: codelibKind, file: codelibFile }).strict();
+export const codelibSaveSchema = z.object({
+  kind: codelibKind,
+  name: z.string().trim().min(1).max(CODE_LIB_NAME_MAX),
+  code: z.string().max(CODE_LIB_FILE_MAX),
+  lang: z.enum(['kickass', '64tass']),
+  description: z.string().max(CODE_LIB_DESCRIPTION_MAX),
+  color: z.string().max(7).refine(isBookmarkColor, 'not a colour').optional(),
+  from: z.string().max(500).optional(),
+  was: codelibFileSchema.optional(),
+}).strict();
+export const codelibRevealSchema = z.object({ kind: codelibKind, file: codelibFile.optional() }).strict();
 export const libraryPickSchema = z.object({ current: z.string().max(1024).optional() }).strict();
 
 /* the Assembler (spec 10.7): a folder, and a file by its path inside it (assembler.ts inFolder checks it again) */

@@ -20,12 +20,15 @@ import { DiskScreen } from './DiskScreen';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
 import { PackView, type PackViewProps } from './Pack';
 import { LibraryView, type LibraryViewProps } from './LibraryView';
+import { CodeLibView, type CodeLibViewProps } from './CodeLibView';
 import { SideSection } from './SideSection';
 
 interface SidebarProps {
   view: Activity; A: AnalysisResult; R: RenderResult; project: Project; colors: CanvasColors; cursor: Addr | null;
   /** the Library view (spec 10.6) */
   library: LibraryViewProps;
+  /** the macro and code libraries' view (spec 10.8) */
+  codelib?: CodeLibViewProps;
   /** an Assembler project (spec 10.7): the Explorer shows the program its sources make (its file, the disk, the tape and
    *  the memory map), none of a re-assembly's; `main`: the main file chosen (null: the one Mimir finds). Null: another */
   asm?: { main: string | null; onShow: (a: Addr) => void } | null;
@@ -167,7 +170,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ asm, asmBm, view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
+export function Sidebar({ asm, asmBm, view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library, codelib }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -239,6 +242,7 @@ export function Sidebar({ asm, asmBm, view, A, R, project, colors, cursor, onNav
   if (view === 'scripts') return <ScriptsSideView {...scripts} />;
   if (view === 'pack') return <PackView {...pack} />;
   if (view === 'library') return <LibraryView {...library} />;
+  if (view === 'codelib' && codelib) return <CodeLibView {...codelib} />;
   if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} onPlayMusic={onPlayMusic} musicPlayer={musicPlayer} onShowBlock={onShowBlock} />;
   // symbols
   const ql = q.toLowerCase();

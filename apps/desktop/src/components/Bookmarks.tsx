@@ -187,13 +187,15 @@ const roam = (e: KeyboardEvent<HTMLDivElement>) => {
 
 /** The bookmark's colour: eight presets, then eight places for colours of the user's own, which the app keeps for every
  * project. An empty place (+) makes one; a double-click on one, or the pencil, changes it. A bookmark keeps its colour
- * when the colour it was given is changed or removed here. */
-export function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+ * when the colour it was given is changed or removed here. `none`: a place for no colour first (`value` ''), as the
+ * macro and code libraries' items have. */
+export function ColorPicker({ value, onChange, none }: { value: string; onChange: (c: string) => void; none?: boolean }) {
   const own = useUi(s => s.bmColors), setUi = useUi(s => s.set);
   /** the place of the own colour being made or changed, the colour (the last valid one typed) and the text typed */
   const [slot, setSlot] = useState<{ i: number; c: string; text: string } | null>(null);
   const preset = (BOOKMARK_COLORS as readonly string[]).includes(value);
-  const mine = preset ? -1 : own.indexOf(value.toLowerCase());
+  const nothing = !!none && !value;
+  const mine = preset || !value ? -1 : own.indexOf(value.toLowerCase());
   const begin = (i: number) => { const c = own[i] || hexOf(value); setSlot({ i, c, text: c }); };
   const typed = slot ? HEX.exec(slot.text.trim()) : null;
   // closing the colour's editor puts the focus back on its place, so Esc then cancels the bookmark
@@ -209,10 +211,11 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (c: 
   return (
     <div className="field bm-colors" role="group" aria-labelledby="bm-color-l">
       <div className="bm-color-head"><span id="bm-color-l">Colour</span><span className="grow" />
-        <span className="bm-color-name">{preset ? PRESET_NAMES[value as BookmarkPreset] : mine >= 0 ? `Your colour ${mine + 1} · ${value}` : value}</span></div>
+        <span className="bm-color-name">{nothing ? 'No colour' : preset ? PRESET_NAMES[value as BookmarkPreset] : mine >= 0 ? `Your colour ${mine + 1} · ${value}` : value}</span></div>
       <div className="bm-swatches" role="group" aria-label="Preset colours" onKeyDown={roam}>
+        {none && <button type="button" className={cx('bm-sw', 'none', nothing && 'on')} tabIndex={nothing ? 0 : -1} aria-label="No colour" aria-pressed={nothing} title="No colour" onClick={() => onChange('')} />}
         {BOOKMARK_COLORS.map((c, i) => <button key={c} type="button" className={cx('bm-sw', value === c && 'on')} style={{ '--sw': `var(--bm-${c})` } as CSSProperties}
-          tabIndex={value === c || (!preset && i === 0) ? 0 : -1} aria-label={PRESET_NAMES[c]} aria-pressed={value === c} title={PRESET_NAMES[c]} onClick={() => onChange(c)} />)}
+          tabIndex={value === c || (!preset && !nothing && i === 0) ? 0 : -1} aria-label={PRESET_NAMES[c]} aria-pressed={value === c} title={PRESET_NAMES[c]} onClick={() => onChange(c)} />)}
       </div>
       <div className="bm-swatches" role="group" aria-label="Your colours" onKeyDown={roam} ref={ownRow}>
         {own.map((c, i) => c
