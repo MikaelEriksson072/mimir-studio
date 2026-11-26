@@ -34,8 +34,8 @@ import type { LibraryStore } from './library';
 import type { ScriptStore } from './scripts';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
-import { changeInFolder, createAsmFolder, inFolder, listFolder, readInFolder, writeInFolder, type AsmStore } from './assembler';
-import { ASM_DATA_MAX, asmChangeSchema, asmCreateSchema, asmDirSchema, asmOpenSchema, asmPickDataSchema, asmReadSchema, asmRevealSchema, asmWriteSchema } from './schemas';
+import { changeInFolder, createAsmFolder, inFolder, listFolder, readInFolder, readOutside, writeInFolder, type AsmStore } from './assembler';
+import { ASM_DATA_MAX, asmChangeSchema, asmCreateSchema, asmDirSchema, asmOpenSchema, asmPickDataSchema, asmOutsideSchema, asmReadSchema, asmRevealSchema, asmWriteSchema } from './schemas';
 
 export interface IpcDeps {
   policy: PathPolicy;
@@ -429,6 +429,8 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.assemblerClose, asmDirSchema, req => { asmWatcher.unwatch(policy.assert(req.dir, 'The Assembler\'s folder')); });
   handle(CHANNELS.assemblerList, asmDirSchema, req => listFolder(asmDir(req.dir)));
   handle(CHANNELS.assemblerRead, asmReadSchema, req => readInFolder(asmDir(req.dir), req.path, req.as ?? 'text'));
+  // (what the sources import from outside the folder: a source or data file only, for Mimir's check)
+  handle(CHANNELS.assemblerReadOutside, asmOutsideSchema, req => readOutside(asmDir(req.dir), req.path, req.libdirs ?? []));
   // (the folder's watcher is not quieted for the Assembler's own writes: it tells them apart by their text, and a change
   // made outside the app a moment after one is still seen)
   handle(CHANNELS.assemblerWrite, asmWriteSchema, req => writeInFolder(asmDir(req.dir), req.path, req.text ?? req.bytes!));

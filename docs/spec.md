@@ -3891,6 +3891,17 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`amend`), så att Ctrl+Z ångrar koden och inte flytten; att lägga till, ändra och ta bort är steg som andra.
   En fil som byter namn i fillistan tar sina bokmärken med sig; en fil som ändras utanför Mimir får dem på raderna som
   sparats; ett bokmärke i en fil som inte finns i mappen visas nedtonat. Ingen NOTES-fil (Assemblern exporterar inget).
+- **Filer utanför mappen** (2026-11-26). Källor och data som källorna importerar utanför projektets mapp (`#import
+  "C:\_c64_lib\macro\irq_lib.asm"`, `../lib/x.asm`, `.import binary`, `LoadSid` …) läser Mimirs kontroll som bygget gör:
+  kontrollen säger vilka filer den letade efter och inte fick (`AsmCheck.missing`, vfs:en genom en Proxy), och Assemblern
+  läser dem genom huvudprocessen (`assembler:readOutside`: en absolut sökväg, en från mappen, annars i
+  biblioteksmapparna i argumenten, KickAss `-libdir`, 64tass `-I`; bara käll- och datafiler, högst 16 MB) och
+  kontrollerar igen. De läses om när fönstret får fokus igen (ändrade i en annan editor) och när biblioteksmapparna
+  ändras. Ett problem i en sådan fil öppnar ingen flik: ett meddelande säger var den ligger. Samtidigt det sådana
+  bibliotek skriver i Kick Assembler: `BasicUpstart(adress)` där programräknaren står (och `:BasicUpstart2`, med kolon),
+  som `autoinclude.asm` har dem, en egen med samma namn vinner; flera satser på en rad med `;` (`{pha;txa;pha}`, inte i
+  `.for`s parenteser); operanden direkt efter mnemonic när den börjar med `#`, `$` eller `%` (`lda#$35`, `sta$01`).
+  Mätt mot KickAss.jar.
 - **Det debuggade programmets minne, och externa debuggers** (2026-11-25). Medan Assemblern debuggar programmet visar
   *Memory* och *Graphics* maskinens minne som det är nu i stället för programmet som det laddas (`live` i
   `store/asmlink.ts`): i Mimirs 6510 det programmet ser (`asmMachineMemory`: det det skrivit över sina egna bytes), i hela
@@ -4686,6 +4697,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `assembler:close` | renderer → main | `{ dir }`: mappen bevakas inte längre |
 | `assembler:list` | renderer → main | `{ dir }` → mappens filer och mappar, med storlek och ändringstid |
 | `assembler:read` | renderer → main | `{ dir, path, as? }` → `{ text }` eller `{ bytes }`, `size`, `mtime`: en fil, bara med sin väg i mappen |
+| `assembler:readOutside` | renderer → main | `{ dir, path, libdirs? }` → `{ found, text?, bytes?, mtime? }`: en fil som källorna importerar utanför mappen, som de skriver den (absolut, från mappen, annars i biblioteksmapparna), bara käll- och datafiler, för Mimirs kontroll (10.7) |
 | `assembler:write` | renderer → main | `{ dir, path, text }` eller `{ dir, path, bytes }` → `{ mtime }`: en källfil, eller en datafil för ett block eller Releases avbild (högst 16 MB), skrivs (dess mapp görs om den saknas) |
 | `assembler:change` | renderer → main | `{ dir, op, path, to?, text? }` → mappens innehåll: en ny fil eller mapp, ett namnbyte (eller en flytt i mappen), eller till papperskorgen |
 | `assembler:reveal` | renderer → main | `{ dir, path? }`: filhanteraren vid filen eller mappen |

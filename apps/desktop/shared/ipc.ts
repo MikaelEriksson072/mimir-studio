@@ -73,6 +73,7 @@ export const CHANNELS = {
   assemblerClose: 'assembler:close',
   assemblerList: 'assembler:list',
   assemblerRead: 'assembler:read',
+  assemblerReadOutside: 'assembler:readOutside',
   assemblerWrite: 'assembler:write',
   assemblerChange: 'assembler:change',
   assemblerReveal: 'assembler:reveal',
@@ -470,6 +471,10 @@ export interface AsmCreateRequest { name: string; parent: string; files: Record<
 /** a file of the folder, as text or as its bytes */
 export interface AsmReadRequest { dir: string; path: string; as?: 'text' | 'bytes' }
 export interface AsmReadResult { text?: string; bytes?: Uint8Array; size: number; mtime: number }
+/** a file the sources import from outside the folder, as they name it (`C:/lib/irq.asm`, `../lib/irq.asm`, or one a
+ *  library folder has: `libdirs`, -libdir / -I of the arguments); `found`: where it was (null: nowhere) */
+export interface AsmOutsideRequest { dir: string; path: string; libdirs?: string[] }
+export interface AsmOutsideResult { found: string | null; text?: string; bytes?: Uint8Array; mtime?: number }
 /** a file of the folder written: a source's text, or the bytes of a data file (a block's file: Insert block) */
 export interface AsmWriteRequest { dir: string; path: string; text?: string; bytes?: Uint8Array }
 /** a file picked in a dialog for a block of `kind` (Insert block): its name, where it is, its path inside the folder when
@@ -591,6 +596,8 @@ export interface KrApi {
   assemblerClose(req: { dir: string }): Promise<void>;
   assemblerList(req: { dir: string }): Promise<AsmFolder>;
   assemblerRead(req: AsmReadRequest): Promise<AsmReadResult>;
+  /** a source or data file the sources import from outside the folder (Mimir's check reads it as the build does) */
+  assemblerReadOutside(req: AsmOutsideRequest): Promise<AsmOutsideResult>;
   assemblerWrite(req: AsmWriteRequest): Promise<{ mtime: number }>;
   assemblerChange(req: AsmChangeRequest): Promise<AsmFolder>;
   /** the file manager at a file of the folder, or at the folder */

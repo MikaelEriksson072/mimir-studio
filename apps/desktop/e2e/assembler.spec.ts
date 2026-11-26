@@ -1303,3 +1303,37 @@ test('bookmarks in an Assembler project, as in the re-assembler: on lines of the
   await expect.poll(saved).toEqual(['irq.asm:1 irq', 'main.asm:5-6 start', 'main.asm:7 loop']);
   await closeProject(page, 'marks');
 });
+
+test('macros imported from outside the project\'s folder: by a path of their own and from a library folder of the arguments (-libdir), checked as the build does, read again when the window comes back', async ({ workDir: work, app, page }) => {
+  mkdirSync(join(work, 'extlib'));
+  mkdirSync(join(work, 'lib2'));
+  const lib = join(work, 'extlib', 'macros.asm');
+  writeFileSync(lib, '.macro Border(c) {lda#c;sta$d020}\n');
+  writeFileSync(join(work, 'lib2', 'more.asm'), '.macro Back(c) { lda #c; sta $d021 }\n');
+  const dir = join(work, 'outside');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [`#import "${lib}"`, '#import "more.asm"', '.pc = $0801 "Basic Upstart"', 'BasicUpstart(start)', '.pc = $0810 "Main"', 'start:  Border(2)', '        Back(0)', '        rts', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  // the library by its own path is read; more.asm is in no folder the check knows yet
+  await expect(problems).toContainText('Can\'t open file "more.asm"');
+  await expect(problems).not.toContainText('macros.asm');
+  // -libdir in the project's arguments: the check looks there as Kick Assembler does
+  await page.getByRole('button', { name: 'Assembler project settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await settings.locator('#set-asmArgs').fill('-libdir ../lib2');
+  await settings.getByRole('button', { name: 'Save settings' }).click();
+  await expect(problems).toContainText('The program assembles: 23 bytes');
+  await shot(page, '34-asm-outside');
+  await page.getByRole('button', { name: 'Build', exact: true }).click();
+  await expect(page.locator('.scr-run-stat')).toContainText('Built main.prg', { timeout: 60_000 });
+  expect([...readFileSync(join(dir, 'out', 'main.prg')).subarray(2 + 15)]).toEqual([0xa9, 2, 0x8d, 0x20, 0xd0, 0xa9, 0, 0x8d, 0x21, 0xd0, 0x60]);
+  // the library changed in another editor: read again when the window comes back
+  writeFileSync(lib, '.macro Border(c) {lda#c;sta$d020;nop}\n');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(problems).toContainText('The program assembles: 24 bytes');
+  await closeProject(page, 'outside');
+});

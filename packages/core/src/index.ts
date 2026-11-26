@@ -105,7 +105,7 @@ export { SCRIPT_TEMPLATES, templateSource, type ScriptTemplate } from './script-
 export { JS_TEMPLATES } from './script-templates-js';
 export { asmOfLang, assembleIn, codeLabels, codeLines, codeOfLine, commentAt, definedNames, LANG_TITLE, langIs, langOf, LANGS, lineComment, needsTassCpu, setsItsPlace, splitLabel, startsInBlockComment, usedWords, withoutComment } from './code-lang';
 export { asmDebugSources, asmMachineMemory } from './asm-project';
-export { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgCpu, asmArgDefines, asmCallSite, asmDropPath, asmEndText, asmTemplate, asmLineAt, asmMachine, asmProgram, checkAsm, dataFiles, importsOf, mainFile, sourceLang, type AsmCheck, type AsmProblem, type AsmProgram } from './asm-project';
+export { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgCpu, asmArgDefines, asmArgLibdirs, asmCallSite, asmDropPath, asmEndText, asmTemplate, asmLineAt, asmMachine, asmProgram, checkAsm, dataFiles, importsOf, mainFile, sourceLang, type AsmCheck, type AsmProblem, type AsmProgram } from './asm-project';
 export { asmWriteBytes, type AsmByteChange, type AsmWriteBack } from './asm-write';
 export { asmCode, asmLineCycles, asmLinesRange } from './asm-cycles';
 export { asmNameRefs, asmNames, asmRenameProblem, type AsmNameAt } from './asm-names';

@@ -4,9 +4,9 @@
  * this session or one opened in the Assembler before. Deleting moves a file to the Recycle Bin. */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmReadResult, AsmRecent } from '../../shared/ipc';
+import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmOutsideResult, AsmReadResult, AsmRecent } from '../../shared/ipc';
 import { projectNameProblem } from '../../shared/projects';
 
 /** how many folders the Assembler lists */
@@ -107,6 +107,27 @@ export async function readInFolder(dir: string, rel: string, as: 'text' | 'bytes
   if (s.size > ASM_READ_MAX) throw new Error(`${rel} is ${s.size} bytes: the Assembler reads files up to ${ASM_READ_MAX / 1024 / 1024} MB`);
   const bytes = await readFile(full);
   return as === 'text' ? { text: bytes.toString('utf8'), size: s.size, mtime: s.mtimeMs } : { bytes: new Uint8Array(bytes), size: s.size, mtime: s.mtimeMs };
+}
+
+/** the files a source may import from outside the folder: sources and text, and the data assemblers load (binaries,
+ *  PRGs, SIDs, pictures, charsets, sprites, maps); nothing else is read there */
+const OUTSIDE_TEXT = /\.(asm|s|inc|a|i|src|tas|a65|lib|65s|asm65|h|sym|txt)$/i;
+const OUTSIDE_DATA = /\.(bin|prg|sid|raw|dat|data|chr|char|fnt|font|64c|spr|kla|koa|ocp|art|dd|ddl|png|gif|jpe?g|bmp|map|ctm|pal|seq|scr|col|ptn|petmate)$/i;
+/** A file the sources import from outside the folder, as they name it: an absolute path, one from the folder
+ *  (`../lib/irq.asm`), else one a library folder has (-libdir, -I; each from the folder when it is relative). Only
+ *  sources and data files, up to ASM_READ_MAX; a source as text. */
+export async function readOutside(dir: string, path: string, libdirs: readonly string[]): Promise<AsmOutsideResult> {
+  const p = path.replace(/[\\/]/g, sep);
+  const tries = isAbsolute(p) ? [p] : [resolve(dir, p), ...libdirs.map(l => resolve(dir, l, p))];
+  for (const full of tries) {
+    const text = OUTSIDE_TEXT.test(full);
+    if (!text && !OUTSIDE_DATA.test(full)) continue;
+    const s = await stat(full).catch(() => null);
+    if (!s?.isFile() || s.size > ASM_READ_MAX) continue;
+    const bytes = await readFile(full);
+    return text ? { found: full, text: bytes.toString('utf8'), mtime: s.mtimeMs } : { found: full, bytes: new Uint8Array(bytes), mtime: s.mtimeMs };
+  }
+  return { found: null };
 }
 
 /** a source written, or a data file's bytes (its folder made when it is not there) */

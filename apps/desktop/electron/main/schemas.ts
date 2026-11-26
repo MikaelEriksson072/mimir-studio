@@ -392,6 +392,8 @@ export const asmOpenSchema = z.object({ path: asmDir.optional() }).strict();
 export const asmCreateSchema = z.object({ name: z.string().min(1).max(200), parent: asmDir, files: z.record(asmPath, z.string().max(ASM_TEXT_MAX)).refine(f => Object.keys(f).length <= 16, 'too many files') }).strict();
 export const asmDirSchema = z.object({ dir: asmDir }).strict();
 export const asmReadSchema = z.object({ dir: asmDir, path: asmPath, as: z.enum(['text', 'bytes']).optional() }).strict();
+/** a file the sources import from outside the folder, as they name it, and the library folders to look in */
+export const asmOutsideSchema = z.object({ dir: asmDir, path: z.string().min(1).max(4096), libdirs: z.array(z.string().min(1).max(4096)).max(16).optional() }).strict();
 export const asmWriteSchema = z.object({ dir: asmDir, path: asmPath, text: z.string().max(ASM_TEXT_MAX).optional(), bytes: z.instanceof(Uint8Array).refine(b => b.length <= ASM_WRITE_MAX, 'more than 16 MB').optional() }).strict()
   .refine(r => (r.text == null) !== (r.bytes == null), 'a text or bytes, one of them');
 /** the most a data file the Assembler reads for a block holds (a .sid of all 64 KB with its header) */

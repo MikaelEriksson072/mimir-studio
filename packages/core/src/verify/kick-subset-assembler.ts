@@ -170,6 +170,8 @@ function braceParts(s: string): string[] {
     if (c === ')' || c === ']') depth--;
     if (!depth && c === '{') { out.push((cur.trim() + ' {').trim()); cur = ''; continue; }
     if (!depth && c === '}') { if (cur.trim()) out.push(cur.trim()); out.push('}'); cur = ''; continue; }
+    // (; between statements on a line: `nop; nop`, `{pha;txa;pha}`; not in .for's parentheses)
+    if (!depth && c === ';') { if (cur.trim()) out.push(cur.trim()); cur = ''; continue; }
     cur += c;
   }
   if (cur.trim()) out.push(cur.trim());
@@ -991,7 +993,8 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         if (/^\.disk\b/.test(s)) { E('.disk needs its files in { }: .disk [filename="game.d64"] { [name="GAME", segments="Code"] }', st); return; }
         if (/^\.(modify|filemodify)\b/.test(s)) { E(`Mimir's check cannot run a modifier plugin (${s.split(/\s/)[0]}): Kick Assembler has none of its own, they are Java plugins (Run builds with Kick Assembler)`, st); return; }
         // a macro called: `name(1, 2)` (or `:name(1, 2)`)
-        if ((m = s.match(/^:?([A-Za-z_]\w*)\s*\((.*)\)$/)) && m[1] !== 'BasicUpstart2' && !(ENC[m[1].toUpperCase()] && s[0] !== ':' && !macros.has(m[1]))) {
+        // (Kick Assembler's own BasicUpstart and BasicUpstart2, of its autoinclude.asm, below, unless the code has its own)
+        if ((m = s.match(/^:?([A-Za-z_]\w*)\s*\((.*)\)$/)) && !(/^BasicUpstart2?$/.test(m[1]) && !macros.has(m[1])) && !(ENC[m[1].toUpperCase()] && s[0] !== ':' && !macros.has(m[1]))) {
           const def = macros.get(m[1]);
           if (!def) { E(funcs.has(m[1]) ? `${m[1]}() is a function: use its value (.eval ${m[1]}(…))` : `Unknown macro "${m[1]}"`, st); return; }
           const args = splitArgs(m[2]).map(a => ev(P(a)));
@@ -1006,15 +1009,18 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           invoke(def, def.params.map((_, i) => argOf(parts[i] ?? '')), st);
           return;
         }
-        if ((m = s.match(/^BasicUpstart2\s*\((.+)\)$/))) {
-          const v = evn(P(m[1])) ?? 0x1000; pc = 0x0801; blocks.push({ start: pc, name: 'Basic Upstart' });
-          const digits = String(v); const endL = 0x0801 + 6 + digits.length;
+        // BasicUpstart(address): a BASIC line `10 SYS address` where the program counter is; BasicUpstart2 puts it at
+        // $0801 (both as Kick Assembler's autoinclude.asm has them; `:BasicUpstart2(…)` too)
+        if ((m = s.match(/^:?(BasicUpstart2?)\s*\((.+)\)$/))) {
+          const two = m[1] === 'BasicUpstart2', v = evn(P(m[2])) ?? 0x1000;
+          if (two) { pc = 0x0801; blocks.push({ start: pc, name: 'Basic Upstart' }); }
+          const digits = String(v); const endL = pc + 6 + digits.length;
           emit(endL & 0xff, st); emit(endL >> 8, st); emit(10, st); emit(0, st); emit(0x9e, st);
           for (const c of digits) emit(c.charCodeAt(0), st);
           emit(0, st); emit(0, st); emit(0, st);
           // as KickAss 5.25's macro: `.pc = $080e "Basic End"` after the line (code after a SYS with four digits starts
           // a byte after the line's end)
-          if (pc < 0x080e) pc = 0x080e;
+          if (two && pc < 0x080e) pc = 0x080e;
           return;
         }
         if ((m = s.match(/^\.(byte|by|word|wo|text|fill|import\s+binary|align)\b\s*(.*)$/))) {
@@ -1031,8 +1037,9 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           else if (dir === 'import binary') { const path = ev(P(args[0])); const u = vfs[importPath(vfs, st.file, path)]; if (!(u instanceof Uint8Array)) { E(`Can't open binary file "${path}"`, st); return; } const o = args[1] ? evn(P(args[1])) ?? 0 : 0; const len = args[2] ? evn(P(args[2])) ?? 0 : u.length - o; for (let i = 0; i < len; i++) emit(u[o + i], st); }
           return;
         }
-        if ((m = s.match(/^([A-Za-z]{3})(?:\.([A-Za-z]+))?(?:\s+(.*))?$/)) && ENC[m[1].toUpperCase()]) {
-          const mn = m[1].toUpperCase(), ext = (m[2] || '').toLowerCase(), arg = (m[3] || '').trim();
+        // (the operand right after the mnemonic when it starts with # $ or %, as Kick Assembler takes it: lda#$35, sta$01)
+        if ((m = s.match(/^([A-Za-z]{3})(?:\.([A-Za-z]+))?(?:\s+(.*)|([#$%].*))?$/)) && ENC[m[1].toUpperCase()]) {
+          const mn = m[1].toUpperCase(), ext = (m[2] || '').toLowerCase(), arg = (m[3] ?? m[4] ?? '').trim();
           const modes = ENC[mn]!;
           let mode: string, ex: string | null = null;
           if (!arg) mode = IMPLIED_ACC.has(mn) ? 'acc' : 'imp';

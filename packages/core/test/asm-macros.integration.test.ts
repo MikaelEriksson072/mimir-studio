@@ -19,6 +19,18 @@ const kick = !!jar && spawnSync(java, ['-version'], { windowsHide: true }).statu
 const tass = find64tass();
 
 export const KICK: Record<string, string> = {
+  // (as a library outside the folder writes them: BasicUpstart where the program counter is, ; between statements,
+  // the operand right after the mnemonic)
+  separators: `.pc = $0801 "Basic Upstart"
+BasicUpstart(start)
+.pc = $0810 "Main"
+.macro save() {pha;txa;pha;tya;pha;lda$01;pha;lda#$35;sta$01}
+start: :save()
+loop: nop; nop; inx
+.for (var i=0; i<2; i++) { nop; dey }
+ ora#((300 & $100) >> 1); sta $d011
+ rts
+`,
   macros: `* = $1000
  SetBorder(2)
 m1: Wait(3)

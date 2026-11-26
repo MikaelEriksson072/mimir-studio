@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
-import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, splitLabel, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
+import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgLibdirs, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, splitLabel, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { MenuItem } from '../lib/types';
@@ -411,10 +411,41 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   // the arguments the build gives the assembler: the toolchain's, then the project's (the check takes their defines)
   const own = info.args ?? '', theirs = lang === '64tass' ? toolArgs.tass : toolArgs.kick;
   const args = useMemo(() => [...splitArgs(theirs), ...splitArgs(own)], [theirs, own]);
+  // what the sources import from outside the folder (`#import "C:\lib\irq.asm"`, `../lib`, a library folder of the
+  // arguments: -libdir, -I), read as the build reads it, by the names the sources give them; read again when the window
+  // comes back (they may have been changed in another editor)
+  const [outside, setOutside] = useState<Record<string, string | Uint8Array>>({});
+  /** the names asked for already (found or not), and where each was found */
+  const askedOut = useRef(new Set<string>()), foundOut = useRef<Record<string, string>>({});
+  const libdirs = useMemo(() => asmArgLibdirs(lang, args), [lang, args]);
   const check = useMemo<AsmCheck | null>(() => {
     if (!loaded || !main || !(main in quiet)) return null;
-    try { return checkAsm({ ...quiet, ...bins }, main, lang, { args }); } catch { return null; }
-  }, [quiet, bins, main, lang, loaded, args]);
+    try { return checkAsm({ ...quiet, ...bins, ...outside }, main, lang, { args }); } catch { return null; }
+  }, [quiet, bins, outside, main, lang, loaded, args]);
+  const readOutside = (names: string[]) => {
+    if (!kr || !names.length) return;
+    for (const k of names) askedOut.current.add(k);
+    void Promise.all(names.map(k => kr!.assemblerReadOutside({ dir, path: k, libdirs }).then(r => [k, r] as const, () => null))).then(rs => {
+      const got: Record<string, string | Uint8Array> = {};
+      for (const r of rs) { const d = r?.[1]; if (!r || !d?.found) continue; foundOut.current[r[0]] = d.found; const v = d.text ?? d.bytes; if (v != null) got[r[0]] = v; }
+      if (Object.keys(got).length) setOutside(o => {
+        // (only what changed: the same texts take no new check)
+        const n = { ...o }; let changed = false;
+        for (const [k, v] of Object.entries(got)) if (typeof v === 'string' ? n[k] !== v : !(n[k] instanceof Uint8Array && n[k].length === v.length && n[k].every((b, i) => b === v[i]))) { n[k] = v; changed = true; }
+        return changed ? n : o;
+      });
+    });
+  };
+  useEffect(() => {
+    // (another library folder: what was not found is looked for again; before the check's files are asked for, below)
+    askedOut.current = new Set(Object.keys(outside));
+  }, [libdirs.join('\n')]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { readOutside((check?.missing ?? []).filter(k => !askedOut.current.has(k) && !paths.has(k))); }, [check]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const again = () => { askedOut.current = new Set(); readOutside([...new Set([...Object.keys(outside), ...(check?.missing ?? []).filter(k => !paths.has(k))])]); };
+    window.addEventListener('focus', again);
+    return () => window.removeEventListener('focus', again);
+  });
   // the names the editor suggests and the hover says: the program's labels and constants (the last check that had them)
   useEffect(() => {
     if (!check?.names.size) return;
@@ -596,6 +627,11 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const openFile = (path: string, o: OpenAt = {}) => {
     // (a problem in the arguments: they are in Settings)
     if (path === '<command line>') { onSettings(); return; }
+    // (a file the sources import from outside the folder: the check reads it, the editor has the folder's files)
+    if (!paths.has(path) && (path in outside || /^([A-Za-z]:)?[\\/]|^\.\.[\\/]/.test(path))) {
+      toast(`${foundOut.current[path] ?? path} is outside the project's folder: Mimir's check reads it as the build does, but the Assembler edits the folder's files (open it in your own editor)`, 'info');
+      return;
+    }
     const ups: string[] = [];
     for (let p = parentOf(path); p; p = parentOf(p)) ups.push(p);
     if (ups.some(p => !expanded.has(p))) ui.setExpanded(dir, [...new Set([...expanded, ...ups])]);

@@ -96,6 +96,7 @@ const api: KrApi = {
   assemblerClose: req => invoke(CHANNELS.assemblerClose, req),
   assemblerList: req => invoke(CHANNELS.assemblerList, req),
   assemblerRead: req => invoke(CHANNELS.assemblerRead, req),
+  assemblerReadOutside: req => invoke(CHANNELS.assemblerReadOutside, req),
   assemblerWrite: req => invoke(CHANNELS.assemblerWrite, req),
   assemblerChange: req => invoke(CHANNELS.assemblerChange, req),
   assemblerReveal: req => invoke(CHANNELS.assemblerReveal, req),
