@@ -20,9 +20,11 @@ const KINDS: { kind: ReleaseKind; label: string; what: string }[] = [
 /** a name as the C64 has it: PETSCII upper case, at most `n` characters */
 const petName = (s: string, n: number) => s.toUpperCase().replace(/[^\x20-\x5f]/g, '').slice(0, n);
 
-export function AsmReleaseModal({ main, packer, busy, onRelease, onScripts, onClose }: {
+export function AsmReleaseModal({ main, packer, basic, busy, onRelease, onScripts, onClose }: {
   /** the main file (a path in the project's folder) */
   main: string;
+  /** the program starts with a BASIC line (Mimir's check found its SYS): LOAD and RUN start it (null: not known) */
+  basic: boolean | null;
   /** what Pack packs with (the Pack view's choice) */
   packer: string;
   busy: string | null;
@@ -60,6 +62,7 @@ export function AsmReleaseModal({ main, packer, busy, onRelease, onScripts, onCl
           <label className="field"><span>Disk name</span><input className="mono" aria-label="Disk name" value={disk} maxLength={16} spellCheck={false} onChange={e => setDisk(petName(e.target.value, 16))} /></label>
           <label className="field rel-id"><span>ID</span><input className="mono" aria-label="Disk ID" value={id} maxLength={2} spellCheck={false} onChange={e => setId(petName(e.target.value, 2))} /></label>
         </div>}
+        {basic === false && !packed && kind !== 'crt' && <p className="small rel-warn" role="note"><Icon name="warn" size={12} /> The program has no BASIC line that starts it: VICE (and a C64) LOADs and RUNs {kind === 'd64' ? 'a disk' : kind === 'tap' ? 'a tape' : 'a PRG'}, which does not start it. A cartridge starts it, and so does a packed file (its decruncher jumps to where it starts).</p>}
         <p className="small"><span className="muted">Writes</span> <span className="mono">{file}</span> <span className="muted">(over the one there)</span></p>
         {busy && <p className="small" role="status">{busy}…</p>}
       </div>

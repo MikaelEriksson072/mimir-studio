@@ -178,6 +178,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, tass-subset-assembler.ts, kick-d64.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
+│  ├─ src/asm-release.ts           Assemblern: Release-avbilderna (disk, band, cartridge, PRG) och när LOAD och RUN inte startar programmet (10.7)
 │  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
 │  ├─ src/asm-blocks.ts            Assemblerns block: markeringarna i källan, ett nytt blocks rader (Insert block) (10.7)
 │  ├─ src/asm-write.ts             Assemblern: ändrade bytes tillbaka i raderna som skriver dem (det man ritar) (10.7)
@@ -3894,6 +3895,16 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   självuppackande fil; vyns val att packa i flera filer säger att det inte går). *Make and run in VICE* startar det gjorda
   (VICE autostartar disken och bandet, en cartridge sätts i). *Build scripts* skriver `build.bat` och `build.sh` bredvid
   huvudfilen (`buildScripts`: de bygger den i `out` och startar den i VICE utanför Mimir); de som redan finns lämnas.
+  Avbilderna görs av `releaseImage` (`asm-release.ts`). **Prövat i riktiga VICE** (2026-11-26,
+  `asm-release.integration.test.ts`: x64sc 3.10 utan fönster, debug-cartridgen säger vilken kod som körde): programmet
+  byggt med KickAss.jar, packat med Brokkr och packat med Exomizer startar från alla fyra slagen. Ett program utan
+  BASIC-rad (t.ex. vid `$1000`) startar bara från en cartridge: disken, bandet och PRG:n LOADas och RUNas, vilket inte
+  startar det. Det säger Release-rutan innan något görs (när Mimirs kontroll inte hittar någon SYS i programmet, och det
+  inte packas) och en varning efteråt (`releaseStarts`); packat startar det (dekomprimeraren hoppar dit det börjar).
+  **Shift+F5 i riktiga debuggarna** (samma dag, med ett projekt med `#import` och ett makro): en brytpunkt satt i
+  Assemblern stoppar Retro Debugger 1.0.0 och C64 Debugger 0.64.58.6 på radens adress (`PC = $0810`), och stegning
+  går. Retro Debuggers *Source code*-fönster står tomt (bara segmentnamnet), lika tomt med KickAss egen `-debugdump`-fil:
+  det är debuggerns sätt när programmet kommer från kommandoraden, inte Mimirs fil.
 - **Debug** (F8) kör programmet i Mimirs 6510 en instruktion i taget (`asmMachine`: skriptens maskin med programmet som
   koden och ett enda minne, så att kod som programmet kopierar någon annanstans och hoppar till ser programmets bytes),
   startat på samma sätt som SYS. Step, Over (F6), Out (Shift+F6), Continue (Ctrl+Enter), Pause och Stop som i

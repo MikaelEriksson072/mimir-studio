@@ -1057,3 +1057,27 @@ test('64tass in an Assembler project: Mimir\'s check runs its loops, macros and 
   expect([...prg.subarray(2, 6)]).toEqual([0x0b, 0x08, 0xe9, 0x07]);
   await closeProject(page, 'tassloops');
 });
+
+test('Release says when the program has no BASIC line: a disk, a tape or a PRG would not start it, a cartridge or a packed file would', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'nobasic');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), '* = $1000\nstart:  inc $d020\n        jmp start\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.getByRole('button', { name: 'Release…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Release' });
+  const note = dialog.getByRole('note');
+  await expect(note).toContainText('The program has no BASIC line that starts it');
+  await expect(note).toContainText('a disk');
+  await shot(page, '29-release-no-basic');
+  await dialog.getByRole('radio', { name: /Cartridge/ }).check();
+  await expect(note).toHaveCount(0);
+  await dialog.getByRole('radio', { name: /Tape image/ }).check();
+  await expect(note).toContainText('a tape');
+  await dialog.getByRole('checkbox', { name: /Packed with/ }).check();
+  await expect(note).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await closeProject(page, 'nobasic');
+});

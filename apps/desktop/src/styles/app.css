@@ -2195,6 +2195,8 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-release .rel-disk .field { flex: 1; margin: 0; }
 .asm-release .rel-disk .rel-id { flex: 0 0 90px; }
 .asm-release .field { margin: 0; }
+.asm-release .rel-warn { margin: 0; padding: 6px 8px; border-radius: 6px; color: var(--fg); background: color-mix(in srgb, var(--warn) 14%, transparent); line-height: 1.45; }
+.asm-release .rel-warn svg { color: var(--warn); vertical-align: -2px; }
 .insp-asm .kv dd .linkish { font-family: var(--mono, ui-monospace, monospace); }
 .asm-home-lead { margin: 0; color: var(--fg-2); font-size: 12.5px; line-height: 1.5; }
 .asm-ws { flex: 1; min-height: 0; }

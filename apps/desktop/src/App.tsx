@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  asmC64Notes, assemblerSources, bankRange, buildScripts, comparePrg, createProject, makeD64, makeTap, programCartridge, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  asmC64Notes, assemblerSources, bankRange, buildScripts, comparePrg, createProject, releaseImage, releaseStarts, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, coversReadyScreen, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, ioSummary, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
@@ -4084,21 +4084,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         prg = r.prg; how = `packed with ${packer} (${b.prg.length - 2} bytes into ${r.prg.length - 2})`;
       } catch (e) { toast(errorText(e), 'err'); return; } finally { setBuildBusy(null); }
     }
-    const load = prg[0] | (prg[1] << 8), data = prg.subarray(2);
     const stem = b.main.replace(/^.*\//, '').replace(/\.[^.]*$/, '') || 'program', out = `${b.main.includes('/') ? `${b.main.slice(0, b.main.lastIndexOf('/'))}/` : ''}out`;
-    let path: string, bytes: Uint8Array;
+    const path = `${out}/${stem}${c.kind === 'prg' && c.packed ? '-packed' : ''}.${c.kind}`;
+    let bytes: Uint8Array;
     try {
-      switch (c.kind) {
-        case 'd64': path = `${out}/${stem}.d64`; bytes = makeD64({ name: c.disk, id: c.id, files: [{ name: c.name, data: prg }] }); break;
-        case 'tap': path = `${out}/${stem}.tap`; bytes = makeTap({ files: [{ name: c.name, data, load, basic: load === 0x0801 }], endOfTape: true }); break;
-        case 'crt': path = `${out}/${stem}.crt`; bytes = programCartridge(load, data, { name: c.name }).crt.image(); break;
-        default: path = `${out}/${stem}${c.packed ? '-packed' : ''}.prg`; bytes = prg;
-      }
+      bytes = releaseImage(c.kind, prg, { name: c.name, disk: c.disk, id: c.id });
       await kr.assemblerWrite({ dir: home.dir, path, bytes });
     } catch (e) { toast(`Nothing was made: ${errorText(e)}`, 'err'); return; }
     setAsmRelease(false);
     const full = `${home.dir.replace(/[\\/]+$/, '')}\\${path.replace(/\//g, '\\')}`;
     toast(`Made ${path} (${bytes.length} bytes) of ${stem}.prg, ${how}`, 'ok');
+    // (measured in VICE: LOAD and RUN start only a program with a BASIC line; a packed one's decruncher has one)
+    const wontStart = c.packed ? null : releaseStarts(c.kind, prg);
+    if (wontStart) toast(wontStart, 'warn');
     if (!c.run) return;
     try {
       const r = await kr.run({ prgPath: full, ...(b.vsPath ? { labelsPath: b.vsPath } : {}), ...(c.kind === 'crt' ? { cart: true } : {}) });
@@ -5307,6 +5305,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
       {asmRelease && asmMode && <AsmReleaseModal main={asmMain ?? stored.asm?.main ?? 'main.asm'} packer={packPrefs.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} busy={buildBusy}
+        basic={(c => (c ? c.entryFrom === 'basic' : null))(useAsmLink.getState().check)}
         onRelease={c => void releaseAsm(c)} onScripts={() => void asmScripts()} onClose={() => setAsmRelease(false)} />}
       {asmContinue && <ContinueInAssemblerModal info={asmContinue} onCreate={continueInAssembler} onClose={() => setAsmContinue(null)} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
