@@ -3747,8 +3747,8 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass bland annat dictionaries,
-  `.weak`, `.with` och 65816-direktiven): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass 65816-instruktionerna och
+  `random()`): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3812,6 +3812,16 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     `.dunion` eller `.nn_s 1, 2` gör en instans (`nn.x`; ett fält utan värde är `?`, plats utan byte), dess byte på
     instansens rad. `.virtual [adress]` … `.endv` kompileras utan att något skrivs. TASM:s `.lbl`/`.goto`, `namn .var
     värde` och `.ifne`, `.ifeq`, `.ifpl`, `.ifmi`.
+  - *64tass övriga direktiv* (2026-11-26): `.char`, `.rta` (adressen - 1, för RTS), `.sint`, `.long`, `.lint`, `.dword`,
+    `.dint`, `.ptext` (längden först), `.shift` (sista byten med bit 7), `.shiftl`; `.eor` som xorar in i allt som skrivs,
+    kod också; `.proc` … `.pend` som bara kompileras där namnet används (också inifrån sig själv; en som bara en bortlagd
+    använder läggs också bort, som 64tass); `.page` … `.endp` (felet när start- och slutadressen har olika sida),
+    `.option allow_branch_across_page = 0` (`branch crosses page by +17 bytes`), `.offs`, `.weak` … `.endweak` (en
+    starkare definition vinner var den än står), `.with` … `.endwith`, `.endn`, `.switch`/`.case`/`.default`/`.endswitch`,
+    `.end`, `.binclude` (en källa i ett eget block), egna teckentabeller (`.encode` … `.endencode`, en etikett som står
+    för den och är en funktion, `.tdef`, `.edef` med escapes) och dictionaries (`{1: 15, :0}[x]`, `{.x: 24}.x`).
+    65816-, listnings- och TASM-direktiven som inte gör något på en 6502 (`.al`, `.xs`, `.dpage`, `.databank`, `.proff`,
+    `.seed`, `.assert` …) godtas.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

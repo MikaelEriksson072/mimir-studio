@@ -302,3 +302,27 @@ describe("64tass's floats, structures, unions, .virtual and .goto in Mimir's che
     expect(msgs(tass('x       .dstruct nothing, 1\n'))).toEqual(["main.asm:1 not defined symbol 'nothing' (no .struct of that name)"]);
   });
 });
+
+describe("64tass's other directives in Mimir's check", () => {
+  it('compiles a .proc only where its name is used, and drops one used only by a dropped one', () => {
+    const r = tass('*       = $1000\nused    .proc\n        rts\n        .pend\nlone    .proc\n        jsr inner\n        .pend\ninner   .proc\n        nop\n        .pend\n        jsr used\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x1000, 4)).toEqual([0x60, 0x20, 0x00, 0x10]);
+    expect(r.max).toBe(0x1003);
+  });
+
+  it('says what 64tass says of a page crossed, a branch across a page and a .shift byte with bit 7', () => {
+    expect(msgs(tass('*       = $10fe\n        .page\n        nop\n        nop\n        .endp\n'))).toEqual(['main.asm:5 different start and end page $10fe and $1100']);
+    expect(msgs(tass('*       = $10fc\n        .option allow_branch_across_page = 0\n        bne $1110\n'))).toEqual(['main.asm:3 branch crosses page by +17 bytes']);
+    expect(msgs(tass('*       = $10fc\n        bne $1110\n'))).toEqual([]);
+    expect(msgs(tass('*       = $1000\n        .shift "a", $80\n'))).toEqual(['main.asm:2 a byte of the .shift has its bit 7 set already']);
+    expect(msgs(tass('        .case 1\n'))).toEqual(['main.asm:1 .case without .switch']);
+  });
+
+  it('stops at .end and xors what .eor says into every byte written, code too', () => {
+    const r = tass('*       = $1000\n        .eor $ff\n        lda #1\n        .eor 0\n        rts\n        .end\n        brk\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x1000, 3)).toEqual([0x56, 0xfe, 0x60]);
+    expect(r.max).toBe(0x1002);
+  });
+});

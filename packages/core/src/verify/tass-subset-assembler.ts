@@ -25,6 +25,11 @@
  * named ones (`nn_s .struct col, row` … `.ends`) giving their fields' offsets (`nn_s.x`) and instances by
  * `nn .dstruct nn_s, 1, 2`, `.dunion` or `.nn_s 1, 2` (`nn.x`; a field not given `?`). `.virtual [address]` … `.endv`:
  * compiled, nothing written. The TASM forms `.lbl`/`.goto`, `name .var value` and `.ifne`, `.ifeq`, `.ifpl`, `.ifmi`.
+ * More data: `.char`, `.rta` (address - 1), `.sint`, `.long`, `.lint`, `.dword`, `.dint`, `.ptext`, `.shift`, `.shiftl`, and
+ * `.eor` over all that is written; `.proc` … `.pend` compiled only where its name is used, `.page` … `.endp`, `.offs`,
+ * `.weak` … `.endweak` (a stronger definition wins), `.with`, `.endn`, `.switch`/`.case`/`.default`, `.end`,
+ * `.option allow_branch_across_page`, `.binclude`, own encodings (`.encode` … `.endencode`, `.tdef`, `.edef`) and
+ * dictionaries (`{1: 15, :0}[x]`, `{.x: 24}.x`); the 65816 and listing directives are taken and do nothing on a 6502.
  * Sections: `.dsection name` where the bytes of every `.section name` … `.send` go, as 64tass, nested too; `.byte ?`,
  * `.word ?`, `.addr ?` take room only. Several passes until the sizes settle, as 64tass. The desktop app and the CLI
  * can additionally run the real 64tass.
@@ -41,6 +46,7 @@ type Tok = { t: 'n'; v: number; f?: boolean } | { t: 's'; v: string } | { t: 'id
 type Node =
   | { k: 'n'; v: number; f?: boolean } | { k: 's'; v: string } | { k: 'pc' } | { k: 'id'; v: string } | { k: 'anon'; dir: '+' | '-'; n: number }
   | { k: 'mem'; o: Node; v: string } | { k: 'call'; f: Node; args: Node[] } | { k: 'list'; items: Node[] }
+  | { k: 'dict'; items: { key: Node | null; sym?: string; val: Node }[] }
   | { k: 'idx'; o: Node; i: Node } | { k: 'slice'; o: Node; a: Node | null; b: Node | null }
   | { k: 'u'; op: string; a: Node } | { k: 'b'; op: string; a: Node; b: Node } | { k: 'q'; c: Node; a: Node; b: Node };
 // numbers, booleans, strings (characters), byte strings (Uint8Array), lists and namespaces
@@ -88,6 +94,14 @@ const isImm = (v: Value): v is Imm => !!v && typeof v === 'object' && v.imm === 
 /** a floating-point value (`1.5`, `1e3`, `pi`, `sin()`): where an integer is needed it is rounded down, as 64tass does */
 class Flt { constructor(readonly f: number) {} }
 const isFlt = (v: Value): v is Flt => v instanceof Flt;
+/** a dictionary: its values by key (`n:1`, `s:text`, `.:symbol`) and the one for a key it does not have */
+class Dict { constructor(readonly map: Map<string, Value>, readonly def: Value | undefined) {} }
+const isDict = (v: Value): v is Dict => v instanceof Dict;
+/** an encoding a label stands for (`abc .encode`): `.encode abc`, `.enc abc`, and abc("text") its bytes */
+class EncRef { constructor(readonly name: string) {} }
+const isEnc = (v: Value): v is EncRef => v instanceof EncRef;
+/** the bytes and signedness of the number directives */
+const SIZED: Record<string, [number, boolean]> = { char: [1, true], rta: [2, false], sint: [2, true], long: [3, false], lint: [3, true], dword: [4, false], dint: [4, true] };
 /** what .break and .continue throw to the loop they are in */
 class LoopSignal { constructor(readonly kind: 'break' | 'continue') {} }
 /** a loop's first line, and the lines that end one */
@@ -97,7 +111,7 @@ const LOOP = /^\.(b?)(for|rept|while)\b\s*(.*)$/, LOOP_END = /^\.(next|endfor|en
 interface Sect { name: string; key: string; pc0: number | null; off0: number; used: number; max: number; prevPc0: number | null; prevOff0: number; prevSize: number; frags: boolean }
 const isSpace = (v: Value): v is Space => !!v && typeof v === 'object' && typeof v.space === 'string';
 
-const typeName = (v: Value) => v instanceof Flt ? 'float' : typeof v === 'boolean' ? 'bool' : typeof v === 'string' ? 'str' : typeof v === 'number' ? 'int' : v instanceof Uint8Array ? 'bytes' : Array.isArray(v) ? 'list' : 'namespace';
+const typeName = (v: Value) => v instanceof Flt ? 'float' : v instanceof Dict ? 'dict' : v instanceof EncRef ? 'encoding' : typeof v === 'boolean' ? 'bool' : typeof v === 'string' ? 'str' : typeof v === 'number' ? 'int' : v instanceof Uint8Array ? 'bytes' : Array.isArray(v) ? 'list' : 'namespace';
 
 /** `s` split at `sep` where it is outside strings, parentheses and brackets */
 function splitTop(s: string, sep: string): string[] {
@@ -106,8 +120,8 @@ function splitTop(s: string, sep: string): string[] {
     const c = s[k];
     if (q) { cur += c; if (c === q) q = ''; continue; }
     if (c === '"' || c === "'") { q = c; cur += c; continue; }
-    if (c === '(' || c === '[') depth++;
-    if (c === ')' || c === ']') depth--;
+    if (c === '(' || c === '[' || c === '{') depth++;
+    if (c === ')' || c === ']' || c === '}') depth--;
     if (!depth && c === sep) { out.push(cur.trim()); cur = ''; continue; }
     cur += c;
   }
@@ -217,6 +231,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         else macros.set(label, def);
         return;
       }
+      // .binclude: a source included in a block of its own (a label before it names the block)
+      const binc = body.match(/^\.binclude\s+"([^"]+)"$/);
+      if (binc) { stmts.push({ ...st, body: '.block' }); loadFile(importPath(vfs, path, binc[1]), depth + 1); stmts.push({ ...st, label: undefined, body: '.bend' }); return; }
       const inc = body.match(/^\.include\s+"([^"]+)"$/);
       if (inc) { if (label) stmts.push({ ...st, body: '' }); loadFile(importPath(vfs, path, inc[1]), depth + 1); return; }
       if (!label && !body) return;
@@ -308,7 +325,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       const three = s.slice(i, i + 3), two = s.slice(i, i + 2);
       if (['<=>'].includes(three)) { out.push({ t: 'op', v: three }); i += 3; continue; }
       if (['<<', '>>', '==', '!=', '<=', '>=', '&&', '||', '^^', '**'].includes(two)) { out.push({ t: 'op', v: two }); i += 2; continue; }
-      if ('+-*/%&|^<>(),.!~?:[]'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
+      if ('+-*/%&|^<>(),.!~?:[]{}'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
       throw new Error(`unexpected "${c}" in expression "${s}"`);
     }
     return out;
@@ -337,6 +354,17 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (isOp(peek(), ',')) { const items = [e]; while (isOp(peek(), ',')) { next(); items.push(full()); } if (!isOp(next(), ')')) throw new Error(`missing ) in "${s}"`); return post({ k: 'list', items }); }
         if (!isOp(next(), ')')) throw new Error(`missing ) in "${s}"`);
         return post(e);
+      }
+      // a dictionary: `{1: 15, "a": 2, .x: 24, :0}` (`:value` for a key it does not have)
+      if (t.v === '{') {
+        const items: { key: Node | null; sym?: string; val: Node }[] = [];
+        if (!isOp(peek(), '}')) for (;;) {
+          if (isOp(peek(), ':')) { next(); items.push({ key: null, val: full() }); }
+          else if (isOp(peek(), '.') && peek(1)?.t === 'id') { next(); const sym = (next() as { v: string }).v; if (!isOp(next(), ':')) throw new Error(`missing : in "${s}"`); items.push({ key: null, sym, val: full() }); }
+          else { const key = expr(1); if (!isOp(next(), ':')) throw new Error(`missing : in "${s}"`); items.push({ key, val: full() }); }
+          const c = next(); if (isOp(c, '}')) break; if (!isOp(c, ',')) throw new Error(`bad dictionary in "${s}"`);
+        } else next();
+        return post({ k: 'dict', items });
       }
       if (t.v === '[') {
         const items: Node[] = [];
@@ -406,11 +434,23 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
 
   /** the encodings the source defines (`.enc "ascii"` with `.cdef`): a name 64tass does not have starts empty */
   const userEnc = new Map<string, Map<string, number>>();
-  /** the bytes a string gives in the current encoding */
+  /** the escapes an encoding has (`.edef "{cr}", 13`): the bytes each text stands for */
+  const userEsc = new Map<string, Map<string, number[]>>();
+  /** the bytes a string gives in the current encoding: its escapes (the longest that matches), its own characters (.cdef,
+   *  .tdef), the built-in table */
   const encode = (s: string): number[] => {
-    const own = userEnc.get(enc);
-    const f = ENCODINGS[enc] ?? ((c: string) => own?.get(c) ?? null);
-    return [...s].map(c => { const b = f(c); if (b == null) throw new Error(`can't encode character '${c}' (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`); return b; });
+    const own = userEnc.get(enc), esc = userEsc.get(enc), table = ENCODINGS[enc];
+    const keys = esc ? [...esc.keys()].sort((a, b) => b.length - a.length) : [];
+    const out: number[] = [];
+    for (let i = 0; i < s.length;) {
+      const e = keys.find(k => s.startsWith(k, i));
+      if (e) { out.push(...esc!.get(e)!); i += e.length; continue; }
+      const c = String.fromCodePoint(s.codePointAt(i)!);
+      const b = own?.get(c) ?? (table ? table(c) : null);
+      if (b == null) throw new Error(`can't encode character '${c}' (U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')})`);
+      out.push(b); i += c.length;
+    }
+    return out;
   };
   /** a value as an integer: a number, a byte string little-endian, a string of one character encoded, a boolean 0/1 */
   const numberOf = (v: Value): number => {
@@ -457,11 +497,22 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       return out;
     },
   };
+  /** the names looked up in this pass and the last (a .proc is compiled where its name is used), .with's namespaces */
+  let refsNow = new Set<string>(), refsPrev: Set<string> | null = null, withs: string[][] = [];
+  /** a name looked up: its key, and (`p1.in1`) the names before each dot in it */
+  const used = (k: string, dotted = false) => {
+    refsNow.add(k);
+    if (dotted) for (let j = k.indexOf('.'); j > 0; j = k.indexOf('.', j + 1)) refsNow.add(k.slice(0, j));
+  };
+  /** a dictionary's key for a value */
+  const dictKey = (k: Value): string => (typeof k === 'string' ? `s:${k}` : isFlt(k) ? `n:${k.f}` : `n:${numberOf(k)}`);
   /** the code label a local label (`_loop`) belongs to: the last one before it (a constant opens no new scope) */
   let scope = '';
   const lookup = (name: string): Value | undefined => {
     if (name.startsWith('_') && scope) { const v = lookup(`${scope}.${name}`); if (v !== undefined) return v; }
-    for (let i = spaces.length; i >= 0; i--) { const k = keyIn(spaces.slice(0, i), name); if (syms.has(k)) return syms.get(k); }
+    for (let i = spaces.length; i >= 0; i--) { const k = keyIn(spaces.slice(0, i), name); if (syms.has(k)) { used(k, name.includes('.')); return syms.get(k); } }
+    // (.with's namespaces, innermost first)
+    for (let w = withs.length - 1; w >= 0; w--) { const k = keyIn(withs[w], name); if (syms.has(k)) { used(k, name.includes('.')); return syms.get(k); } }
     // a function: its result for the arguments (it runs its lines)
     const f = funcs.get(name);
     if (f) return (...args: Value[]) => callFn(f, args, null);
@@ -489,18 +540,37 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         const d = dotted(node);
         if (d) { const v = lookup(d); if (v !== undefined) return v; }
         const o = ev(node.o); if (o == null) return null;
-        if (isSpace(o)) { const k = `${o.space}.${node.v}`; if (syms.has(k)) return syms.get(k); unresolved.push(k); return null; }
+        if (isSpace(o)) { const k = `${o.space}.${node.v}`; if (syms.has(k)) { used(k); return syms.get(k); } unresolved.push(k); return null; }
+        if (isDict(o)) { const v = o.map.get(`.:${node.v}`); if (v !== undefined) return v; if (o.def !== undefined) return o.def; throw new Error('key not in dictionary'); }
         throw new Error(`a ${typeName(o)} has no .${node.v}`);
       }
       case 'call': {
         const fn = ev(node.f); const args = node.args.map(a => ev(a));
         if (fn == null || args.some(a => a == null)) return null;
+        // an encoding as a function: the bytes of a text in it
+        if (isEnc(fn)) { const was = enc; enc = fn.name; try { return Uint8Array.from(encode(String(args[0]))); } finally { enc = was; } }
         if (typeof fn !== 'function') throw new Error(`${dotted(node.f) ?? 'this'} is not a function`);
         return fn(...args);
       }
       case 'list': { const items = node.items.map(a => ev(a)); return items.some(a => a == null) ? null : items; }
+      case 'dict': {
+        const map = new Map<string, Value>(); let def: Value | undefined;
+        for (const it of node.items) {
+          const v = ev(it.val); if (v == null) return null;
+          if (it.sym) { map.set(`.:${it.sym}`, v); continue; }
+          if (!it.key) { def = v; continue; }
+          const k = ev(it.key); if (k == null) return null;
+          map.set(dictKey(k), v);
+        }
+        return new Dict(map, def);
+      }
       case 'idx': {
         const o = ev(node.o), i = ev(node.i); if (o == null || i == null) return null;
+        // a dictionary's value for a key (a list of keys: each one's)
+        if (isDict(o)) {
+          const get = (k: Value): Value => { const v = o.map.get(dictKey(k)); if (v !== undefined) return v; if (o.def !== undefined) return o.def; throw new Error('key not in dictionary'); };
+          return Array.isArray(i) ? i.map(get) : get(i);
+        }
         const seq = o instanceof Uint8Array || typeof o === 'string' || Array.isArray(o) ? o : null;
         if (!seq) throw new Error(`a ${typeName(o)} cannot be indexed`);
         const at = (x: Value) => { let k = numberOf(x); if (k < 0) k += seq.length; if (k < 0 || k >= seq.length) throw new Error(`index ${numberOf(x)} out of range (length ${seq.length})`); return k; };
@@ -601,9 +671,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   /** .virtual blocks open (what is compiled in one is written nowhere), and .struct and .union blocks open, innermost
    *  last (a union's lines each start where it starts; it is as long as its longest) */
   let virt: { pc: number; off: number }[] = [];
+  /** .eor's value (xored into each byte written), .end met, branches allowed across a page (.option) */
+  let eorVal = 0, ended = false, branchAcross = true;
+  /** the .proc blocks compiled in the last pass (a change takes another pass) */
+  const procWas = new Map<string, boolean>();
+  /** .weak blocks open; the names defined strong in this pass and the last (a weak one gives way), and weak in this one */
+  let weak = 0, strongNow = new Set<string>(), strongPrev = new Set<string>(), weakNow = new Set<string>();
   let aggs: { kind: 'struct' | 'union'; start: number; max: number }[] = [];
   const emit = (b: number, st: Stmt) => {
-    b &= 0xff;
+    b = (b ^ eorVal) & 0xff;
     if (virt.length) { fresh = false; pc++; return; }
     const a = pc - off;
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
@@ -631,8 +707,11 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const defs = new Set<string>();
     const define = (name: string, v: Value, st: Stmt, variable = false) => {
       const k = keyIn(spaces, name);
-      // (a name defined twice keeps its first value, as 64tass)
-      if (!variable) { if (defs.has(k)) { E(`duplicate definition '${name}'`, st); return; } defs.add(k); }
+      // (a name defined twice keeps its first value, as 64tass; one in .weak gives way to one outside it, wherever it is)
+      if (!variable) {
+        if (weak) { if (defs.has(k) || strongPrev.has(k)) return; weakNow.add(k); defs.add(k); }
+        else { if (defs.has(k) && !weakNow.has(k)) { E(`duplicate definition '${name}'`, st); return; } weakNow.delete(k); defs.add(k); strongNow.add(k); }
+      }
       if (final && syms.has(k) && typeof v === 'number' && syms.get(k) !== v && !variable) E(`symbol "${name}" changed value in the final pass`, st);
       const old = syms.get(k);
       if (old !== v && (typeof v === 'number' || !syms.has(k) || (isSpace(v) && isSpace(old) && v.v !== old.v))) changed = true;
@@ -640,11 +719,17 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     };
     const defineVar = (name: string, v: Value) => define(name, v, curStmt ?? stmts[0], true);
     // .if: whether each level is on, whether a branch of it was taken, and whether the level around it is on
-    const cond: { on: boolean; taken: boolean; outer: boolean }[] = [];
+    const cond: { on: boolean; taken: boolean; outer: boolean; sw?: Value }[] = [];
     const active = () => cond.every(c => c.on);
     const report = (st: Stmt) => { if (unresolved.length) { missing = true; if (final) for (const u of new Set(unresolved)) E(`not defined symbol '${u}'`, st); } unresolved = []; };
 
-    virt = []; aggs = [];
+    virt = []; aggs = []; eorVal = 0; ended = false; branchAcross = true; withs = []; weak = 0;
+    if (pass !== 1) refsPrev = refsNow;
+    refsNow = new Set(); strongPrev = strongNow; strongNow = new Set(); weakNow = new Set();
+    /** .page blocks open (where each starts), .encode blocks open (the encoding before each) */
+    const pages: { pc: number; st: Stmt }[] = [], encs: string[] = [];
+    /** where the .proc that starts at list[i] ends */
+    const procEnd = (list: readonly Stmt[], i: number) => { let d = 0; for (let j = i + 1; j < list.length; j++) { const b = list[j].body; if (/^\.proc\b/.test(b)) d++; else if (/^\.(pend|endproc)\b/.test(b)) { if (!d) return j; d--; } } return -1; };
     /** a union ends: the program counter past its longest line */
     const endUnion = () => { const u = aggs.pop(); if (u) { u.max = Math.max(u.max, pc - u.start); pc = u.start + u.max; } };
     /** .lbl jump labels in each list of lines (.goto goes back to one) */
@@ -774,12 +859,13 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     };
 
     const runList = (list: readonly Stmt[]): void => { for (let ix = 0; ix < list.length; ix++) { const st = list[ix];
+      if (ended) return;
       curStmt = st; fresh = true;
       const s = st.body;
       try {
         let m: RegExpMatchArray | null;
         // the conditions, followed in every branch to find their ends
-        if ((m = s.match(/^\.(if|ifne|ifeq|ifpl|ifmi|elsif|else|endif|fi)\b\s*(.*)$/))) {
+        if ((m = s.match(/^\.(if|ifne|ifeq|ifpl|ifmi|elsif|else|endif|fi|switch|case|default|endswitch)\b\s*(.*)$/))) {
           const top = cond[cond.length - 1], kind = m[1];
           // (TASM's: .ifne not zero, .ifeq zero, .ifpl not negative, .ifmi negative)
           const test = () => { const v = ev(P(m![2])); if (v == null) return false; return kind === 'ifeq' ? !truth(v) : kind === 'ifpl' ? fnum(v) >= 0 : kind === 'ifmi' ? fnum(v) < 0 : truth(v); };
@@ -787,6 +873,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             case 'if': case 'ifne': case 'ifeq': case 'ifpl': case 'ifmi': { const o = active(), v = o && test(); cond.push({ on: v, taken: v, outer: o }); break; }
             case 'elsif': if (!top) E('.elsif without .if', st); else { const v = top.outer && !top.taken && test(); top.on = v; top.taken ||= v; } break;
             case 'else': if (!top) E('.else without .if', st); else { top.on = top.outer && !top.taken; top.taken = true; } break;
+            // .switch value: the first .case that has it (or .default) compiled
+            case 'switch': { const o = active(); cond.push({ on: false, taken: false, outer: o, sw: o ? ev(P(m[2])) : null }); break; }
+            case 'case': if (!top || !('sw' in top)) E('.case without .switch', st); else { const v = top.outer && !top.taken && top.sw != null && splitTop(m[2], ',').some(e => { const x = ev(P(e)); return x != null && bin('==', x, top.sw) === true; }); top.on = v; top.taken ||= v; } break;
+            case 'default': if (!top || !('sw' in top)) E('.default without .switch', st); else { top.on = top.outer && !top.taken; top.taken = true; } break;
             default: if (!cond.pop()) E(`.${m[1]} without .if`, st);
           }
           report(st);
@@ -825,6 +915,18 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           cond.length = t.cond; ix = t.ix;
           continue;
         }
+        // a .proc whose name nothing used in the last pass: not compiled (its lines skipped to its .pend)
+        if (st.label && /^\.proc$/.test(s)) {
+          const k = keyIn(spaces, st.label), on = pass === 1 || !refsPrev || refsPrev.has(k);
+          if (procWas.get(k) !== on) { procWas.set(k, on); changed = true; }
+          if (!on) { const end = procEnd(list, ix); ix = end < 0 ? list.length : end; continue; }
+        }
+        // `abc .encode`: an encoding the label stands for, in effect to its .endencode
+        if (st.label && /^\.encode$/.test(s)) {
+          const name = `#enc:${keyIn(spaces, st.label)}`;
+          define(st.label, new EncRef(name), st);
+          encs.push(enc); enc = name; userEnc.set(name, userEnc.get(name) ?? new Map()); continue;
+        }
         // a label: an anonymous one, `name = value`, `name := value`, a namespace, or the address here; one that
         // starts with _ is local to the code label before it (`loop._x`); one before a .macro's call names its block
         if (st.label === '+' || st.label === '-') anon.push({ dir: st.label, v: pc });
@@ -835,7 +937,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if ((m = s.match(/^\.var\s+(.+)$/))) { const v = ev(P(m[1])); if (v != null) setVar(local, v, st, true); report(st); continue; }
           // a variable changed: `n += 1`, `n ::= 2` (the one the name finds)
           if (/^(::|\+|-|\*|\/|%|<<|>>|\||&|\^)=/.test(s)) { assign(`${local} ${s}`, st); report(st); continue; }
-          if (/^\.(namespace|block)\b/.test(s) || (call && call.def.kind !== 'segment')) {
+          if (/^\.(namespace|block|proc)\b/.test(s) || (call && call.def.kind !== 'segment')) {
             define(st.label, { space: keyIn(spaces, st.label), ...(/^\.namespace\b/.test(s) ? {} : { v: pc }) } as Space, st);
             if (call) { runCall(call.def, call.args, st); continue; }
             spaces = [...spaces, st.label];
@@ -910,8 +1012,60 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           pc = top.pc; off = top.off;
           continue;
         }
-        if (/^\.(endnamespace|bend|endblock)$/.test(s)) { if (!spaces.length) E(`${s} without .namespace`, st); else spaces = spaces.slice(0, -1); continue; }
-        if (/^\.(namespace|block)$/.test(s)) { spaces = [...spaces, `#${st.line}`]; continue; }
+        if (/^\.(endnamespace|endn|bend|endblock|pend|endproc)$/.test(s)) { if (!spaces.length) E(`${s} without .namespace`, st); else spaces = spaces.slice(0, -1); continue; }
+        if (/^\.(namespace|block|proc)$/.test(s)) { spaces = [...spaces, `#${st.line}`]; continue; }
+        // .with ns … .endwith: its names without the prefix
+        if ((m = s.match(/^\.with\s+(.+)$/))) { const v = ev(P(m[1])); report(st); if (isSpace(v)) withs.push(v.space.split('.')); else { withs.push([]); if (final) E(`${m[1]} is not a namespace`, st); } continue; }
+        if (/^\.endwith$/.test(s)) { if (!withs.pop()) E('.endwith without .with', st); continue; }
+        // .weak … .endweak: definitions a stronger one outside overrides
+        if (/^\.weak$/.test(s)) { weak++; continue; }
+        if (/^\.endweak$/.test(s)) { if (!weak) E('.endweak without .weak', st); else weak--; continue; }
+        // .page … .endp: its code must not cross a page (the program counter's at both ends)
+        if (/^\.page$/.test(s)) { pages.push({ pc, st }); continue; }
+        if (/^\.(endp|endpage)$/.test(s)) {
+          const p0 = pages.pop();
+          if (!p0) E(`${s} without .page`, st);
+          else if (final && (p0.pc >> 8) !== (pc >> 8)) E(`different start and end page $${h4(p0.pc)} and $${h4(pc)}`, st);
+          continue;
+        }
+        // .encode [encoding] … .endencode: an encoding in effect (a new one without a name)
+        if ((m = s.match(/^\.encode\b\s*(.*)$/))) {
+          let name = `#enc@${st.file}:${st.line}`;
+          if (m[1].trim()) { const v = ev(P(m[1])); report(st); if (isEnc(v)) name = v.name; else if (typeof v === 'string') name = v; }
+          encs.push(enc); enc = name; continue;
+        }
+        if (/^\.endencode$/.test(s)) { const was = encs.pop(); if (was == null) E('.endencode without .encode', st); else enc = was; continue; }
+        // an encoding's escapes: `.edef "{cr}", 13, "{crlf}", [13, 10]`
+        if ((m = s.match(/^\.edef\s+(.+)$/))) {
+          const args = splitTop(m[1], ',').map(a => ev(P(a))); report(st);
+          const esc = userEsc.get(enc) ?? new Map<string, number[]>(); userEsc.set(enc, esc);
+          for (let k = 0; k + 1 < args.length; k += 2) {
+            if (typeof args[k] !== 'string' || args[k] == null || args[k + 1] == null) continue;
+            const v = args[k + 1], bytes: number[] = [];
+            for (const x of Array.isArray(v) ? v : [v]) if (typeof x === 'string') bytes.push(...encode(x)); else bytes.push(numberOf(x) & 0xff);
+            esc.set(args[k], bytes);
+          }
+          continue;
+        }
+        // an encoding's characters one by one: `.tdef "XYZ", 100` (100, 101, 102), `.tdef "AC", [65, 33]`
+        if ((m = s.match(/^\.tdef\s+(.+)$/))) {
+          const args = splitTop(m[1], ',').map(a => ev(P(a))); report(st);
+          const table = userEnc.get(enc) ?? new Map<string, number>(); userEnc.set(enc, table);
+          for (let k = 0; k + 1 < args.length; k += 2) {
+            const chars = typeof args[k] === 'string' ? [...args[k] as string] : [String.fromCodePoint(numberOf(args[k]))], v = args[k + 1];
+            if (v == null) continue;
+            chars.forEach((c, i) => table.set(c, (Array.isArray(v) ? numberOf(v[i]) : numberOf(v) + i) & 0xff));
+          }
+          continue;
+        }
+        // .offs n: the bytes go n on from the program counter
+        if ((m = s.match(/^\.offs\s+(.+)$/))) { const v = evn(m[1]); report(st); if (v != null) off = -v; continue; }
+        // .eor v: each byte written xored with v
+        if ((m = s.match(/^\.eor\s+(.+)$/))) { const v = evn(m[1]); report(st); eorVal = (v ?? 0) & 0xff; continue; }
+        if (/^\.end$/.test(s)) { ended = true; return; }
+        if ((m = s.match(/^\.option\s+([A-Za-z_]\w*)\s*=\s*(.+)$/))) { const v = ev(P(m[2])); report(st); if (m[1] === 'allow_branch_across_page' && v != null) branchAcross = truth(v); continue; }
+        // (65816, listing and TASM directives that change nothing on a 6502)
+        if (/^\.(al|as|xl|xs|autsiz|mansiz|proff|pron|hidemac|showmac)$/.test(s) || /^\.(dpage|databank|seed|assert|check)\b/.test(s)) continue;
         // a namespace opened again by its name (`.namespace bank03`: a bank's next chip)
         if ((m = s.match(/^\.namespace\s+(.+)$/))) {
           const v = ev(P(m[1])); report(st);
@@ -953,7 +1107,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         }
         if ((m = s.match(/^\.logical\s+(.+)$/))) { const v = evn(m[1]); report(st); outer.push(off); if (v != null) { off += v - pc; pc = v; } continue; }
         if (/^\.(here|endlogical)$/.test(s)) { if (!outer.length) { E(`${s} without .logical`, st); continue; } const was = outer.pop()!; pc -= off - was; off = was; continue; }
-        if ((m = s.match(/^\.enc\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') enc = v; report(st); continue; }
+        if ((m = s.match(/^\.enc\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') enc = v; else if (isEnc(v)) enc = v.name; report(st); continue; }
         if ((m = s.match(/^\.cpu\s+(.+)$/))) { const v = ev(P(m[1])); if (typeof v === 'string') cpu = v === 'default' ? '6502' : v; continue; }
         // .align n: on to the next multiple of n, the gap not written (as 64tass leaves it); .align n, v fills it with v
         if ((m = s.match(/^\.align\b\s*(.*)$/))) {
@@ -963,6 +1117,39 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (fa) { const v = ev(P(fa)); while (pc % n) byte(v ?? 0, st); }
           else pc += (n - (pc % n)) % n;
           report(st);
+          continue;
+        }
+        // numbers of 1-4 bytes, signed or not (`.rta`: an address - 1, for RTS)
+        if ((m = s.match(/^\.(char|rta|sint|long|lint|dword|dint)\b\s*(.*)$/))) {
+          const [n, signed] = SIZED[m[1]], rta = m[1] === 'rta', lo = signed ? -(2 ** (8 * n - 1)) : 0, hi = signed ? 2 ** (8 * n - 1) - 1 : 2 ** (8 * n) - 1;
+          for (const a of splitTop(m[2], ',').filter(x => x !== '')) {
+            if (a === '?') { pc += n; continue; }
+            const v = ev(P(a));
+            for (const x of Array.isArray(v) ? v.flat(Infinity) : [v]) {
+              const k = x == null ? 0 : numberOf(x) - (rta ? 1 : 0);
+              if (final && x != null && (k < lo || k > hi)) E(`too large for a ${8 * n} bit ${signed ? 'signed' : 'unsigned'} integer '${k}'`, st);
+              const u = ((k % 2 ** (8 * n)) + 2 ** (8 * n)) % 2 ** (8 * n);
+              for (let b = 0; b < n; b++) emit(Math.floor(u / 256 ** b) & 0xff, st);
+            }
+          }
+          report(st);
+          continue;
+        }
+        // texts with their length first (.ptext), the last byte's bit 7 set (.shift), shifted left with the last one's bit 0
+        // set (.shiftl)
+        if ((m = s.match(/^\.(ptext|shift|shiftl)\b\s*(.*)$/))) {
+          const out: number[] = [];
+          const take = (v: Value): void => { if (typeof v === 'string') out.push(...encode(v)); else if (v instanceof Uint8Array) out.push(...v); else if (Array.isArray(v)) v.forEach(take); else out.push(numberOf(v) & 0xff); };
+          let unknown = false;
+          for (const a of splitTop(m[2], ',').filter(x => x !== '')) { const v = ev(P(a)); if (v == null) unknown = true; else take(v); }
+          report(st);
+          if (unknown) { for (let i = 0; i <= out.length; i++) emit(0, st); continue; }
+          if (m[1] === 'ptext') { if (final && out.length > 255) E(`a .ptext of ${out.length} bytes (at most 255)`, st); emit(out.length, st); for (const b of out) emit(b, st); continue; }
+          if (!out.length) { E(`a .${m[1]} needs at least one byte`, st); continue; }
+          if (final && out.some(b => b & 0x80)) E(`a byte of the .${m[1]} has its bit 7 set already`, st);
+          if (m[1] === 'shift') out[out.length - 1] |= 0x80;
+          else { for (let i = 0; i < out.length; i++) out[i] = (out[i] << 1) & 0xff; out[out.length - 1] |= 1; }
+          for (const b of out) emit(b, st);
           continue;
         }
         if ((m = s.match(/^\.(byte|word|addr|text|null|fill|binary)\b\s*(.*)$/))) {
@@ -1026,6 +1213,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
             if (final && (o < -128 || o > 127)) E(`branch too far (${o})`, st);
+            const nx = pc + 1;
+            if (final && !branchAcross && v != null && (nx & 0xff00) !== (v & 0xff00)) { const by = v > nx ? v - (nx | 0xff) : v - (nx & 0xff00); E(`branch crosses page by ${by > 0 ? '+' : ''}${by} bytes`, st); }
             emit(o & 0xff, st);
           } else if (len === 2) { if (final && v != null && (v < -128 || v > 255)) E(`too large for a 8 bit unsigned integer '${v}'`, st); emit(v ?? 0, st); }
           else if (len === 3) { if (final && v != null && (v < 0 || v > 0xffff)) E(`too large for a 16 bit unsigned integer '${v}'`, st); emit((v ?? 0) & 0xff, st); emit(((v ?? 0) >> 8) & 0xff, st); }

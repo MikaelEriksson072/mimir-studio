@@ -154,6 +154,7 @@ cnt: .byte 0
 
 /** the files the sources load (prgFiles, sidFiles) */
 const DATA: Vfs = {
+  'inc/part.asm': 'start   nop\nlocal   rts\n',
   'data/pic.prg': Uint8Array.from([0x00, 0x40, ...Array.from({ length: 700 }, (_, i) => (i * 7) & 0xff)]),
   'music/tune.sid': makePsid(Uint8Array.from({ length: 300 }, (_, i) => (i * 5 + 1) & 0xff), 0x1000, 0x1000, 0x1003, 'Tune'),
 };
@@ -224,6 +225,105 @@ start: inc $d020
 });
 
 export const TASS: Record<string, string> = {
+  'more data, .proc, .page, .weak, .with, .switch, encodings, dictionaries, .binclude, .offs, .end': `*       = $1000
+        .char -3, 5, -128
+        .char (-3.5, 3.25) * 1p4
+        .rta $1000, last
+        .long $123456
+        .dword $12345678
+        .sint -533, 4433
+        .lint -2
+        .dint -411469219
+        .ptext "ab"
+        .shift "single", 32, "string"
+        .enc "screen"
+        .shiftl "ab"
+        .enc "none"
+        .eor $ff
+        .byte 1, 2
+        .text "a"
+        lda #1
+        .eor 0
+        .byte 3
+p1      .proc
+        rts
+in1     nop
+        .pend
+p2      .proc
+        nop
+        .endproc
+self    .proc
+        jmp self
+        .pend
+        jsr p1
+        jmp p1.in1
+        .page
+        nop
+        nop
+        .endp
+ns      .namespace
+v       = 5
+        .endn
+        .with ns
+        .byte v
+        .endwith
+        .switch 3
+        .case 1
+        .byte 1
+        .case 2, 3
+        .byte 2
+        .default
+        .byte 4
+        .endswitch
+        .switch 9
+        .case 1
+        .byte 1
+        .default
+        .byte 4
+        .endswitch
+w       = 9
+        .weak
+w       = 1
+z       = 4
+        .endweak
+        .weak
+y       = 1
+        .endweak
+y       = 7
+        .byte w, z, y
+        .encode
+        .enc "mine"
+        .cdef "az", 1
+        .edef "{cr}", 13, "{ab}", [1, 2]
+        .text "b{cr}c{ab}"
+        .endencode
+        .text "b"
+abc     .encode
+        .tdef "XYZ", 100
+        .endencode
+        .encode abc
+        .text "ZX"
+        .endencode
+        .byte abc("Y")
+        .byte {1:15, 15:12, :0}[range(3)]
+c       = {.x: 24, .y: 50}
+        .byte c.x, c.y
+        .byte {"a": 1, "b": 2}["b"]
+menu    .binclude "inc/part.asm"
+        jmp menu.local
+        .offs 16
+        .byte $77
+        .offs 0
+        .byte $88
+        .seed 1
+        .al
+        .xs
+        .dpage 0
+        .option allow_branch_across_page = 1
+last    rts
+        .end
+        brk
+`,
   'floats, structures, unions, .virtual and .goto': `*       = $1000
         .byte 128 + 127.5 * sin(range(8) * pi / 4)
         .byte 1.7, -1.5 & 255, 7.0 / 2.0 * 2, 7 / 2, 1e1, 0.5 * 3
