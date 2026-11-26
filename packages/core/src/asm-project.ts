@@ -245,7 +245,7 @@ export function checkAsm(vfs: Vfs, main: string, lang: ScriptLang, o: { args?: r
   // (the files looked for and not there: what the sources import from outside the folder)
   const missing = new Set<string>();
   const looked = new Proxy(vfs, { get: (t, k) => { const v = (t as Record<string | symbol, unknown>)[k]; if (v === undefined && typeof k === 'string') missing.add(k); return v; } });
-  const asm = assembleIn(langIs(lang), looked, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }), ...(defines.length ? { defines } : {}), ...(cpu ? { cpu } : {}) });
+  const asm = assembleIn(langIs(lang), looked, main, { allFiles: true, ...(lang === '64tass' ? {} : { pc: 0x2000 }), ...(defines.length ? { defines } : {}), ...(cpu ? { cpu } : {}), ...(lang === '64tass' && o.args?.includes('--long-branch') ? { longBranch: true } : {}) });
   const problems: AsmProblem[] = asm.errors.map(e => ({ file: e.file, line: e.line, msg: e.msg }));
   const warnings: AsmProblem[] = (asm.warnings ?? []).map(e => ({ file: e.file, line: e.line, msg: e.msg }));
   const base = main.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') + '.prg';

@@ -114,3 +114,30 @@ describe.skipIf(!tass)('the always taken branches (gcc, gne, gra …) on every p
     }, 60_000);
   }
 });
+
+describe.skipIf(!tass)('the register forms (lda x, inc x …) and --long-branch on every processor, built with the real 64tass', () => {
+  /** the check and 64tass of `body`: the same bytes, or both saying no */
+  const same = async (dir: string, cpu: string, body: string[], args: string[], what: string) => {
+    const text = [` .cpu "${cpu}"`, ' * = $1000', ...body, ''].join('\n');
+    await writeFile(join(dir, 'main.asm'), text);
+    const r = spawnSync(tass!, ['-a', '-C', ...args, '-o', 'main.prg', 'main.asm'], { cwd: dir, windowsHide: true, encoding: 'utf8' });
+    const c = checkAsm({ 'main.asm': text }, 'main.asm', '64tass', { args });
+    if (r.status !== 0) { expect(c.ok, `${what}: 64tass says no`).toBe(false); return; }
+    expect(c.problems, what).toEqual([]);
+    expect([...c.asm.prg!], what).toEqual([...new Uint8Array(await readFile(join(dir, 'main.prg')))]);
+  };
+  for (const cpu of TASS_CPUS) {
+    it(`give the bytes Mimir's check gives: ${cpu}`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'mimir-reg-'));
+      try {
+        for (const mn of ['lda', 'ldx', 'ldy', 'ldz', 'sta', 'stx', 'sty', 'inc', 'dec']) for (const reg of ['a', 'x', 'y', 'z', 's', 'b', 'd']) await same(dir, cpu, [` ${mn} ${reg}`], [], `${mn} ${reg}`);
+        // long branches: over a JMP (BRL), one reused in reach, one out of reach made again, BRA the JMP itself
+        await same(dir, cpu, ['back nop', ' bcc far', ' bne far', ' nop', ' beq far', ' bcc near', 'near nop', ' bmi back', ' .fill 300', 'far rts', ' bcc back', ' bne back',
+          ' bvs far2', ' .fill 140', ' bvc far2', ' .fill 140', 'far2 rts', ' bpl far3', ' gne far3', ' .fill 300', 'far3 nop'], ['--long-branch'], 'long branches');
+        await same(dir, cpu, [' bra far', ' bcc far', ' .fill 300', 'far rts'], ['--long-branch'], 'bra');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
+  }
+});

@@ -114,6 +114,8 @@ export interface AssembleOptions {
    *  #if tests, 64tass's `-D NAME=value` a constant of the root scope, defined before the first line (a line defining
    *  it again is an error, as in 64tass; one in .weak gives way). `value` missing: 0, as 64tass gives `-D NAME` */
   defines?: readonly { name: string; value?: string }[];
+  /** (64tass) the command line's --long-branch: a branch that does not reach goes over a JMP */
+  longBranch?: boolean;
 }
 
 /** the folder part of a path in the files (`lib/macros.asm` → `lib/`; none: '') */

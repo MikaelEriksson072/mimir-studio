@@ -3748,8 +3748,7 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass kommandoradens
-  `--long-branch`): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3860,6 +3859,15 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     R65C02/W65C02. Ett mål bakåt (också etiketten på samma rad) är alltid en gren: kontrollen ser om namnet redan är
     definierat i passet (`lookedForward`), och hur många byte hoppet hoppar över räknas från var det slutade förra passet.
     Mätt: alla elva på alla tio processorerna, nära, långt fram och bak, över 0–3 byte, samma bytes som 64tass.
+  - *64tass registerformer och `--long-branch`* (2026-11-26): `lda x` är `txa`, `ldx a` `tax`, `ldx s` `tsx`, `stx s`
+    `txs`, `inc x` `inx`, `dec y` `dey` …, och där processorn har överföringen `lda s`/`lda d`/`ldx y`/`ldy x`/`sta s`
+    (65816: `tsc`, `tdc`, `tyx`, `txy`, `tcs`), `lda z`/`ldz a`/`lda b`/`sta b`/`ldy s`/`sty s`/`inc z` (65CE02), `lda d`
+    (65EL02: `tda`); en lagring bara med `s` eller `b` (`REG_FORMS`). Argumentet `--long-branch`: en gren som inte når
+    blir motsatta grenen förbi en `jmp` (`brl` på 65816:an), och en senare gren till samma mål går till en sådan `jmp`
+    som en lång gren före den gjorde, när den når den (inte `g…`-hoppens eller den egna kodens `jmp`); `bra` blir själv
+    `jmp`/`brl`; `@b` håller grenen kort; 65CE02:s egna långa grenar som förut; `bbr`/`bbs` och 65816:ans hopp till en
+    annan bank säger fel som i 64tass 1.57. Mätt: varje registerform och de långa grenarna på alla tio processorerna,
+    samma bytes som 64tass, och fel där 64tass säger fel.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

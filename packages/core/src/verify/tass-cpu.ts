@@ -164,6 +164,16 @@ export function alwaysBranch(cpu: TassCpu, cc: string): { rel: number; skip1?: n
   return rel == null ? null : { rel, skip1: opp?.rel, skip2: opp?.rell, brl, jmp };
 }
 export const ALWAYS_BRANCHES = ['geq', 'gne', 'gcc', 'gcs', 'gpl', 'gmi', 'gvc', 'gvs', 'glt', 'gge', 'gra'];
+/** each conditional branch's opposite (--long-branch goes over a JMP with it) */
+export const OPPOSITE: Record<string, string> = { BCC: 'BCS', BCS: 'BCC', BEQ: 'BNE', BNE: 'BEQ', BMI: 'BPL', BPL: 'BMI', BVC: 'BVS', BVS: 'BVC' };
+/** 64tass's register forms, as the transfer instruction each is where the processor has it (`lda x` is TXA; a store
+ *  only with s or b: `stx s` is TXS; `inc x` is INX), measured with 64tass 1.57 */
+export const REG_FORMS: Record<string, string> = {
+  'LDA X': 'TXA', 'LDA Y': 'TYA', 'LDA Z': 'TZA', 'LDA S': 'TSA', 'LDA D': 'TDA', 'LDA B': 'TBA',
+  'LDX A': 'TAX', 'LDX Y': 'TYX', 'LDX S': 'TSX', 'LDY A': 'TAY', 'LDY X': 'TXY', 'LDY S': 'TSY', 'LDZ A': 'TAZ',
+  'STA S': 'TAS', 'STA B': 'TAB', 'STX S': 'TXS', 'STY S': 'TYS',
+  'INC X': 'INX', 'INC Y': 'INY', 'INC Z': 'INZ', 'DEC X': 'DEX', 'DEC Y': 'DEY', 'DEC Z': 'DEZ',
+};
 
 /** the mnemonics a processor has, with its aliases (upper case) */
 export const cpuMnemonics = (cpu: TassCpu): string[] => [...Object.keys(TABLES[cpu]), ...Object.keys(ALIASES_OF[cpu]).filter(a => cpuOp(cpu, a))];

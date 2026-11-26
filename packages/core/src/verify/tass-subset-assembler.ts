@@ -39,7 +39,7 @@
  * ===================================================================== */
 import type { AsmError, AssembleResult, Vfs } from '../types';
 import { TASS_ENC } from '../cpu/opcodes';
-import { ACCU_IMM, alwaysBranch, CPU_MODE_LEN, cpuOp, INDEX_IMM, REL16_FROM, tassCpu, WIDE_CPUS, type CpuMode, type TassCpu } from './tass-cpu';
+import { ACCU_IMM, alwaysBranch, CPU_MODE_LEN, cpuOp, INDEX_IMM, OPPOSITE, REG_FORMS, REL16_FROM, tassCpu, WIDE_CPUS, type CpuMode, type TassCpu } from './tass-cpu';
 import { h4 } from '../util/hex';
 import { importPath, type AssembleOptions } from './kick-subset-assembler';
 
@@ -586,6 +586,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   let defsNow: Set<string> | null = null, lookedForward = false;
   /** where each always taken branch (gcc, gra …) ended in the last pass and this one, by its line (each time it runs) */
   let gPrev = new Map<Stmt, number[]>(), gNow = new Map<Stmt, number[]>();
+  /** --long-branch (the command line's): the JMPs this pass's long branches made, where and to where (a later branch to
+   *  the same place in reach goes to one) */
+  const longBranch = !!opts.longBranch;
+  let longJmps: { at: number; to: number }[] = [];
   /** a name looked up: its key, and (`p1.in1`) the names before each dot in it */
   const used = (k: string, dotted = false) => {
     refsNow.add(k);
@@ -804,7 +808,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (cpu0 !== '6502' && cpu0 !== '6502i') { cpusUsed.push(cpu0); if (final) warnings.push({ file: entryPath, line: 0, msg: `${cpuNote(cpu0)} (the arguments ask for it)` }); }
     if (opts.cpu && !tassCpu(opts.cpu) && final) E(`unknown processor '${opts.cpu}' (the arguments)`);
     missing = false; first = -1; spaces = []; scope = '';
-    anonPrev = anon; anon = []; gPrev = gNow; gNow = new Map();
+    anonPrev = anon; anon = []; gPrev = gNow; gNow = new Map(); longJmps = [];
     let changed = false;
     const defs = new Set<string>();
     defsNow = defs;
@@ -1363,6 +1367,15 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           /** the bytes after it: mvn/mvp's banks, a bit instruction's direct page */
           let tail: (number | null)[] = [], bitNo: number | null = null;
           const isJump = mn === 'JMP' || mn === 'JSR';
+          // 64tass's register forms: the transfer the processor has (lda x is TXA, ldx s TSX, stx s TXS, inc x INX …)
+          const reg = /^[xyzsbd]$/i.test(arg) || (arg.toLowerCase() === 'a' && !has('acc')) ? REG_FORMS[`${mn} ${arg.toUpperCase()}`] : undefined;
+          const regOp = reg ? cpuOp(cpu, reg)?.modes.imp : undefined;
+          if (regOp != null) {
+            emit(regOp, st);
+            if (pass === 'final' && mine(site(st)) && !virt.length) ops[(pc - off - 1) & 0xffff] = 1;
+            report(st);
+            continue;
+          }
           if (!arg || (arg === 'a' && has('acc'))) mode = arg === 'a' || !has('imp') ? 'acc' : 'imp';
           else if (has('move')) {
             const parts = splitTop(arg, ',');
@@ -1448,6 +1461,23 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             } else if (md === 'long' || md === 'longx') { if (v < 0 || v > 0xffffff) bad = `too large for a 24 bit unsigned integer '${v}'`; }
           }
           if (final && bad) E(bad, st);
+          // --long-branch: a branch that does not reach goes over a JMP (BRL on the 65816) with the opposite branch, or to
+          // the JMP to the same place a long branch before it made, when that is in reach; BRA is the JMP itself
+          if (md === 'rel' && longBranch && force !== 'b' && v != null && (v - (at + 2) < -128 || v - (at + 2) > 127)) {
+            const brl = cpuOp(cpu, 'BRL')?.modes.rell, jmp = cpuOp(cpu, 'JMP')?.modes.abs, opp = OPPOSITE[mn] ? cpuOp(cpu, OPPOSITE[mn])?.modes.rel : undefined;
+            const far = (from: number): number[] => (brl != null ? [brl, (v - (from + 3)) & 0xff, ((v - (from + 3)) >> 8) & 0xff] : [jmp ?? 0x4c, v & 0xff, (v >> 8) & 0xff]);
+            const again = mn === 'BRA' ? undefined : [...longJmps].reverse().find(j => j.to === v && j.at - (at + 2) >= -128 && j.at - (at + 2) <= 127);
+            let out: number[] | null = null;
+            if (again) out = [op, (again.at - (at + 2)) & 0xff];
+            else if (mn === 'BRA') out = far(at);
+            else if (opp != null) { out = [opp, 3, ...far(at + 2)]; longJmps.push({ at: at + 2, to: v }); }
+            if (out) {
+              if (final && !again && Math.floor(v / 0x10000) !== Math.floor(at / 0x10000)) E(`address in different program bank '${hex(v)}'`, st);
+              out.forEach((b, i) => { emit(b, st); if (!i && pass === 'final' && mine(site(st)) && !virt.length) ops[(pc - off - 1) & 0xffff] = 1; });
+              report(st);
+              continue;
+            }
+          }
           emit(op, st);
           if (pass === 'final' && mine(site(st)) && !virt.length) ops[(pc - off - 1) & 0xffff] = 1;
           const bytes = (x: number, k: number) => { for (let i = 0; i < k; i++) emit((x >> (8 * i)) & 0xff, st); };

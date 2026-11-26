@@ -144,3 +144,22 @@ describe('the always taken branches (gcc, gne, gra …)', () => {
     expect(tass(['l gra l']).c.ok).toBe(false);
   });
 });
+
+describe('64tass\'s register forms and --long-branch', () => {
+  it('lda x is TXA, ldx s TSX, stx s TXS, inc x INX …, as the processor has the transfer', () => {
+    expect(ok([' lda x', ' ldx a', ' ldx s', ' stx s', ' inc x', ' dec y'])).toEqual([0x8a, 0xaa, 0xba, 0x9a, 0xe8, 0x88]);
+    expect(ok([' .cpu "65816"', ' lda s', ' lda d', ' ldx y', ' sta s'])).toEqual([0x3b, 0x7b, 0xbb, 0x1b]);
+    expect(ok([' .cpu "65ce02"', ' ldz a', ' sta b', ' sty s', ' inc z'])).toEqual([0x4b, 0x5b, 0x2b, 0x1b]);
+    // (a store only with s or b; not on a processor without the transfer)
+    expect(tass([' sta x']).c.ok).toBe(false);
+    expect(tass([' lda z']).c.ok).toBe(false);
+  });
+  it('--long-branch: over a JMP with the opposite branch, the JMP reused by a branch after it in reach', () => {
+    const b = tass(['back nop', ' bcc far', ' bne far', ' .fill 300', 'far rts'], ['--long-branch']).bytes;
+    expect(b.slice(0, 8)).toEqual([0xea, 0xb0, 0x03, 0x4c, 0x34, 0x11, 0xd0, 0xfb]);
+    // without it: too far
+    expect(tass(['back nop', ' bcc far', ' .fill 300', 'far rts']).c.ok).toBe(false);
+    // on the 65816 BRL
+    expect(tass([' .cpu "65816"', ' bcc far', ' .fill 300', 'far rts'], ['--long-branch']).bytes.slice(0, 5)).toEqual([0xb0, 0x03, 0x82, 0x2c, 0x01]);
+  });
+});
