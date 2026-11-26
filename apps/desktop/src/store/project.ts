@@ -1,7 +1,7 @@
 /* Project store (Zustand + Immer). The project is the single source of truth; every edit goes
  * through `update(label, recipe)` and becomes one undoable step. */
 import { create } from 'zustand';
-import type { Draft } from 'immer';
+import { produce, type Draft } from 'immer';
 import { DEFAULT_SETTINGS, demoProject, deserializeProject, serializeProject, type Project, type SerializedProject, type Settings } from '@mimir/core';
 import { store } from '../lib/util';
 import { commit, commitReplace, initHistory, ownChanges, redo, undo, type History } from './history';
@@ -35,6 +35,9 @@ interface ProjectState extends History<Project> {
   /** the project the work is in: its folder and project file (null: work without a project, which the window keeps) */
   home: ProjectHome | null;
   update: (label: string, recipe: (draft: Draft<Project>) => void) => void;
+  /** a change that is no step of its own (an Assembler project's bookmarks moving with their lines as the code is
+   *  edited: Ctrl+Z takes back the edit of the code, not where the bookmark went with it); saved as the others are */
+  amend: (recipe: (draft: Draft<Project>) => void) => void;
   /** a new project; with `undoLabel` as an undoable step (Ctrl+Z brings the one before back), else with a new history */
   replace: (project: Project, undoLabel?: string) => void;
   /** work on `project` in `home` (null: without a project) from now on, with a new history; `changed`: it has changes
@@ -60,6 +63,7 @@ export const useProject = create<ProjectState>((set) => ({
   ...initHistory(kept ?? demoProject(NEW_PROJECT), !!kept && unsavedWorkChanged()),
   home: null,
   update: (label, recipe) => set(s => commit(s, label, recipe)),
+  amend: recipe => set(s => { const present = produce(s.present, recipe); return present === s.present ? s : { present }; }),
   replace: (project, undoLabel) => set(s => (undoLabel ? commitReplace(s, undoLabel, withDefaults(project)) : initHistory(withDefaults(project)))),
   enter: (project, home, changed = false) => set({ ...initHistory(withDefaults(project), changed), home }),
   setHome: home => set({ home }),

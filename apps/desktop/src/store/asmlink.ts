@@ -8,8 +8,14 @@ import type { LibraryRef } from './library';
 
 /** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
  *  (a pack's) after the last build's, under Build; `write`: bytes drawn (the enlarged sprite or character) written into
- *  the lines that write them; `drop`: files dropped on the window copied into the folder */
-export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop'; n: number; kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[]; files?: AsmDropped[]; at?: string | null }
+ *  the lines that write them; `drop`: files dropped on the window copied into the folder; the bookmarks': `bmAdd` the
+ *  editor for the caret's line, `bmGo` the line of bookmark `id`, `bmJump` the next (`dir` 1) or previous one,
+ *  `line` a file's `line` shown (to `end`, selected) while a bookmark is edited */
+export interface AsmAsk {
+  what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop' | 'bmAdd' | 'bmGo' | 'bmJump' | 'line'; n: number;
+  kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[]; files?: AsmDropped[]; at?: string | null;
+  id?: string; dir?: 1 | -1; line?: number; end?: number | null;
+}
 /** a file dropped on the window: copied into the project's folder (`drop`; `at`: the folder or file it was dropped on in the file list) */
 export interface AsmDropped { name: string; bytes: Uint8Array }
 export interface AsmLive { mem: Uint8Array; pc: Addr; where: string | null; whole: boolean; running: boolean; n: number }
@@ -35,6 +41,14 @@ interface AsmLinkState {
   /** the sources in the project's folder, and the main file Mimir finds among them (Settings → Assembler project) */
   sources: string[];
   found: string | null;
+  /** the text files in the folder (a bookmark can be in any), how many lines one has (null: none such), the title a
+   *  bookmark gets on a line (the label there, else the file and line) */
+  textFiles: string[];
+  linesOf: (file: string) => number | null;
+  titleAt: (file: string, line: number) => string;
+  /** the caret's line in the Assembler, and the lines selected (`to` > `from`: more than one) */
+  caret: { file: string; line: number } | null;
+  selection: { file: string; from: number; to: number } | null;
   /** the C64 checks of the program (the window's analysis of it: asmC64Notes) */
   notes: AsmC64Note[];
   /** the memory of the program being debugged (Memory and Graphics show it while it is): its RAM, where it stopped (or
@@ -45,7 +59,7 @@ interface AsmLinkState {
   /** the main file built (what is not written yet is written first); null: it was not (the tab said why) */
   buildPrg: () => Promise<AsmBuilt | null>;
   set: (p: Partial<Omit<AsmLinkState, 'set' | 'reset' | 'request' | 'showAddr'>>) => void;
-  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at'>) => void;
+  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at' | 'id' | 'dir' | 'line' | 'end'>) => void;
   showAddr: (addr: Addr) => void;
   /** the project closed: nothing is kept */
   reset: () => void;
@@ -53,10 +67,12 @@ interface AsmLinkState {
 
 const none = () => Promise.resolve();
 const noBuild = () => Promise.resolve(null);
+/** no folder open: no text files, no caret */
+const NO_TEXT = { textFiles: [], linesOf: () => null, titleAt: (file: string, line: number) => `${file}:${line}`, caret: null, selection: null };
 export const useAsmLink = create<AsmLinkState>(set => ({
-  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, notes: [], live: null, flush: none, buildPrg: noBuild,
+  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], live: null, flush: none, buildPrg: noBuild,
   set: p => set(p),
   request: (what, o) => set(s => ({ ask: { what, n: (s.ask?.n ?? 0) + 1, ...o } })),
   showAddr: addr => set(s => ({ show: { addr, n: (s.show?.n ?? 0) + 1 } })),
-  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, notes: [], live: null, flush: none, buildPrg: noBuild }),
+  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], live: null, flush: none, buildPrg: noBuild }),
 }));

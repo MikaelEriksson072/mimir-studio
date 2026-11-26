@@ -167,11 +167,18 @@ const viewOffsets = z.array(z.object({ start: at, end: at, to: at }).refine(o =>
 
 /** an Assembler project's (Project.asm, spec 10.7): the assembler its sources are written for, and the source Run builds
  *  (a path inside the project's folder, with /) */
+const inFolder = z.string().max(1024).refine(p => !/^[\\/]|(^|[\\/])\.\.([\\/]|$)|:/.test(p), 'a path inside the project\'s folder');
 const asmInfo = z.object({
   lang: z.enum(['kickass', '64tass']),
-  main: z.string().max(1024).refine(p => !/^[\\/]|(^|[\\/])\.\.([\\/]|$)|:/.test(p), 'a path inside the project\'s folder').nullable().optional(),
+  main: inFolder.nullable().optional(),
   /** more arguments for the assembler in this project, as typed */
   args: z.string().max(1024).nullable().optional(),
+  /** the bookmarks in the sources by their ids: a file and line (and the last line of an area), a title, a note and a
+   *  colour (one this version does not know is left out, as with the bookmarks on addresses) */
+  bookmarks: z.record(z.string().regex(/^[\w-]{1,64}$/), z.object({
+    file: inFolder, line: z.number().int().min(1).max(10_000_000), end: z.number().int().min(1).max(10_000_000).optional().catch(undefined),
+    title: z.string().max(200), text: z.string().max(20000), color: z.string().max(16).refine(isBookmarkColor).optional().catch(undefined),
+  })).optional(),
 });
 
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */

@@ -648,6 +648,17 @@ main.main { container: editor / inline-size; }
 .bm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .bm-empty { padding: 4px 8px; }
 .bm-help { margin: 0; padding: 8px 14px 10px; border-top: 1px solid var(--line); }
+/* an Assembler project's bookmarks (10.7): in the list, one whose file is gone dimmed; in the editor the mark right of
+   the line numbers, its line tinted in its colour as the listing's, an area's stripe down that margin (--bm from
+   asm-bmc-<colour>; a colour of the user's own gets a class of its own) */
+.bm-item.gone .bm-row { opacity: 0.55; }
+.asm-bmc-amber { --bm: var(--bm-amber); } .asm-bmc-orange { --bm: var(--bm-orange); } .asm-bmc-red { --bm: var(--bm-red); } .asm-bmc-pink { --bm: var(--bm-pink); }
+.asm-bmc-violet { --bm: var(--bm-violet); } .asm-bmc-blue { --bm: var(--bm-blue); } .asm-bmc-teal { --bm: var(--bm-teal); } .asm-bmc-green { --bm: var(--bm-green); }
+.monaco-editor .asm-bm-line { background: color-mix(in srgb, var(--bm) 13%, transparent); }
+.monaco-editor .asm-bm-area { background: color-mix(in srgb, var(--bm) 5%, transparent); }
+.monaco-editor .asm-bm-mark { cursor: pointer; }
+.monaco-editor .asm-bm-mark::before { content: ''; position: absolute; left: 2px; top: 2px; width: 9px; height: 14px; background: var(--bm); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 68%, 0 100%); z-index: 1; }
+.monaco-editor .asm-bm-stripe::after { content: ''; position: absolute; left: 5px; width: 3px; top: 0; bottom: 0; background: var(--bm); opacity: 0.85; pointer-events: none; }
 .bm-editor { margin: 2px 10px 10px; padding: 10px 12px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-2); display: flex; flex-direction: column; }
 .bm-editor-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .bm-editor .field { margin-bottom: 7px; }

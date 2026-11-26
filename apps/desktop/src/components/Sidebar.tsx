@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, dlocSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, ioSummary, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, pastEndText, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type StartIo, type SymbolRef, tapeDirectory, tapeDirEntry, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, dlocSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, ioSummary, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, pastEndText, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AsmBookmark, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type StartIo, type SymbolRef, tapeDirectory, tapeDirEntry, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -14,6 +14,7 @@ import { useUi, type Activity } from '../store/ui';
 import { useAssembler } from '../lib/assembler';
 import { useScripts, type LibraryScript } from '../store/scripts';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
+import { AsmBookmarksView, type AsmBookmarkEditing } from './AsmBookmarks';
 import { C64Screen, screenItems } from './C64Screen';
 import { DiskScreen } from './DiskScreen';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
@@ -28,6 +29,11 @@ interface SidebarProps {
   /** an Assembler project (spec 10.7): the Explorer shows the program its sources make (its file, the disk, the tape and
    *  the memory map), none of a re-assembly's; `main`: the main file chosen (null: the one Mimir finds). Null: another */
   asm?: { main: string | null; onShow: (a: Addr) => void } | null;
+  /** an Assembler project's bookmarks, on lines of its sources (the Bookmarks view shows them instead) */
+  asmBm?: {
+    bookmarks: Record<string, AsmBookmark>; selected: string | null; onSelect: (id: string | null) => void;
+    onGo: (id: string) => void; onAdd: () => void; onEdit: (id: string) => void; onDelete: (id: string) => void; editing: AsmBookmarkEditing | null;
+  } | null;
   onNavigate: (a: Addr) => void; onDemo: () => void; onRemoveFile: (i: number) => void;
   /** a label picked in Symbols: the listing goes to it with the box of its references (else onNavigate) */
   onLabel?: (a: Addr) => void;
@@ -161,7 +167,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ asm, view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
+export function Sidebar({ asm, asmBm, view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -228,6 +234,7 @@ export function Sidebar({ asm, view, A, R, project, colors, cursor, onNavigate, 
       </div>
     );
   }
+  if (view === 'bookmarks' && asmBm) return <AsmBookmarksView {...asmBm} />;
   if (view === 'bookmarks') return <BookmarksView A={A} editing={bmEditing} bookmarks={project.bookmarks} R={R} cursor={cursor} selected={bmSel} onSelect={onBmSelect} onGo={onBmGo} onAdd={onBmAdd} onEdit={onBmEdit} onDelete={onBmDelete} />;
   if (view === 'scripts') return <ScriptsSideView {...scripts} />;
   if (view === 'pack') return <PackView {...pack} />;

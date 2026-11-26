@@ -16,7 +16,7 @@ import {
   checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, DiskEdit, diskKindOf, planScriptsRequests, SCRIPTS_RUN_CHAIN, type ScriptsPlan, scriptBlocksData, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type ScriptLibraryData, type ScriptLibraryRequest, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
-  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
+  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type AsmBookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type ScriptLang, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
   debugSources, asmLineAt, type AsmProgram,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
@@ -82,6 +82,7 @@ import { useLibrary, type LibraryRef } from './store/library';
 import { deepSidName, LIB_COLORS, LIB_KIND, libraryKindOf, sameInLibrary } from './lib/library';
 import type { BankChoice } from './components/ViewModes';
 import { bookmarkList, bookmarkSpan } from './components/Bookmarks';
+import { asmBookmarkSpan, newBookmarkId } from './components/AsmBookmarks';
 import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
@@ -151,9 +152,10 @@ const isDiskScriptTab = (k: BottomTab): k is (typeof DISK_SCRIPT_TABS)[number] =
 /** the tabs of an Assembler project (spec 10.7): its Assembler first, and the views that are not of the analysis, the
  *  re-assembly or the listing */
 const ASM_TABS: readonly EditorTab[] = ['asm', 'gfx', 'mem', 'scripts', 'git', 'spec', 'library'];
-/** the side panel's views an Assembler project has not: its bookmarks would not stay at their lines, and the Pack view
- *  packs a re-assembled build */
-const ASM_HIDDEN_VIEWS: readonly Activity[] = ['bookmarks'];
+/** the side panel's views an Assembler project has not (none now: its bookmarks are on lines of the sources, moving with
+ *  them, and the Pack view packs what the Assembler builds) */
+const ASM_HIDDEN_VIEWS: readonly Activity[] = [];
+const NO_ASM_BOOKMARKS: Record<string, AsmBookmark> = {};
 /** every byte loaded: the memory of a program being debugged is all there is (Memory and Graphics show any of it) */
 const ALL_LOADED = new Int16Array(0x10000);
 /** an Assembler project's commands: those that are not of the analysis, the re-assembly or the listing (its own Run,
@@ -2378,6 +2380,48 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setBmSel(a);
     toast(`Bookmark $${h4(a)}: ${project.bookmarks[a].title}`, 'info');
   };
+  /* ---- an Assembler project's bookmarks (10.7): on lines of its sources, as the re-assembler's on addresses; kept in
+     its project file, moving with their lines as the code is edited (the Assembler tab says where they went) ---- */
+  const asmBms = stored.asm?.bookmarks ?? NO_ASM_BOOKMARKS;
+  /** the bookmark whose note the list shows, and the one the editor is open on (`id` null: a new one) */
+  const [asmBmSel, setAsmBmSel] = useState<string | null>(null);
+  const [asmBmEdit, setAsmBmEdit] = useState<{ id: string | null; file: string; line: number; end: number | null } | null>(null);
+  const asmAsk2 = (what: 'bmAdd' | 'bmGo' | 'bmJump' | 'line', o?: { id?: string; dir?: 1 | -1; at?: string; line?: number; end?: number | null }) => { setUi({ tab: 'asm' }); useAsmLink.getState().request(what, o); };
+  /** the editor in the Bookmarks view: for the bookmark `id`, else a new one on the line (to `end`) */
+  const openAsmBookmark = (at: { file: string; line: number; end: number | null; id: string | null }) => {
+    const b = at.id ? asmBms[at.id] : undefined;
+    setAsmBmEdit(b && at.id ? { id: at.id, file: b.file, line: b.line, end: b.end ?? null } : { id: null, file: at.file, line: at.line, end: at.end });
+    showBookmarks();
+  };
+  const editAsmBookmark = (id: string) => { const b = asmBms[id]; if (!b) return; openAsmBookmark({ ...b, end: b.end ?? null, id }); asmAsk2('bmGo', { id }); };
+  const saveAsmBookmark = (id: string | null, b: AsmBookmark) => {
+    const key = id ?? newBookmarkId(), old = id ? asmBms[id] : undefined;
+    setAsmBmEdit(null); setAsmBmSel(key);
+    if (old && old.file === b.file && old.line === b.line && old.end === b.end && old.title === b.title && old.text === b.text && old.color === b.color) return;
+    update(old ? `Bookmark ${asmBookmarkSpan(b)}` : `Add bookmark ${asmBookmarkSpan(b)}`, d => {
+      if (!d.asm) return;
+      const all = (d.asm.bookmarks ??= {}), x = all[key];
+      if (!x) { all[key] = b; return; }
+      // (the fields that changed, each: Ctrl+Z puts those back, not where the bookmark has moved with its line since)
+      x.file = b.file; x.line = b.line; x.title = b.title; x.text = b.text;
+      if (b.end != null) x.end = b.end; else delete x.end;
+      if (b.color) x.color = b.color; else delete x.color;
+    });
+    toast(old ? `Bookmark ${asmBookmarkSpan(b)} saved` : `Bookmark added on ${asmBookmarkSpan(b)}: Ctrl+B shows the list`, 'ok');
+  };
+  const deleteAsmBookmark = (id: string) => {
+    const b = asmBms[id]; if (!b) return;
+    update(`Remove bookmark ${asmBookmarkSpan(b)}`, d => { if (!d.asm?.bookmarks) return; delete d.asm.bookmarks[id]; if (!Object.keys(d.asm.bookmarks).length) delete d.asm.bookmarks; });
+    if (asmBmEdit?.id === id) setAsmBmEdit(null);
+    toast(`Bookmark ${asmBookmarkSpan(b)} removed (Ctrl+Z brings it back)`, 'ok');
+  };
+  /** bookmarks that moved with their lines, and a file or folder renamed: kept as they are now, with no step to undo */
+  const moveAsmBookmarks = (moved: Record<string, { line: number; end?: number }>) => useProject.getState().amend(d => {
+    for (const [id, p] of Object.entries(moved)) { const x = d.asm?.bookmarks?.[id]; if (!x) continue; x.line = p.line; if (p.end != null) x.end = p.end; else delete x.end; }
+  });
+  const renameAsmBookmarks = (from: string, to: string) => useProject.getState().amend(d => {
+    for (const x of Object.values(d.asm?.bookmarks ?? {})) if (x.file === from || x.file.startsWith(`${from}/`)) x.file = `${to}${x.file.slice(from.length)}`;
+  });
   /* ---- patches: new code written over a range of the loaded bytes (spec 10.2) ---- */
   const patchSpan = (p: Patch) => `$${h4(p.start)}–$${h4(patchEnd(p) - 1)}`;
   /** the code of start..end as the listing writes it: its instructions and data, and the labels and comment lines in it */
@@ -4449,6 +4493,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'asm-pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'}: build the main file with ${asmTool2} and pack it as the Pack view says`, run: () => { setUi({ activity: 'pack', sidePanel: true }); void runPack(); } },
     { id: 'asm-release', label: 'Release: make the build into a disk image, a tape image, a cartridge or a PRG, packed or not, and start it in VICE…', run: () => setAsmRelease(true) },
     { id: 'asm-scripts', label: 'Write build.bat and build.sh beside the main file (they build it and start it in VICE outside Mimir)', run: () => void asmScripts() },
+    { id: 'bookmark', label: 'Add or edit the bookmark on the caret\'s line in the Assembler… (a selection of lines: on them)', key: 'Ctrl+F2', run: () => asmAsk2('bmAdd') },
+    { id: 'bookmarks', label: 'Show bookmarks (notes on lines of the sources)', key: 'Ctrl+B', run: () => showBookmarks() },
+    { id: 'bookmark-next', label: 'Go to the next bookmark', key: 'Alt+F2', run: () => asmAsk2('bmJump', { dir: 1 }) },
+    { id: 'bookmark-prev', label: 'Go to the previous bookmark', key: 'Alt+Shift+F2', run: () => asmAsk2('bmJump', { dir: -1 }) },
     { id: 'asm-settings', label: `Assembler project settings: the language, the main file, more ${asmTool2} arguments (defines for the check too), where Debug runs`, run: asmSettings },
     { id: 'asm-debugger', label: `Run in ${debuggerName}: build the main file with ${asmTool2} and start it there with the sources and the breakpoints`, key: 'Shift+F5', run: () => asmAsk('debugger') },
     { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
@@ -4538,7 +4586,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (e.key === 'F1') { e.preventDefault(); setModal('palette'); return; }
       // an Assembler project's Assembler tab has keys of its own (the code, Run, Build, Debug): only Settings and the
       // bottom panel are the window's there
-      if (k.asm && k.tab === 'asm') { if (ctrl && !e.shiftKey && !e.altKey && (e.key === ',' || e.key.toLowerCase() === 'j')) run(e.key === ',' ? 'settings' : 'panel'); return; }
+      if (k.asm && k.tab === 'asm') { if (ctrl && !e.shiftKey && !e.altKey && (e.key === ',' || /^[jb]$/i.test(e.key))) run(e.key === ',' ? 'settings' : e.key.toLowerCase() === 'j' ? 'panel' : 'bookmarks'); return; }
       // Ctrl+F finds in the listing, and in the source and drive code tabs with Monaco's find (in the editor Monaco takes it itself)
       if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source' || k.tab === 'drive') run('find'); return; }
       if (e.key === 'F3' && k.tab === 'listing' && !k.modal) return run(e.shiftKey ? 'find-prev' : 'find-next');
@@ -5061,7 +5109,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onOverview={() => setModal('overview')} canOverview={project.files.length > 0 || !!project.cart}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : undefined} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
+      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : undefined} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: asmMode ? Object.keys(asmBms).length : Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
           // the view shown: its button collapses the side panel; collapsed, any view's button brings it back. The
           // Library's button shows the Library tab too (10.6)
           if (a === 'library' && !(sidePanel && a === activity && !narrow)) { setLibTabSeen(true); setUi({ tab: 'library' }); }
@@ -5089,6 +5137,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowCovert={() => setUi({ bottom: 'covert', panelOpen: true })} onShowDloc={() => setUi({ bottom: 'dloc', panelOpen: true })} onShowIffl={() => setUi({ bottom: 'iffl', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onShowParaProtect={() => setUi({ bottom: 'paraprotect', panelOpen: true })} onShowDiskSpeed={() => setUi({ bottom: 'diskspeed', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
           tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
           onDiskFileMenu={(f, x, y) => fileScriptMenu(`dir/${f.track}/${f.sector}`, f.name, x, y)} onTapeFileMenu={(f, x, y) => fileScriptMenu(`tape/${tape?.img.files.indexOf(f)}`, f.name, x, y)}
+          asmBm={asmMode ? { bookmarks: asmBms, selected: asmBmSel, onSelect: setAsmBmSel, onGo: id => asmAsk2('bmGo', { id }), onAdd: () => asmAsk2('bmAdd'), onEdit: editAsmBookmark, onDelete: deleteAsmBookmark,
+            editing: asmBmEdit ? { ...asmBmEdit, onSave: saveAsmBookmark, onCancel: () => setAsmBmEdit(null), onPreview: (file, line, end) => asmAsk2('line', { at: file, line, end }) } : null } : null}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),
@@ -5154,6 +5204,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           <ErrorBoundary>
             {asmMode && home && stored.asm && <AssemblerTab key={home.dir} dir={home.dir} name={home.name} info={stored.asm} active={tab === 'asm'} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })} onRelease={() => setAsmRelease(true)}
               toolArgs={{ kick: toolchain.kickArgs, tass: toolchain.tassArgs }} onSettings={asmSettings}
+              onBookmark={openAsmBookmark} onBookmarkSelect={id => { setAsmBmSel(id); showBookmarks(); }} onBookmarkLines={moveAsmBookmarks} onBookmarksRenamed={renameAsmBookmarks}
               onInfo={(label, c) => update(label, d => { if (d.asm) Object.assign(d.asm, c); })} />}
             {tab === 'listing' && !project.files.length && <div className="empty-project">
               <Icon name={home ? 'folder' : 'doc'} size={30} />

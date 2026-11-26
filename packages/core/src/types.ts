@@ -514,7 +514,12 @@ export interface AsmProjectInfo {
    *  (Settings → Toolchain), and the defines in them (-define NAME for KickAss, -D NAME=value for 64tass) Mimir's own
    *  check knows too, so it gives the program the build makes */
   args?: string | null;
+  /** the bookmarks in the sources, by an id of their own (they move with their lines as the code is edited) */
+  bookmarks?: Record<string, AsmBookmark>;
 }
+/** A bookmark in an Assembler project's sources, as a Bookmark is on an address: on a line of a file (`end`: the last
+ *  line of its area; missing: the line only), with its title, note and colour. Kept in the project file. */
+export interface AsmBookmark { file: string; line: number; end?: number; title: string; text: string; color?: string }
 
 /** What `analyze()` and `render()` need; tests and the CLI build these directly. */
 export interface ProjectInput {

@@ -1228,3 +1228,78 @@ test('the 65816 in an Assembler project in 64tass: Mimir\'s check writes its ins
   expect([...prg.subarray(2 + 12)]).toEqual([0x18, 0xfb, 0xc2, 0x30, 0xa9, 0x34, 0x12, 0x8d, 0x20, 0xd0, 0xbf, 0x56, 0x34, 0x12, 0xe2, 0x30, 0xa9, 0x2d, 0x38, 0xfb, 0x60]);
   await closeProject(page, 'scpu');
 });
+
+test('bookmarks in an Assembler project, as in the re-assembler: on lines of the sources, Ctrl+F2 adds or edits, an area, they move with their lines, Alt+F2 goes from one to the next, a file renamed takes its own along, kept in the project file', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'marks');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', '', 'start:', '        inc $d020', 'loop:   jmp loop', ''].join('\n'));
+  writeFileSync(join(dir, 'code.asm'), ['irq:    rti', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const line = (n: number) => page.locator('.scr-editor .view-line').nth(n - 1);
+  const list = page.getByRole('list', { name: 'Bookmarks' });
+  const saved = () => Object.values<{ file: string; line: number; end?: number; title: string }>(JSON.parse(readFileSync(join(dir, 'marks.mimir.json'), 'utf8')).asm.bookmarks ?? {})
+    .map(b => `${b.file}:${b.line}${b.end ? `-${b.end}` : ''} ${b.title}`).sort();
+  // Ctrl+F2 on a line: the editor in the Bookmarks view, the label there its title
+  await line(5).click();
+  await page.keyboard.press('Control+F2');
+  const add = page.getByRole('form', { name: 'Add bookmark' });
+  await expect(add.getByLabel('Title')).toHaveValue('loop');
+  await expect(add.getByLabel('Line', { exact: true })).toHaveValue('5');
+  await add.getByLabel('Note').fill('the main loop');
+  await add.getByRole('button', { name: 'Teal' }).click();
+  await add.getByRole('button', { name: 'Save' }).click();
+  await expect(list.getByRole('button', { name: /main\.asm:5\s*loop/ })).toBeVisible();
+  await expect(page.locator('.scr-editor .asm-bm-mark.asm-bmc-teal')).toHaveCount(1);
+  // lines selected: a bookmark on the area
+  await line(3).click();
+  await line(4).click({ modifiers: ['Shift'] });
+  await page.keyboard.press('Shift+End');
+  await page.keyboard.press('Control+F2');
+  await expect(add.getByLabel('Last line')).toHaveValue('4');
+  await expect(add.getByLabel('Title')).toHaveValue('start');
+  await add.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.scr-editor .asm-bm-stripe')).toHaveCount(2);
+  await expect.poll(saved).toEqual(['main.asm:3-4 start', 'main.asm:5 loop']);
+  // two lines typed above them: they move with their lines, and the project file says where
+  await line(1).click();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await expect.poll(saved).toEqual(['main.asm:5-6 start', 'main.asm:7 loop']);
+  await expect(list.getByRole('button', { name: /main\.asm:7\s*loop/ })).toBeVisible();
+  await shot(page, '33-asm-bookmarks');
+  // Alt+F2 / Alt+Shift+F2: the next and the one before, round
+  await line(1).click();
+  await page.keyboard.press('Alt+F2');
+  await expect(toast(page, 'Bookmark main.asm:5–6: start')).toBeVisible();
+  await page.keyboard.press('Alt+F2');
+  await expect(toast(page, 'Bookmark main.asm:7: loop')).toBeVisible();
+  await page.keyboard.press('Alt+Shift+F2');
+  await expect(toast(page, 'Bookmark main.asm:5–6: start').last()).toBeVisible();
+  // a click on a bookmark's mark: its note in the list
+  await page.locator('.scr-editor .asm-bm-mark.asm-bmc-teal').click();
+  await expect(list.getByRole('button', { name: /main\.asm:7\s*loop/ })).toHaveAttribute('aria-expanded', 'true');
+  await expect(list).toContainText('the main loop');
+  // one in another file, which is renamed: it follows the file
+  await tree(page).getByRole('treeitem', { name: 'code.asm' }).click();
+  await line(1).click();
+  await page.keyboard.press('Control+F2');
+  await expect(add.getByLabel('Title')).toHaveValue('irq');
+  await add.getByRole('button', { name: 'Save' }).click();
+  await tree(page).getByRole('treeitem', { name: 'code.asm' }).getByRole('button', { name: 'More for code.asm' }).click({ force: true });
+  await page.getByRole('menuitem', { name: /^Rename/ }).click();
+  await tree(page).getByLabel('New name of code.asm').fill('irq.asm');
+  await tree(page).getByLabel('New name of code.asm').press('Enter');
+  await expect(list.getByRole('button', { name: /irq\.asm:1\s*irq/ })).toBeVisible();
+  await expect.poll(saved).toEqual(['irq.asm:1 irq', 'main.asm:5-6 start', 'main.asm:7 loop']);
+  // removed, and back with Undo
+  // (the one saved last is open in the list)
+  await list.getByRole('button', { name: 'Delete bookmark irq.asm:1' }).click();
+  await expect.poll(saved).toEqual(['main.asm:5-6 start', 'main.asm:7 loop']);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect.poll(saved).toEqual(['irq.asm:1 irq', 'main.asm:5-6 start', 'main.asm:7 loop']);
+  await closeProject(page, 'marks');
+});

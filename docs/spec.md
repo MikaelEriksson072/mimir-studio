@@ -3665,7 +3665,7 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   Assemblerns *Run*, *Build* och *Debug* och de kommandon som inte hör till analysen eller listningen. En PRG, en
   snapshot eller en cartridge som öppnas eller släpps tas inte in (det säger ett meddelande); disketter och band
   monteras. Ett skripts ändringar av programmet görs inte, de räknas bara ut som i safe mode, men det skriptet ber om
-  i övrigt (filer, disketter, band, biblioteket) görs. Sidopanelen saknar Bookmarks; panelen under har bara
+  i övrigt (filer, disketter, band, biblioteket) görs. Sidopanelens Bookmarks har bokmärken på rader i källorna (se *Bokmärken* nedan); panelen under har bara
   *Messages* (och bandet).
 - **Programmet i projektets vyer** är det kontrollen assemblerar (`asmProgram`): bytes som bygget skriver dem (från den
   lägsta till den högsta, luckorna nollor, en fil `<huvudfil>.prg`), vad varje byte är, källans etiketter och var en
@@ -3864,6 +3864,21 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   definierar namnet igen ett fel, utom i `.weak` … `.endweak`, som ger vika; ett fel i ett värde står på `<command line>`,
   och ett klick på det öppnar sidan. Övriga argument är bara byggets. Mätt (`asm-args.integration.test.ts`): KickAss.jar
   och 64tass med argumenten ger samma bytes som kontrollen.
+- **Bokmärken** (2026-11-26, `AsmBookmarks.tsx`), som i re-assemblern (10, *Bokmärke*), men på rader i källorna i stället för
+  adresser: Bookmarks-vyn i sidopanelen (Ctrl+B) listar dem efter fil och rad (`main.asm:7 loop`), ett klick visar
+  anteckningen, ett dubbelklick går till raden i Assemblern, filtret söker i titel, anteckning och fil. **Ctrl+F2** på en
+  rad (eller högerklick → *Bookmark this line…*, + i listan, paletten) öppnar redigeraren överst i listan för bokmärket
+  på raden, eller ett nytt; med flera rader markerade blir det ett **område** (första och sista raden). Redigeraren har fil,
+  rad, sista rad (*Caret line* och *Selection* tar markörens rad och markeringen), titel (etiketten på raden, annars
+  fil:rad), anteckning och färg (samma åtta och egna färger); Assemblern visar raden medan man skriver.
+  **Alt+F2 / Alt+Shift+F2** går till nästa / föregående efter markörens rad, runt (F2 byter namn i Assemblern). I editorn
+  har bokmärket ett märke i sin färg till höger om radnumret (ett klick visar anteckningen i listan, muspekaren titeln),
+  raden tonad i färgen, ett område ett streck i marginalen ner till sista raden, och ett streck i scrollfältets kant.
+  Bokmärkena **följer sina rader** medan man skriver (Monaco-dekorationer); var de är nu skrivs i projektfilen strax efter
+  (`asm.bookmarks`, efter id, `{ file, line, end?, title, text, color? }`) som en ändring utan eget ångra-steg
+  (`amend`), så att Ctrl+Z ångrar koden och inte flytten; att lägga till, ändra och ta bort är steg som andra.
+  En fil som byter namn i fillistan tar sina bokmärken med sig; en fil som ändras utanför Mimir får dem på raderna som
+  sparats; ett bokmärke i en fil som inte finns i mappen visas nedtonat. Ingen NOTES-fil (Assemblern exporterar inget).
 - **Det debuggade programmets minne, och externa debuggers** (2026-11-25). Medan Assemblern debuggar programmet visar
   *Memory* och *Graphics* maskinens minne som det är nu i stället för programmet som det laddas (`live` i
   `store/asmlink.ts`): i Mimirs 6510 det programmet ser (`asmMachineMemory`: det det skrivit över sina egna bytes), i hela

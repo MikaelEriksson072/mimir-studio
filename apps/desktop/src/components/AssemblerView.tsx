@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
-import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
+import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, splitLabel, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { MenuItem } from '../lib/types';
@@ -29,7 +29,8 @@ import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type As
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
 import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
-import type { AsmBlockKind } from '@mimir/core';
+import { isBookmarkColor, type AsmBlockKind, type AsmBookmark } from '@mimir/core';
+import { asmBookmarkSpan } from './AsmBookmarks';
 
 const kr = window.kr;
 type MonacoNs = typeof Monaco;
@@ -204,6 +205,26 @@ function NewFolderForm({ parent: parent0, onCreate, onCancel, name: name0 = '', 
  *  its machine and check, the registers before the last step (what it changed is marked) */
 interface Debugging { m: ScriptMachine | AsmC64; c: AsmCheck; prev: DebugRegs | null }
 
+const NO_BOOKMARKS: Record<string, AsmBookmark> = {};
+/** how long after the last key the bookmarks' new lines are kept in the project */
+const BM_SYNC_MS = 400;
+/** the class that gives a bookmark's decorations its colour (--bm): a preset's, or one made for a colour of the user's own */
+function bmColorClass(color?: string): string {
+  if (!color || !isBookmarkColor(color)) return 'asm-bmc-amber';
+  if (!color.startsWith('#')) return `asm-bmc-${color}`;
+  const k = `asm-bmc-x${color.slice(1).toLowerCase()}`;
+  let st = document.getElementById('asm-bm-colors') as HTMLStyleElement | null;
+  if (!st) { st = document.createElement('style'); st.id = 'asm-bm-colors'; document.head.appendChild(st); }
+  if (!st.textContent?.includes(`.${k}{`)) st.textContent = `${st.textContent ?? ''}.${k}{--bm:${color}}\n`;
+  return k;
+}
+/** a bookmark's colour as #rrggbb (the overview ruler takes no CSS variable) */
+function bmHex(color?: string): string {
+  if (color?.startsWith('#')) return color;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(`--bm-${color && isBookmarkColor(color) ? color : 'amber'}`).trim();
+  return /^#[0-9a-f]{6}$/i.test(v) ? v : '#e5a83b';
+}
+
 export interface AssemblerTabProps {
   /** the project's folder, its name */
   dir: string; name: string;
@@ -220,6 +241,13 @@ export interface AssemblerTabProps {
   toolArgs: { kick: string; tass: string };
   /** Settings at the Assembler project page (the project's language, main file, arguments, where Debug runs) */
   onSettings: () => void;
+  /** the bookmarks (info.bookmarks): Ctrl+F2 on a line asks for the editor of the bookmark there (`id`) or of a new one
+   *  (`end`: the last line selected); a click on a bookmark's mark shows its note in the list; the bookmarks that moved
+   *  with their lines as the code was edited; a file or folder renamed (its bookmarks follow it) */
+  onBookmark: (at: { file: string; line: number; end: number | null; id: string | null }) => void;
+  onBookmarkSelect: (id: string) => void;
+  onBookmarkLines: (moved: Record<string, { line: number; end?: number }>) => void;
+  onBookmarksRenamed: (from: string, to: string) => void;
 }
 
 /** The Assembler tab of an Assembler project: its folder opened (listed, watched), then the files and the code. */
@@ -241,7 +269,7 @@ interface WorkspaceProps extends AssemblerTabProps {
   onFolder: (f: AsmFolder) => void;
 }
 
-function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease, toolArgs, onSettings }: WorkspaceProps) {
+function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease, toolArgs, onSettings, onBookmark, onBookmarkSelect, onBookmarkLines, onBookmarksRenamed }: WorkspaceProps) {
   const dir = folder.dir;
   const ui = useAssembler();
   const activeRef = useRef(active); activeRef.current = active;
@@ -343,7 +371,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     // a file changed outside the app: the editor takes its text (undo goes back to what it had)
     for (const [p, text] of Object.entries(read)) {
       const m = models.current[p];
-      if (m && !m.isDisposed() && m.getValue() !== text) { applying.current = true; m.pushEditOperations([], [{ range: m.getFullModelRange(), text }], () => null); m.pushStackElement(); applying.current = false; }
+      // (a file changed outside: its bookmarks go back to the lines kept, as nothing says where its lines went)
+      if (m && !m.isDisposed() && m.getValue() !== text) { applying.current = true; m.pushEditOperations([], [{ range: m.getFullModelRange(), text }], () => null); m.pushStackElement(); applying.current = false; dropBmDecos(p); }
     }
     setTexts(t => { const n = { ...t }; for (const p of gone) delete n[p]; for (const [p, text] of Object.entries(read)) n[p] = text; return n; });
   };
@@ -426,7 +455,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** (`soft`: the debugger's line, scrolled to only when it is out of view, the focus left where it is) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
-  const keys = useRef({ debugger: () => { }, block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
+  const keys = useRef({ debugger: () => { }, block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { },
+    bookmark: () => { }, bmJump: (_dir: 1 | -1) => { }, bmClick: (_line: number) => { }, bmSync: () => { }, bmFlush: () => { } });
 
   useEffect(() => {
     if (!loaded) return;
@@ -450,6 +480,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         const text = m.getValue();
         setTexts(t => ({ ...t, [path]: text }));
         schedule(path);
+        keys.current.bmSync();
         // a preview typed in is kept open
         const t = tabsNow();
         if (t.preview === path) setTabs({ ...t, preview: null });
@@ -471,11 +502,26 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => keys.current.tab(-1));
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F4, () => keys.current.closeTab());
       // the lines chosen (Cycles counts them)
-      editor.onDidChangeCursorSelection(ev => { const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null; setSelLines(p ? { file: p, from: ev.selection.startLineNumber, to: ev.selection.endColumn === 1 && ev.selection.endLineNumber > ev.selection.startLineNumber ? ev.selection.endLineNumber - 1 : ev.selection.endLineNumber } : null); });
+      editor.onDidChangeCursorSelection(ev => {
+        const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null;
+        const sel = p ? { file: p, from: ev.selection.startLineNumber, to: ev.selection.endColumn === 1 && ev.selection.endLineNumber > ev.selection.startLineNumber ? ev.selection.endLineNumber - 1 : ev.selection.endLineNumber } : null;
+        setSelLines(sel);
+        // (the caret's line and the lines selected: the bookmark editor can take them)
+        useAsmLink.getState().set({ caret: p ? { file: p, line: ev.selection.positionLineNumber } : null, selection: sel });
+      });
       // the editor's menu: a block of sprites, a charset, a bitmap, music … put in where the caret is
       editor.addAction({ id: 'mimir.insertBlock', label: 'Insert block…', contextMenuGroupId: '1_modification', contextMenuOrder: 0, run: () => keys.current.block() });
+      // bookmarks, as the re-assembler's on its lines: Ctrl+F2 adds or edits the one on the caret's line (a selection: an
+      // area), Alt+F2 / Alt+Shift+F2 go to the next / previous one (F2 renames here)
+      editor.addAction({ id: 'mimir.bookmark', label: 'Bookmark this line…', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2], contextMenuGroupId: '1_modification', contextMenuOrder: 0.5, run: () => keys.current.bookmark() });
+      editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F2, () => keys.current.bmJump(1));
+      editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.F2, () => keys.current.bmJump(-1));
       // a click in the gutter left of the line numbers sets or clears a breakpoint
-      editor.onMouseDown(ev => { if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber); });
+      editor.onMouseDown(ev => {
+        if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber);
+        // (a bookmark's mark, right of the line numbers: its note in the list)
+        else if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS && ev.target.position) keys.current.bmClick(ev.target.position.lineNumber);
+      });
       // a definition in another of the folder's files (F12, Ctrl+click): that file in the editor, at it
       opener = monaco.editor.registerEditorOpener({
         openCodeEditor(_from, resource, at) {
@@ -491,6 +537,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     return () => {
       alive = false; opener?.dispose();
       void writeAll();
+      keys.current.bmFlush();
       for (const [p, m] of Object.entries(models.current)) if (!m.isDisposed()) useAssembler.getState().setBps(dir, p, bpLines(p));
       ed.current?.dispose(); ed.current = null; pcDeco.current = null;
       Object.values(models.current).forEach(m => m.dispose()); models.current = {};
@@ -504,7 +551,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     for (const [p, text] of Object.entries(texts)) if (!models.current[p]) {
       const m = models.current[p] = monaco.editor.createModel(text, editorLang(p, lang), uriOf(monaco, p));
       // a change in a file the editor does not show (a rename, F2, in all the files): written as typing is
-      m.onDidChangeContent(() => { if (applying.current || m.isDisposed() || ed.current?.getModel() === m) return; setTexts(t => ({ ...t, [p]: m.getValue() })); schedule(p); });
+      m.onDidChangeContent(() => { if (applying.current || m.isDisposed() || ed.current?.getModel() === m) return; setTexts(t => ({ ...t, [p]: m.getValue() })); schedule(p); keys.current.bmSync(); });
       bpIds.current[p] = []; setBps(p, useAssembler.getState().bps[`${dir}|${p}`] ?? [], m);
     }
     for (const p of Object.keys(models.current)) if (!(p in texts)) { models.current[p].dispose(); delete models.current[p]; delete views.current[p]; }
@@ -680,6 +727,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** a file or folder renamed: what is not written yet is first; the editor, the main file and the list follow it */
   const renameTo = async (from: string, to: string) => {
     const under = (p: string) => p === from || p.startsWith(`${from}/`);
+    // (where the bookmarks are now kept first: they follow the files)
+    keys.current.bmFlush();
     await Promise.all(Object.keys(timers.current).filter(under).map(write));
     const moved = (p: string) => `${to}${p.slice(from.length)}`;
     // (the tabs, the file shown and where it was shown follow the files: fixTabs asks where each went)
@@ -687,6 +736,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     for (const p of Object.keys(views.current)) if (under(p)) views.current[moved(p)] = views.current[p];
     try { if (!await change({ dir, op: 'rename', path: from, to }, `${from} is ${to} now`)) return; } finally { moves.current = null; }
     if (chosen && under(chosen)) onInfo('Main file', { main: moved(chosen) });
+    if (Object.values(bookmarks).some(b => under(b.file))) onBookmarksRenamed(from, to);
     ui.setExpanded(dir, [...expanded].map(p => (under(p) ? moved(p) : p)));
   };
   const remove = async (e: AsmEntry) => {
@@ -832,6 +882,95 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     for (const p of Object.keys(models.current)) for (const l of bpLines(p)) { const a = asmAddrOf(c, p, l); if (a != null) out.add(a); }
     return out;
   };
+
+  /* ---- bookmarks (as the re-assembler's, on lines): each a decoration that moves with its lines (its area) and its
+     mark; where they are now is kept in the project a moment after the code is edited ---- */
+  const bookmarks = info.bookmarks ?? NO_BOOKMARKS;
+  const bmRef = useRef(bookmarks); bmRef.current = bookmarks;
+  /** each bookmark's decorations (the one its lines are, its mark) and the bookmark they were made from */
+  const bmDecos = useRef<Record<string, { file: string; ids: string[]; b: AsmBookmark }>>({});
+  /** where a bookmark is now: its decoration's lines, else as kept */
+  const bmPlace = (id: string): { file: string; line: number; end?: number } | null => {
+    const b = bmRef.current[id]; if (!b) return null;
+    const d = bmDecos.current[id], m = d ? models.current[d.file] : undefined;
+    const r = d && m && !m.isDisposed() && d.file === b.file ? m.getDecorationRange(d.ids[0]) : null;
+    if (!r) return { file: b.file, line: b.line, ...(b.end != null ? { end: b.end } : {}) };
+    return { file: b.file, line: r.startLineNumber, ...(b.end != null && r.endLineNumber > r.startLineNumber ? { end: r.endLineNumber } : {}) };
+  };
+  /** a file's bookmark decorations taken away (made again from the lines kept) */
+  const dropBmDecos = (p: string) => {
+    for (const [id, d] of Object.entries(bmDecos.current)) if (d.file === p) { const m = models.current[p]; if (m && !m.isDisposed()) m.deltaDecorations(d.ids, []); delete bmDecos.current[id]; }
+    setTick(t => t + 1);
+  };
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (state !== 'ready' || !monaco) return;
+    for (const [id, d] of Object.entries(bmDecos.current)) {
+      const b = bookmarks[id], m = models.current[d.file];
+      if (b === d.b && m && !m.isDisposed()) continue;
+      if (m && !m.isDisposed()) m.deltaDecorations(d.ids, []);
+      delete bmDecos.current[id];
+    }
+    const never = monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges;
+    for (const [id, b] of Object.entries(bookmarks)) {
+      const m = models.current[b.file];
+      if (bmDecos.current[id] || !m || m.isDisposed()) continue;
+      const n = m.getLineCount(), line = Math.min(b.line, n), end = Math.min(Math.max(b.end ?? line, line), n), c = bmColorClass(b.color);
+      const tip = `${b.title || asmBookmarkSpan(b)}${b.text ? `\n${b.text.length > 300 ? `${b.text.slice(0, 300)}…` : b.text}` : ''}\n(a click shows it in Bookmarks)`;
+      bmDecos.current[id] = { file: b.file, b, ids: m.deltaDecorations([], [
+        { range: new monaco.Range(line, 1, end, m.getLineMaxColumn(end)), options: { stickiness: never, isWholeLine: true, ...(end > line ? { className: `asm-bm-area ${c}`, linesDecorationsClassName: `asm-bm-stripe ${c}` } : {}) } },
+        { range: new monaco.Range(line, 1, line, m.getLineMaxColumn(line)), options: { stickiness: never, isWholeLine: true, className: `asm-bm-line ${c}`, linesDecorationsClassName: `asm-bm-mark ${c}`, linesDecorationsTooltip: tip,
+          overviewRuler: { color: bmHex(b.color), position: monaco.editor.OverviewRulerLane.Left } } },
+      ]) };
+    }
+  }, [state, bookmarks, texts]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** the bookmarks that moved with their lines, kept in the project (a moment after the edit, or now) */
+  const bmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const bmFlush = () => {
+    clearTimeout(bmTimer.current);
+    const moved: Record<string, { line: number; end?: number }> = {};
+    for (const [id, b] of Object.entries(bmRef.current)) {
+      const p = bmPlace(id);
+      if (p && (p.line !== b.line || p.end !== b.end)) moved[id] = { line: p.line, ...(p.end != null ? { end: p.end } : {}) };
+    }
+    if (Object.keys(moved).length) onBookmarkLines(moved);
+  };
+  useEffect(() => () => clearTimeout(bmTimer.current), []);
+  /** the bookmark whose first line is `line` of `file` now */
+  const bookmarkOn = (file: string, line: number): string | null => Object.keys(bmRef.current).find(id => { const p = bmPlace(id); return p?.file === file && p.line === line; }) ?? null;
+  /** Ctrl+F2: the editor for the bookmark on the caret's line, else a new one there (a selection of lines: on them) */
+  const bookmarkHere = () => {
+    const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
+    if (!e || !p || !s) { toast('Open a source to bookmark a line in it', 'warn'); return; }
+    const from = s.startLineNumber, to = s.endColumn === 1 && s.endLineNumber > from ? s.endLineNumber - 1 : s.endLineNumber;
+    bmFlush();
+    onBookmark({ file: p, line: from, end: to > from ? to : null, id: bookmarkOn(p, from) });
+  };
+  /** a bookmark's line in the editor (`select`: its area's lines selected) */
+  const goBookmark = (id: string) => {
+    const p = bmPlace(id); if (!p) return;
+    if (!paths.has(p.file)) { toast(`${p.file} is not in the project's folder: the bookmark ${asmBookmarkSpan(p)} has no line to go to`, 'warn'); return; }
+    openFile(p.file, { line: p.line, keep: true });
+  };
+  /** Alt+F2 / Alt+Shift+F2: the next / previous bookmark after the caret's line, round to the first / last */
+  const jumpBookmark = (dir: 1 | -1) => {
+    const all = Object.keys(bmRef.current).map(id => ({ id, p: bmPlace(id)! })).filter(x => x.p && paths.has(x.p.file))
+      .sort((a, b) => a.p.file.localeCompare(b.p.file) || a.p.line - b.p.line);
+    if (!all.length) { toast('No bookmarks yet: Ctrl+F2 on a line adds one', 'info'); return; }
+    const e = ed.current, m = e?.getModel(), here = m ? pathOfUri(m.uri) : null, line = e?.getPosition()?.lineNumber ?? 0;
+    const cmp = (x: { file: string; line: number }) => (here == null ? 1 : x.file.localeCompare(here) || x.line - line);
+    const next = dir > 0 ? all.find(x => cmp(x.p) > 0) ?? all[0] : [...all].reverse().find(x => cmp(x.p) < 0) ?? all[all.length - 1];
+    openFile(next.p.file, { line: next.p.line, keep: true });
+    toast(`Bookmark ${asmBookmarkSpan(next.p)}: ${bmRef.current[next.id].title}`, 'info');
+  };
+  /** a click on a bookmark's mark: its note in the list */
+  const bookmarkClicked = (line: number) => {
+    const p = shownRef.current; if (!p) return;
+    const id = Object.keys(bmRef.current).find(k => { const q = bmPlace(k); return q?.file === p && q.line <= line && line <= (q.end ?? q.line); });
+    if (id) onBookmarkSelect(id);
+  };
+  keys.current.bookmark = bookmarkHere; keys.current.bmJump = jumpBookmark; keys.current.bmClick = bookmarkClicked; keys.current.bmFlush = bmFlush;
+  keys.current.bmSync = () => { clearTimeout(bmTimer.current); bmTimer.current = setTimeout(() => keys.current.bmFlush(), BM_SYNC_MS); };
   /** the debugger stopped somewhere: its line shown (in its file; at no line of the sources, the line it is running
    *  for), the C64's picture as it stands; at the end of the run (memory only: the program returned; the whole C64: a
    *  JAM), it is the last run */
@@ -971,7 +1110,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
   };
   const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
-  keys.current = { debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
+  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
   // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
   // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
   const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
@@ -987,10 +1126,34 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => {
     if (!ask || ask.n === seenAsk.current.ask) return;
     seenAsk.current.ask = ask.n;
+    // the bookmarks': the editor for the caret's line, a bookmark's line, the next or previous one, a line shown while one is edited
+    if (ask.what === 'bmAdd') { bookmarkHere(); return; }
+    if (ask.what === 'bmGo') { if (ask.id) goBookmark(ask.id); return; }
+    if (ask.what === 'bmJump') { jumpBookmark(ask.dir ?? 1); return; }
+    if (ask.what === 'line') {
+      if (!ask.at || !ask.line || !paths.has(ask.at)) return;
+      openFile(ask.at, { line: ask.line, soft: true });
+      const e = ed.current, monaco = monacoRef.current, end = ask.end;
+      // (after the line is shown, which puts the caret on it)
+      if (end && e && monaco) requestAnimationFrame(() => requestAnimationFrame(() => { const m = e.getModel(); if (m && pathOfUri(m.uri) === ask.at) e.setSelection(new monaco.Range(ask.line!, 1, Math.min(end, m.getLineCount()), m.getLineMaxColumn(Math.min(end, m.getLineCount())))); }));
+      return;
+    }
     if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else if (ask.what === 'debugger') void runInDebugger(); else if (ask.what === 'write') { if (ask.changes) void writeBytes(ask.changes); } else if (ask.what === 'drop') { if (ask.files) void dropFiles(ask.files, ask.at ?? null); } else if (ask.what === 'log') { if (ask.text) setBuild(b => (b ? { ...b, log: `${b.log}\n\n${ask.text}` } : b)); ui.set({ outTab: 'build', outFolded: false }); } else void startDebug();
   }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
   useEffect(() => { useAsmLink.getState().set({ main }); }, [main]);
+  // the folder's text files, their lines and the label on a line, for the bookmarks
+  const textKeys = useMemo(() => Object.keys(texts).sort().join('\n'), [texts]);
+  useEffect(() => { useAsmLink.getState().set({ textFiles: textKeys ? textKeys.split('\n') : [] }); }, [textKeys]);
+  const langRef = useRef(lang); langRef.current = lang;
+  useEffect(() => {
+    const textOf = (f: string): string | null => { const m = models.current[f]; return m && !m.isDisposed() ? m.getValue() : textsRef.current[f] ?? null; };
+    const lineOf = (f: string, l: number) => (textOf(f)?.split('\n')[l - 1] ?? '').replace(/\r$/, '');
+    useAsmLink.getState().set({
+      linesOf: f => { const t = textOf(f); return t == null ? null : t.split('\n').length; },
+      titleAt: (f, l) => { const label = splitLabel(lineOf(f, l), langRef.current).label; return label && !/^[!+-]/.test(label) ? label : `${f}:${l}`; },
+    });
+  }, []);
   // the sources and the main file Mimir finds, for Settings → Assembler project
   const sourceList = useMemo(() => files.map(f => f.path).filter(p => ASM_SOURCE.test(p)).sort(), [files]);
   useEffect(() => { useAsmLink.getState().set({ sources: sourceList, found: guessed ?? null }); }, [sourceList, guessed]);

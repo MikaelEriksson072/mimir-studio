@@ -188,7 +188,7 @@ const roam = (e: KeyboardEvent<HTMLDivElement>) => {
 /** The bookmark's colour: eight presets, then eight places for colours of the user's own, which the app keeps for every
  * project. An empty place (+) makes one; a double-click on one, or the pencil, changes it. A bookmark keeps its colour
  * when the colour it was given is changed or removed here. */
-function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+export function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
   const own = useUi(s => s.bmColors), setUi = useUi(s => s.set);
   /** the place of the own colour being made or changed, the colour (the last valid one typed) and the text typed */
   const [slot, setSlot] = useState<{ i: number; c: string; text: string } | null>(null);

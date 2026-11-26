@@ -1,5 +1,5 @@
 /* Project creation and the on-disk `.mimir.json` format (file bytes as base64). */
-import { LEGACY_PROJECT_FORMAT, type AsmProjectInfo, type Cartridge, type FileInput, type LoadedFile, type Project, type SerializedProject, type Settings } from './types';
+import { LEGACY_PROJECT_FORMAT, type AsmBookmark, type AsmProjectInfo, type Cartridge, type FileInput, type LoadedFile, type Project, type SerializedProject, type Settings } from './types';
 import { DEFAULT_SETTINGS } from './model';
 import { makeDemo } from './demo';
 import { parsePrg } from './c64/prg';
@@ -34,11 +34,19 @@ export function createProject(init: { name?: string; files: FileInput[]; setting
   };
 }
 /** an Assembler project's info as it is kept: the language one of the two, the main file a path or nothing, its own
- *  arguments for the assembler if it has any */
+ *  arguments for the assembler and its bookmarks if it has any */
 function asmInfo(a: AsmProjectInfo): AsmProjectInfo {
   const args = a.args?.trim();
-  return { lang: a.lang === '64tass' ? '64tass' : 'kickass', main: a.main || null, ...(args ? { args } : {}) };
+  const bookmarks = Object.entries(a.bookmarks ?? {}).filter(([, b]) => b && b.file && b.line >= 1);
+  return {
+    lang: a.lang === '64tass' ? '64tass' : 'kickass', main: a.main || null, ...(args ? { args } : {}),
+    ...(bookmarks.length ? { bookmarks: Object.fromEntries(bookmarks.map(([id, b]) => [id, asmBookmark(b)])) } : {}),
+  };
 }
+/** a bookmark as it is kept: an area's end only past its line, the colour only when it has one */
+const asmBookmark = (b: AsmBookmark): AsmBookmark => ({
+  file: b.file, line: Math.floor(b.line), ...(b.end != null && b.end > b.line ? { end: Math.floor(b.end) } : {}), title: b.title ?? '', text: b.text ?? '', ...(b.color ? { color: b.color } : {}),
+});
 
 export function demoProject(settings?: Partial<Settings>): Project {
   const d = makeDemo();
@@ -60,7 +68,7 @@ export function serializeProject(p: Project): SerializedProject {
     ...(p.patches?.length ? { patches: p.patches.map(({ id: _, bytes, old, ...q }) => ({ ...q, bytes: b64enc(bytes), old: b64enc(old) })) } : {}),
     ...(p.userScripts?.length ? { userScripts: p.userScripts.map(({ pads, ...u }) => ({ ...u, pads: pads.map(({ bytes, data, ...d }) => ({ ...d, ...(bytes ? { bytes: b64enc(bytes) } : {}), ...(data ? { data: b64enc(data) } : {}) })) })) } : {}),
     ...(p.cart ? { cart: { name: p.cart.name, data: b64enc(p.cart.crt) } } : {}),
-    ...(p.asm ? { asm: (({ lang, main, args }) => ({ lang, ...(main ? { main } : {}), ...(args ? { args } : {}) }))(asmInfo(p.asm)) } : {}),
+    ...(p.asm ? { asm: (({ lang, main, args, bookmarks }) => ({ lang, ...(main ? { main } : {}), ...(args ? { args } : {}), ...(bookmarks ? { bookmarks } : {}) }))(asmInfo(p.asm)) } : {}),
     settings: p.settings,
   };
 }
