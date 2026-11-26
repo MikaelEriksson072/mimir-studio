@@ -2276,3 +2276,8 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .c64s-body.keys { outline: none; cursor: text; }
 .c64s-body.keys:focus-visible, .c64s-body.keys:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 .c64s-note.c64s-keys { color: var(--fg-3); }
+/* files dropped on an Assembler project: the banner lets the file list under it take the drop, a folder there marked */
+.drop.asm-drop { pointer-events: none; background: transparent; place-items: end center; padding-bottom: 48px; }
+.drop.asm-drop > div { max-width: 640px; background: rgba(20, 18, 50, 0.92); }
+.asm-row.drop-into { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1px dashed var(--accent); outline-offset: -1px; }
+.asm-tree.drop-top { outline: 1px dashed var(--accent); outline-offset: -2px; }

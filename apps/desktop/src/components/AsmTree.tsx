@@ -3,7 +3,7 @@
  * marked, as are a file with changes not yet written and one with problems (a double-click opens it in a tab that stays,
  * a click in the preview tab; AsmTabs is the row of tabs over the code). A right-click (or the ⋯ of a row) gives
  * New file, New folder, Rename, Delete, Set as main file and Show in folder; a new name is typed in the tree itself. */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import { ASM_SOURCE, ASM_TEXT } from '@mimir/core';
 import type { AsmEntry } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
@@ -61,6 +61,15 @@ export function AsmTree({ entries, expanded, shown, main, dirty, problems, edit,
   add('', 0);
   const [focus, setFocus] = useState<string | null>(null);
   const host = useRef<HTMLDivElement>(null);
+  // files dragged in from outside over a row: the folder they go into when dropped there (the window copies them)
+  const [dropOn, setDropOn] = useState<string | null>(null);
+  useEffect(() => { const off = () => setDropOn(null); window.addEventListener('drop', off); window.addEventListener('dragend', off); return () => { window.removeEventListener('drop', off); window.removeEventListener('dragend', off); }; }, []);
+  const dragOver = (ev: DragEvent) => {
+    if (![...ev.dataTransfer.types].includes('Files')) return;
+    const p = (ev.target as Element).closest('[role="treeitem"][data-path]')?.getAttribute('data-path') ?? null;
+    const e = p == null ? null : entries.find(x => x.path === p);
+    setDropOn(p == null ? null : e?.dir ? p : parentOf(p));
+  };
   // the row shown in the editor is the one the keys move from
   useEffect(() => { if (shown) setFocus(shown); }, [shown]);
 
@@ -92,7 +101,8 @@ export function AsmTree({ entries, expanded, shown, main, dirty, problems, edit,
     ? input(depth, '', newAt.kind === 'folder' ? 'folder' : 'code', newAt.kind === 'folder' ? 'Name of the new folder' : 'Name of the new file') : null;
 
   return (
-    <div className="asm-tree" role="tree" aria-label="Files" ref={host} onKeyDown={keys} onContextMenu={e => menuAt(e, null)}>
+    <div className={cx('asm-tree', dropOn === '' && 'drop-top')} role="tree" aria-label="Files" ref={host} onKeyDown={keys} onContextMenu={e => menuAt(e, null)}
+      onDragOver={dragOver} onDragLeave={ev => { if (!host.current?.contains(ev.relatedTarget as Node)) setDropOn(null); }}>
       {newRow('', 0)}
       {rows.map(({ e, depth }) => {
         const name = baseName(e.path), n = problems.get(e.path) ?? 0;
@@ -102,7 +112,7 @@ export function AsmTree({ entries, expanded, shown, main, dirty, problems, edit,
           <div key={e.path}>
             <div role="treeitem" aria-label={name} aria-level={depth + 1} aria-expanded={e.dir ? open : undefined} aria-selected={!e.dir && e.path === shown}
               data-path={e.path} tabIndex={(focus ?? rows[0]?.e.path) === e.path ? 0 : -1}
-              className={cx('asm-row', e.dir && 'dir', !e.dir && e.path === shown && 'on', e.path === main && 'main')} style={{ paddingLeft: 6 + depth * 14 }}
+              className={cx('asm-row', e.dir && 'dir', !e.dir && e.path === shown && 'on', e.path === main && 'main', e.dir && dropOn === e.path && 'drop-into')} style={{ paddingLeft: 6 + depth * 14 }}
               title={e.dir ? e.path : `${e.path} · ${fmtBytes(e.size)}${e.path === main ? ' · the main file: Run and Build build it' : ''}${dirty.has(e.path) ? ' · changes not written yet' : ''}${n ? ` · ${n} problem${n === 1 ? '' : 's'}` : ''}`}
               onClick={() => { setFocus(e.path); if (e.dir) onToggle(e.path); else onOpen(e.path); }} onDoubleClick={() => { if (!e.dir) onOpen(e.path, true); }} onContextMenu={ev => { setFocus(e.path); menuAt(ev, e); }}>
               {e.dir ? <Icon name="chevron" size={11} className={cx('asm-caret', open && 'open')} /> : <span className="asm-caret" />}

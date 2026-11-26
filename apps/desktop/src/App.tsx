@@ -91,7 +91,7 @@ import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgO
 import { QuickPack } from './components/QuickPack';
 import { AssemblerTab, ContinueInAssemblerModal, type AsmContinueInfo } from './components/AssemblerView';
 import { AsmReleaseModal, type ReleaseChoice } from './components/AsmRelease';
-import { useAsmLink, type AsmBuilt } from './store/asmlink';
+import { useAsmLink, type AsmBuilt, type AsmDropped } from './store/asmlink';
 import { AnalysisOverview, type OverviewLinks, type PackCheck, type PackLook } from './components/Overview';
 import { GFX_KIND, snapshotPc } from './lib/overview';
 
@@ -1663,13 +1663,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a project file dropped on the window: its folder is not known, so it is work without a project */
   const openDroppedProject = (p: Project, name: string) => { leaveProject(); replace(p); resetView(); toast(`Opened project ${name} as work without a project: Save creates a project from it`, 'ok'); };
-  const readDropped = async (list: FileList, add: boolean) => {
+  const readDropped = async (list: FileList, add: boolean, at: string | null = null) => {
     const prgs: OpenedPrg[] = [];
     const disks: DiskSide[] = [];
     // a disk and a tape dropped together both stay (else the one dropped takes the other out)
     const both = Array.from(list).some(f => /\.[dg]64$/i.test(f.name)) && Array.from(list).some(f => /\.t(ap|64)$/i.test(f.name));
+    // an Assembler project: the files are copied into its folder (a disk or a tape is put in the drive, as before)
+    const copied: AsmDropped[] = [];
     for (const f of Array.from(list)) {
-      if (asmMode && !/\.([dg]64|t(ap|64))$/i.test(f.name)) { toast(`${f.name} was not opened: an Assembler project's program is what its sources make. Put the file in the project's folder for a source to load it, or open it in another project`, 'warn'); continue; }
+      if (asmMode && !/\.([dg]64|t(ap|64))$/i.test(f.name)) {
+        try { copied.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }); }
+        catch { toast(`${f.name} was not copied: it is a folder (drop the files in it) or it could not be read`, 'warn'); }
+        continue;
+      }
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
         if (/\.json$/i.test(f.name)) {
@@ -1692,12 +1698,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const first = disks.reduce((a, d) => (sidesAfter(d).length >= sidesAfter(a).length ? d : a));
       try { mountBytes(first.name, null, first.bytes, sidesAfter(first).map(n => disks.find(d => d.name === n)!), both); } catch (e) { toast(`${first.name}: ${errorText(e)}`, 'err'); }
     }
+    if (copied.length) useAsmLink.getState().request('drop', { files: copied, at });
     addFiles(prgs, add);
   };
   useEffect(() => {
     const over = (e: DragEvent) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDropping(true); } };
     const leave = (e: DragEvent) => { if (!e.relatedTarget) setDropping(false); };
-    const drop = (e: DragEvent) => { e.preventDefault(); setDropping(false); if (e.dataTransfer?.files.length) void readDropped(e.dataTransfer.files, e.shiftKey); };
+    // (in an Assembler project, the folder or file of the file list it was dropped on)
+    const listed = (e: DragEvent) => (e.target instanceof Element ? e.target.closest('[role="treeitem"][data-path]')?.getAttribute('data-path') ?? null : null);
+    const drop = (e: DragEvent) => { e.preventDefault(); setDropping(false); if (e.dataTransfer?.files.length) void readDropped(e.dataTransfer.files, e.shiftKey, listed(e)); };
     window.addEventListener('dragover', over); window.addEventListener('dragleave', leave); window.addEventListener('drop', drop);
     return () => { window.removeEventListener('dragover', over); window.removeEventListener('dragleave', leave); window.removeEventListener('drop', drop); };
   });
@@ -5281,7 +5290,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           onMessages: () => setUi({ bottom: 'messages', panelOpen: true }), onVerify: () => void runVerify(), onSettings: () => setModal('settings') }} />
 
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
-      {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, a .d64 or .g64 to mount it or a .tap or .t64 to put it in the datasette</p><small>Hold Shift to add them to the current project</small></div></div>}
+      {dropping && (asmMode
+        ? <div className="drop asm-drop"><div><Icon name="upload" size={28} /><p>Drop files to copy them into the project's folder: on a folder in the file list into it, else by kind (a SID in music, sprites in sprites, a picture in bitmaps, a source beside the main file, the rest in data)</p><small>A .d64, .g64, .tap or .t64 goes in the drive or the datasette, as Run takes it</small></div></div>
+        : <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, a .d64 or .g64 to mount it or a .tap or .t64 to put it in the datasette</p><small>Hold Shift to add them to the current project</small></div></div>)}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />

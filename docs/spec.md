@@ -3884,6 +3884,14 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   källa är ett steg att ångra i den filen; pixlarna visas som de ritats tills programmet har dem. En byte som skrivs av
   något annat (ett uttryck, `.fill`, en loop eller ett makro som skriver raden flera gånger, LoadSid) ändras inte, och
   ett meddelande säger varför och på vilken rad.
+- **Filer som släpps på fönstret** (2026-11-26) kopieras in i projektets mapp (`asmDropPath` i `asm-project.ts`): släppta
+  på en mapp i fillistan in i den (på en fil i dess mapp), annars efter slag: en källa bredvid huvudfilen, en SID i
+  `music/`, sprites (`.spr`) i `sprites/`, en teckenuppsättning (`.chr`, `.64c`) i `charsets/`, en bild (Koala och de
+  andra formaten) i `bitmaps/`, en text överst och resten i `data/`, samma mappar som *Insert block* använder. Ett namn
+  som redan finns får `-2`, `-3` … före sitt filnamnstillägg: inget skrivs över. Den första kopierade filen visas (en
+  källa i en egen flik), och en toast säger vart filerna gick. Medan filer dras över fönstret står en banderoll nederst
+  som säger detta, och mappen under pekaren i fillistan markeras. En `.d64`, `.g64`, `.tap` eller `.t64` sätts som förut
+  i diskstationen eller datasetten, som Run tar dem.
 - **Pack och Release** (2026-11-25). Pack-vyn (13.8) finns i ett Assembler-projekt: *Pack* bygger huvudfilen med
   KickAss.jar eller 64tass som Run gör (`buildPrg` i `store/asmlink.ts`) och packar PRG:n med Brokkr eller Exomizer som
   vyn är inställd; loggen hamnar under Assemblerns *Build*, *Run in VICE* startar den packade filen med byggets

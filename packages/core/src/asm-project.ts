@@ -127,6 +127,32 @@ message:
 `;
 }
 
+/** the folders the files of each kind go in when they are dropped on an Assembler project (those Insert block uses) */
+const DROP_FOLDERS: [RegExp, string][] = [
+  [/\.sid$/i, 'music/'],
+  [/\.(spr|spd)$/i, 'sprites/'],
+  [/\.(chr|64c|fnt|font)$/i, 'charsets/'],
+  [/\.(kla|koa|art|aas|ocp|hpi|dd|ddl|jj|gg|mpic|fun|fp2|rp|png|gif|bmp)$/i, 'bitmaps/'],
+  [/\.(txt|md)$/i, ''],
+];
+
+/**
+ * Where a file dropped on an Assembler project is copied to: into the folder it was dropped on in the file list (`at`:
+ * a folder, or a file whose folder it is), else by its kind: a source beside the main file, a SID in `music/`, sprites
+ * in `sprites/`, a charset in `charsets/`, a picture in `bitmaps/`, a text at the top, anything else in `data/`. A name
+ * the folder has already (`taken`, any case) gets `-2`, `-3` … before its extension: nothing is written over.
+ */
+export function asmDropPath(name: string, o: { at?: string | null; dirs: ReadonlySet<string>; taken: ReadonlySet<string>; main?: string | null }): string {
+  const base = name.replace(/^.*[\\/]/, '');
+  const folder = o.at ? (o.dirs.has(o.at) ? `${o.at.replace(/\/+$/, '')}/` : folderOf(o.at))
+    : ASM_SOURCE.test(base) ? folderOf(o.main ?? '') : DROP_FOLDERS.find(([re]) => re.test(base))?.[1] ?? 'data/';
+  const dot = base.lastIndexOf('.'), stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot) : '';
+  const taken = new Set([...o.taken].map(p => p.toLowerCase()));
+  let path = folder + base;
+  for (let n = 2; taken.has(path.toLowerCase()); n++) path = `${folder}${stem}-${n}${ext}`;
+  return path;
+}
+
 /** the assembler a folder's sources are written for: its main file's (guessAssembler) */
 export const sourceLang = (text: string): ScriptLang => (guessAssembler(text) === '64tass' ? '64tass' : 'kickass');
 

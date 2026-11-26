@@ -8,8 +8,10 @@ import type { LibraryRef } from './library';
 
 /** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
  *  (a pack's) after the last build's, under Build; `write`: bytes drawn (the enlarged sprite or character) written into
- *  the lines that write them */
-export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write'; n: number; kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[] }
+ *  the lines that write them; `drop`: files dropped on the window copied into the folder */
+export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop'; n: number; kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[]; files?: AsmDropped[]; at?: string | null }
+/** a file dropped on the window: copied into the project's folder (`drop`; `at`: the folder or file it was dropped on in the file list) */
+export interface AsmDropped { name: string; bytes: Uint8Array }
 export interface AsmLive { mem: Uint8Array; pc: Addr; where: string | null; whole: boolean; running: boolean; n: number }
 /** the main file built with KickAss.jar or 64tass (Pack, Release): the PRG's bytes, where it and its labels are, and
  *  the main file (a path in the project's folder) */
@@ -40,7 +42,7 @@ interface AsmLinkState {
   /** the main file built (what is not written yet is written first); null: it was not (the tab said why) */
   buildPrg: () => Promise<AsmBuilt | null>;
   set: (p: Partial<Omit<AsmLinkState, 'set' | 'reset' | 'request' | 'showAddr'>>) => void;
-  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes'>) => void;
+  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at'>) => void;
   showAddr: (addr: Addr) => void;
   /** the project closed: nothing is kept */
   reset: () => void;

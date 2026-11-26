@@ -1081,3 +1081,43 @@ test('Release says when the program has no BASIC line: a disk, a tape or a PRG w
   await page.keyboard.press('Escape');
   await closeProject(page, 'nobasic');
 });
+
+test('files dropped on an Assembler project are copied into its folder: on a folder of the file list into it, else by kind; nothing written over', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'dropped');
+  mkdirSync(join(dir, 'gfx'), { recursive: true });
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\nstart:  rts\n');
+  writeFileSync(join(dir, 'gfx', 'logo.bin'), Buffer.from([1, 2, 3]));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  /** files dropped on what `target` finds (a DragEvent with them, as the system gives it) */
+  const drop = async (target: string, files: { name: string; bytes: number[] }[]) => {
+    const dt = await page.evaluateHandle(fs => { const d = new DataTransfer(); for (const f of fs) d.items.add(new File([new Uint8Array(f.bytes)], f.name)); return d; }, files);
+    await page.locator(target).first().dispatchEvent('drop', { dataTransfer: dt });
+  };
+  const sid = { name: 'tune.sid', bytes: [0x50, 0x53, 0x49, 0x44, 9, 9] };
+  // on the code: by kind (a SID in music, data in data, a source beside the main file, which opens in a tab)
+  await drop('.scr-editor', [sid, { name: 'table.bin', bytes: [7, 7, 7] }, { name: 'extra.asm', bytes: [...Buffer.from('.const EXTRA = 1\n')] }]);
+  await expect(page.locator('.toast-msg', { hasText: 'Copied 3 files (music/tune.sid, data/table.bin, extra.asm)' })).toBeVisible();
+  await expect.poll(() => existsSync(join(dir, 'music', 'tune.sid')) && existsSync(join(dir, 'data', 'table.bin')) && existsSync(join(dir, 'extra.asm'))).toBe(true);
+  expect([...readFileSync(join(dir, 'data', 'table.bin'))]).toEqual([7, 7, 7]);
+  await expect(page.locator('.asm-tabs').getByRole('tab', { name: 'extra.asm' })).toBeVisible();
+  await expect(tree(page).getByRole('treeitem', { name: 'music' })).toBeVisible();
+  // the same name again: a new one beside it
+  await drop('.scr-editor', [sid]);
+  await expect.poll(() => existsSync(join(dir, 'music', 'tune-2.sid'))).toBe(true);
+  expect([...readFileSync(join(dir, 'music', 'tune.sid'))]).toEqual(sid.bytes);
+  // on a folder in the file list: into it (dragged over it, it is marked and the banner says where files go)
+  const over = await page.evaluateHandle(() => { const d = new DataTransfer(); d.items.add(new File([new Uint8Array([4, 5])], 'pic.bin')); return d; });
+  await page.locator('[role="treeitem"][data-path="gfx"]').dispatchEvent('dragover', { dataTransfer: over });
+  await expect(page.locator('[role="treeitem"][data-path="gfx"]')).toHaveClass(/drop-into/);
+  await expect(page.locator('.drop.asm-drop')).toContainText('Drop files to copy them into the project\'s folder');
+  await shot(page, '31-asm-drop-over');
+  await drop('[role="treeitem"][data-path="gfx"]', [{ name: 'pic.bin', bytes: [4, 5] }]);
+  await expect(page.locator('[role="treeitem"][data-path="gfx"]')).not.toHaveClass(/drop-into/);
+  await expect(page.locator('.drop.asm-drop')).toHaveCount(0);
+  await expect.poll(() => existsSync(join(dir, 'gfx', 'pic.bin'))).toBe(true);
+  await shot(page, '30-asm-dropped');
+  await closeProject(page, 'dropped');
+});

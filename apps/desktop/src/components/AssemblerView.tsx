@@ -11,14 +11,14 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
-import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
+import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx, errorText, fmtBytes } from '../lib/util';
 import { NO_TABS, useAssembler, type AsmMachineKind, type AsmTabs } from '../store/assembler';
-import { useAsmLink, type AsmBuilt } from '../store/asmlink';
+import { useAsmLink, type AsmBuilt, type AsmDropped } from '../store/asmlink';
 import { runScreenSize, useScripts } from '../store/scripts';
 import { useUi } from '../store/ui';
 import { Splitter } from './Splitter';
@@ -977,7 +977,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => {
     if (!ask || ask.n === seenAsk.current.ask) return;
     seenAsk.current.ask = ask.n;
-    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else if (ask.what === 'debugger') void runInDebugger(); else if (ask.what === 'write') { if (ask.changes) void writeBytes(ask.changes); } else if (ask.what === 'log') { if (ask.text) setBuild(b => (b ? { ...b, log: `${b.log}\n\n${ask.text}` } : b)); ui.set({ outTab: 'build', outFolded: false }); } else void startDebug();
+    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else if (ask.what === 'debugger') void runInDebugger(); else if (ask.what === 'write') { if (ask.changes) void writeBytes(ask.changes); } else if (ask.what === 'drop') { if (ask.files) void dropFiles(ask.files, ask.at ?? null); } else if (ask.what === 'log') { if (ask.text) setBuild(b => (b ? { ...b, log: `${b.log}\n\n${ask.text}` } : b)); ui.set({ outTab: 'build', outFolded: false }); } else void startDebug();
   }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
   useEffect(() => { useAsmLink.getState().set({ main }); }, [main]);
@@ -1044,6 +1044,28 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     code: a => { const l = cycCheck ? asmLineAt(cycCheck, a) : null, m = l ? models.current[l.file] : null; return m && !m.isDisposed() && l!.line <= m.getLineCount() ? m.getLineContent(l!.line).replace(/\s*(\/\/|;).*$/, '').trim() : `$${h4(a)}`; },
     onToggle: pc => setTaken(t => { const n = new Set(t); if (n.has(pc)) n.delete(pc); else n.add(pc); return n; }),
   } : null;
+
+  /* ---- files dropped on the window: copied into the folder (asmDropPath: the folder dropped on, else by kind) ---- */
+  const dropFiles = async (dropped: AsmDropped[], at: string | null) => {
+    const dirs = new Set(folder.entries.filter(e => e.dir).map(e => e.path)), taken = new Set(folder.entries.map(e => e.path));
+    const made: string[] = [];
+    for (const f of dropped) {
+      const path = asmDropPath(f.name, { at, dirs, taken, main });
+      try {
+        const r = await kr!.assemblerWrite({ dir, path, bytes: f.bytes });
+        taken.add(path); made.push(path);
+        // (a file a source may load: the check reads it from here)
+        if (!ASM_TEXT.test(path)) { binTimes.current[path] = r.mtime; setBins(b => ({ ...b, [path]: f.bytes })); }
+      } catch (e) { toast(`${f.name} was not copied: ${errorText(e)}`, 'err'); }
+    }
+    if (!made.length) return;
+    await relist();
+    // the first shown where it went (a source in a tab of its own)
+    const src = made.find(p => ASM_SOURCE.test(p));
+    openFile(src ?? made[0], { keep: !!src });
+    const data = made.some(p => !ASM_TEXT.test(p));
+    toast(`Copied ${made.length === 1 ? made[0] : `${made.length} files (${made.join(', ')})`} into the project's folder${data ? `: a source loads ${made.length === 1 ? 'it' : 'them'} from there (Insert block… writes the lines)` : ''}`, 'ok');
+  };
 
   /* ---- Insert block: sprites, a charset, a bitmap, a screen, music or data, in the source where the caret is ---- */
   const [blockAsk, setBlockAsk] = useState<{ kind?: AsmBlockKind; lib?: LibraryRef | null } | null>(null);
