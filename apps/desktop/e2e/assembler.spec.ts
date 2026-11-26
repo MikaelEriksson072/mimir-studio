@@ -1335,5 +1335,27 @@ test('macros imported from outside the project\'s folder: by a path of their own
   writeFileSync(lib, '.macro Border(c) {lda#c;sta$d020;nop}\n');
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(problems).toContainText('The program assembles: 24 bytes');
+  // F12 on a macro: its file from outside the folder, read only in a tab of its own
+  await page.locator('.scr-editor .view-line').nth(5).getByText('Border').click();
+  await page.keyboard.press('F12');
+  const libTab = page.getByRole('tab', { name: 'macros.asm' });
+  await expect(libTab).toHaveAttribute('aria-selected', 'true');
+  await expect(libTab).toHaveClass(/outside/);
+  await expect(page.locator('.asm-outside-name')).toContainText('read only');
+  await expect.poll(() => editorText(page)).toContain('.macro Border(c)');
+  await shot(page, '35-asm-outside-read-only');
+  // nothing typed goes in, nothing is written; bookmarks are the project's own files'
+  await page.keyboard.type('xyz');
+  await expect.poll(() => editorText(page)).not.toContain('xyz');
+  expect(readFileSync(lib, 'utf8')).toBe('.macro Border(c) {lda#c;sta$d020;nop}\n');
+  await page.keyboard.press('Control+F2');
+  await expect(toast(page, 'bookmarks are on the project\'s own files')).toBeVisible();
+  // a problem in it: the click shows it there, at its line
+  writeFileSync(lib, '.macro Border(c) {lda#c;sta$d020;nop}\n.byte nothere\n');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.getByRole('tab', { name: 'main.asm' }).click();
+  await problems.getByRole('button', { name: /nothere/ }).click();
+  await expect(libTab).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => editorText(page)).toContain('.byte nothere');
   await closeProject(page, 'outside');
 });

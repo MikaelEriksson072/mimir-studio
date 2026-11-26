@@ -26,7 +26,9 @@ export function fileIcon(path: string): IconName {
   return 'doc';
 }
 
-export const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+export const baseName = (path: string) => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+/** a file the sources import from outside the folder, by the name they give it (`C:\lib\irq.asm`, `../lib/irq.asm`) */
+export const isOutsidePath = (path: string) => /^([A-Za-z]:)?[\\/]|^\.\.[\\/]/.test(path);
 export const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
 interface AsmTreeProps {
@@ -151,6 +153,8 @@ interface AsmTabsProps {
   main: string | null;
   dirty: ReadonlySet<string>;
   problems: ReadonlyMap<string, number>;
+  /** the files open from outside the folder (read only), and where each was found */
+  outside?: ReadonlyMap<string, string>;
   onShow: (path: string) => void;
   /** a preview kept open (a double-click on its tab) */
   onKeep: (path: string) => void;
@@ -163,7 +167,7 @@ interface AsmTabsProps {
 /** The Assembler's open files as tabs over the code (spec 10.7): a click shows a file, a double-click keeps a preview
  *  open, × or a middle click closes one, a drag puts it elsewhere in the row, and a right-click gives the rest. Two files
  *  of the same name say their folders. */
-export function AsmTabs({ open, preview, shown, main, dirty, problems, onShow, onKeep, onClose, onMove, onMenu }: AsmTabsProps) {
+export function AsmTabs({ open, preview, shown, main, dirty, problems, outside, onShow, onKeep, onClose, onMove, onMenu }: AsmTabsProps) {
   const row = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ path: string; before: string | null } | null>(null);
   // the tab shown is in view in the row
@@ -177,11 +181,11 @@ export function AsmTabs({ open, preview, shown, main, dirty, problems, onShow, o
       onDragOver={e => { if (drag) { e.preventDefault(); if (e.target === row.current) setDrag({ ...drag, before: null }); } }}
       onDrop={e => { if (!drag) return; e.preventDefault(); onMove(drag.path, drag.before); setDrag(null); }}>
       {open.map(p => {
-        const name = baseName(p), n = problems.get(p) ?? 0, twin = (names.get(name) ?? 0) > 1;
+        const name = baseName(p), n = problems.get(p) ?? 0, twin = (names.get(name) ?? 0) > 1, out = outside?.get(p);
         return (
           <div key={p} role="tab" aria-selected={p === shown} aria-label={name} tabIndex={p === shown ? 0 : -1} draggable
-            className={cx('tab asm-tab', p === shown && 'on', p === preview && 'preview', drag?.before === p && drag.path !== p && 'drop-before')}
-            title={`${p}${p === main ? ' · the main file' : ''}${p === preview ? ' · a preview: the next file opened from the list takes its place (a double-click keeps it)' : ''}${dirty.has(p) ? ' · changes not written yet' : ''}`}
+            className={cx('tab asm-tab', p === shown && 'on', p === preview && 'preview', out != null && 'outside', drag?.before === p && drag.path !== p && 'drop-before')}
+            title={`${out != null ? `${out} · outside the project's folder: read only (Mimir's check and the build read it)` : p}${p === main ? ' · the main file' : ''}${p === preview ? ' · a preview: the next file opened from the list takes its place (a double-click keeps it)' : ''}${dirty.has(p) ? ' · changes not written yet' : ''}`}
             onClick={() => onShow(p)} onDoubleClick={() => onKeep(p)}
             onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
             onAuxClick={e => { if (e.button === 1) { e.preventDefault(); onClose([p]); } }}
@@ -190,9 +194,9 @@ export function AsmTabs({ open, preview, shown, main, dirty, problems, onShow, o
             onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p); setDrag({ path: p, before: null }); }}
             onDragOver={e => { if (!drag) return; e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const i = open.indexOf(p); const before = e.clientX < r.left + r.width / 2 ? p : open[i + 1] ?? null; if (before !== drag.before) setDrag({ ...drag, before }); }}
             onDragEnd={() => setDrag(null)}>
-            <Icon name={fileIcon(p)} size={12} className={cx('asm-ico', p === main && 'main')} />
+            <Icon name={out != null ? 'lock' : fileIcon(p)} size={12} className={cx('asm-ico', p === main && 'main')} />
             <span className="asm-tab-name">{name}</span>
-            {twin && parentOf(p) && <span className="asm-tab-dir">{parentOf(p)}</span>}
+            {twin && out == null && parentOf(p) && <span className="asm-tab-dir">{parentOf(p)}</span>}
             {n > 0 && <span className="count bad" aria-label={`${n} problem${n === 1 ? '' : 's'}`}>{n}</span>}
             <button className={cx('asm-tab-x', dirty.has(p) && 'dirty')} tabIndex={-1} aria-label={`Close ${name}`} title="Close (Ctrl+F4, or a middle click on the tab)"
               onClick={e => { e.stopPropagation(); onClose([p]); }}><Icon name="x" size={11} /></button>

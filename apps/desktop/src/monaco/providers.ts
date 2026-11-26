@@ -248,22 +248,25 @@ export function registerProviders(monaco: typeof Monaco): void {
   }, { providedCodeActionKinds: ['quickfix'] });
   // the Assembler's names (spec 10.7): where one is written in any of the folder's sources, its rename in all of them,
   // and the names a file defines
-  const asmModels = () => monaco.editor.getModels().filter(m => m.uri.scheme === 'asm' && (m.getLanguageId() === KICKASS || m.getLanguageId() === TASS64));
+  // (`asmx:` the files the sources import from outside the folder, read only: found, never renamed in)
+  const ownOrOutside = (m: Monaco.editor.ITextModel) => m.uri.scheme === 'asm' || m.uri.scheme === 'asmx';
+  const asmModels = (outsideToo = false) => monaco.editor.getModels().filter(m => (m.uri.scheme === 'asm' || (outsideToo && m.uri.scheme === 'asmx')) && (m.getLanguageId() === KICKASS || m.getLanguageId() === TASS64));
   const langOf = (m: Monaco.editor.ITextModel) => (m.getLanguageId() === TASS64 ? '64tass' as const : 'kickass' as const);
   /** the name the position is on (a name of the code: not in a comment, a string or a number) */
   const nameAt = (model: Monaco.editor.ITextModel, pos: Monaco.Position) => asmNames(model.getLineContent(pos.lineNumber), langOf(model))
     .find(n => pos.column >= n.col && pos.column <= n.col + n.name.length) ?? null;
-  const refsOf = (name: string) => asmModels().flatMap(m => asmNameRefs(m.getValue(), langOf(m), name).map(r => ({ m, r })));
+  const refsOf = (name: string, outsideToo = false) => asmModels(outsideToo).flatMap(m => asmNameRefs(m.getValue(), langOf(m), name).map(r => ({ m, r })));
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerReferenceProvider(lang, {
     provideReferences(model, pos, ctx) {
-      if (model.uri.scheme !== 'asm') return null;
+      if (!ownOrOutside(model)) return null;
       const n = nameAt(model, pos); if (!n) return null;
-      return refsOf(n.name).filter(x => ctx.includeDeclaration || !x.r.def).map(({ m, r }) => ({ uri: m.uri, range: new monaco.Range(r.line, r.col, r.line, r.col + r.name.length) }));
+      return refsOf(n.name, true).filter(x => ctx.includeDeclaration || !x.r.def).map(({ m, r }) => ({ uri: m.uri, range: new monaco.Range(r.line, r.col, r.line, r.col + r.name.length) }));
     },
   });
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerRenameProvider(lang, {
     resolveRenameLocation(model, pos) {
       const here = new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column);
+      if (model.uri.scheme === 'asmx') return { range: here, text: '', rejectReason: 'This file is outside the project\'s folder and read only: names are renamed in the project\'s own sources' };
       if (model.uri.scheme !== 'asm') return { range: here, text: '', rejectReason: 'Names are renamed in the Assembler\'s sources (a script uses the program\'s names)' };
       const n = nameAt(model, pos);
       if (!n) return { range: here, text: '', rejectReason: 'Not a name of the code' };
@@ -280,7 +283,7 @@ export function registerProviders(monaco: typeof Monaco): void {
   });
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerDocumentSymbolProvider(lang, {
     provideDocumentSymbols(model) {
-      if (model.uri.scheme !== 'asm') return [];
+      if (!ownOrOutside(model)) return [];
       const K = monaco.languages.SymbolKind;
       return asmNames(model.getValue(), langOf(model)).filter(n => n.def).map(n => {
         const range = new monaco.Range(n.line, n.col, n.line, n.col + n.name.length), a = asmContext.names.get(n.name);
@@ -293,12 +296,13 @@ export function registerProviders(monaco: typeof Monaco): void {
       const w = model.getWordAtPosition(pos); if (!w) return null;
       // `name:`; in 64tass also `name = value` and `name .namespace` at the start of a line
       const word = w.word.replace(/[^\w]/g, '');
-      const re = new RegExp(lang === TASS64 ? `^${word}(?::|\\s*:?=|\\s+\\.(?:namespace|block)\\b)` : `^${word}:`, 'm');
-      // the Assembler's (spec 10.7): also in the folder's other sources, the file shown first (Kick Assembler's
-      // labels may be indented there, and constants are `.label`, `.const` or `.var` lines)
-      if (model.uri.scheme === 'asm') {
-        const own = lang === TASS64 ? re : new RegExp(`^\\s*(?:${word}:|\\.(?:label|const|var)\\s+${word}\\s*=)`, 'm');
-        for (const x of [model, ...monaco.editor.getModels().filter(o => o !== model && o.uri.scheme === 'asm')]) {
+      const re = new RegExp(lang === TASS64 ? `^${word}(?::|\\s*:?=|\\s+\\.(?:namespace|block|macro|function|sfunction|segment|struct|union)\\b)` : `^${word}:`, 'm');
+      // the Assembler's (spec 10.7): also in the folder's other sources and the files imported from outside it, the
+      // file shown first (Kick Assembler's labels may be indented there, constants are `.label`, `.const` or `.var`
+      // lines, and macros, functions and pseudo commands are named after their directive)
+      if (ownOrOutside(model)) {
+        const own = lang === TASS64 ? re : new RegExp(`^\\s*(?:${word}:|\\.(?:label|const|var)\\s+${word}\\s*=|\\.(?:macro|function|pseudocommand)\\s+${word}\\b)`, 'm');
+        for (const x of [model, ...monaco.editor.getModels().filter(o => o !== model && ownOrOutside(o))]) {
           const m = own.exec(x.getValue()); if (!m) continue;
           const p = x.getPositionAt(m.index + m[0].indexOf(word));
           return { uri: x.uri, range: new monaco.Range(p.lineNumber, p.column, p.lineNumber, p.column + word.length) };

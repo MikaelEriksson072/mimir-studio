@@ -2273,6 +2273,13 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-tab .asm-ico.main { color: var(--ok); }
 .asm-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .asm-tab.preview .asm-tab-name { font-style: italic; }
+/* a file from outside the project's folder: read only, its tab and its name in the toolbar with a padlock */
+.asm-tab.outside .asm-ico { color: var(--fg-3); }
+.asm-tab.outside .asm-tab-name { color: var(--fg-2); }
+.asm-outside-name { display: inline-flex; align-items: center; gap: 6px; flex: none; width: 14em; height: 28px; padding: 0 8px; border: 1px dashed var(--line-2); border-radius: 6px; color: var(--fg-2); font-size: 12.5px; white-space: nowrap; overflow: hidden; }
+.asm-outside-name .icon { flex: none; }
+.asm-outside-name .asm-outside-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.asm-outside-name .muted { flex: none; margin-left: auto; font-family: var(--font-ui); }
 .asm-tab-dir { color: var(--fg-3); font-size: 11px; }
 .asm-tab-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg-3); cursor: pointer; opacity: 0; }
 .asm-tab:hover .asm-tab-x, .asm-tab.on .asm-tab-x, .asm-tab:focus-visible .asm-tab-x { opacity: 1; }

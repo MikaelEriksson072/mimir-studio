@@ -3912,7 +3912,12 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   läser dem genom huvudprocessen (`assembler:readOutside`: en absolut sökväg, en från mappen, annars i
   biblioteksmapparna i argumenten, KickAss `-libdir`, 64tass `-I`; bara käll- och datafiler, högst 16 MB) och
   kontrollerar igen. De läses om när fönstret får fokus igen (ändrade i en annan editor) och när biblioteksmapparna
-  ändras. Ett problem i en sådan fil öppnar ingen flik: ett meddelande säger var den ligger. Samtidigt det sådana
+  ändras. En källa därifrån **visas skrivskyddad** i en flik av sin egen (ett lås på fliken och i verktygsraden, en
+  egen Monaco-modell med schemat `asmx:`): ett klick på ett problem i den, F12 på ett namn den definierar (också
+  makron, funktioner och pseudokommandon: `.macro namn`, i 64tass `namn .macro`) och debuggern öppnar den på raden;
+  Find References och dispositionen tar med den, men F2 byter inte namn i den, bokmärken och *Insert block* är för
+  projektets egna filer, och inget skrivs (Monaco säger var den ligger om man skriver); brytpunkter går att sätta i
+  den. Data därifrån säger bara var den ligger. Samtidigt det sådana
   bibliotek skriver i Kick Assembler: `BasicUpstart(adress)` där programräknaren står (och `:BasicUpstart2`, med kolon),
   som `autoinclude.asm` har dem, en egen med samma namn vinner; flera satser på en rad med `;` (`{pha;txa;pha}`, inte i
   `.for`s parenteser); operanden direkt efter mnemonic när den börjar med `#`, `$` eller `%` (`lda#$35`, `sta$01`).

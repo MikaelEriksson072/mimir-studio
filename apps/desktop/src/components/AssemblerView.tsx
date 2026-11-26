@@ -24,7 +24,7 @@ import { useUi } from '../store/ui';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { ScriptScreenPanel } from './ScriptScreen';
-import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, parentOf, type TreeEdit } from './AsmTree';
+import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, isOutsidePath, parentOf, type TreeEdit } from './AsmTree';
 import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type AsmRunKept } from './AsmOutput';
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
 import { Modal } from './Modal';
@@ -65,7 +65,9 @@ const tidyPath = (p: string) => p.split('/').reduce<string[]>((o, s) => { if (s 
 const editorLang = (path: string, lang: ScriptLang) => ASM_SOURCE.test(path) ? (lang === '64tass' ? 'tass64' : 'kickass')
   : /\.md$/i.test(path) ? 'markdown' : /\.(bat|cmd)$/i.test(path) ? 'bat' : /\.sh$/i.test(path) ? 'shell' : /\.js$/i.test(path) ? 'javascript' : 'plaintext';
 const uriOf = (monaco: MonacoNs, path: string) => monaco.Uri.from({ scheme: 'asm', path: `/${path}` });
-const pathOfUri = (uri: Monaco.Uri) => (uri.scheme === 'asm' ? uri.path.replace(/^\//, '') : null);
+/** a file the sources import from outside the folder, read only (`asmx:`, by the name the sources give it) */
+const outsideUriOf = (monaco: MonacoNs, key: string) => monaco.Uri.from({ scheme: 'asmx', path: `/${encodeURIComponent(key)}` });
+const pathOfUri = (uri: Monaco.Uri) => (uri.scheme === 'asm' ? uri.path.replace(/^\//, '') : uri.scheme === 'asmx' ? decodeURIComponent(uri.path.replace(/^\//, '')) : null);
 /** whether `full` is the folder `dir` or in it */
 const inside = (dir: string, full: string) => { const d = dir.replace(/[\\/]+$/, '').toLowerCase(), f = full.toLowerCase(); return f === d || f.startsWith(`${d}\\`) || f.startsWith(`${d}/`); };
 const joinDir = (dir: string, sub: string) => `${dir.replace(/[\\/]+$/, '')}${dir.includes('\\') ? '\\' : '/'}${dir.includes('\\') ? sub.replace(/\//g, '\\') : sub}`;
@@ -299,7 +301,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const moves = useRef<((p: string) => string | null) | null>(null);
   /** the tabs as the listing `now` has the files: one gone is closed (one renamed follows its file), and the file shown
    *  gone, the tab beside it is shown */
-  const fixTabs = (now: { has: (p: string) => boolean }) => {
+  const fixTabs = (listed: { has: (p: string) => boolean }) => {
+    // (a file from outside the folder is not in the listing: its tab stays)
+    const now = { has: (p: string) => listed.has(p) || isOutsidePath(p) };
     const t = tabsNow(), mv = moves.current, s = shownRef.current;
     const at = (p: string) => (now.has(p) ? p : (q => (q && now.has(q) ? q : null))(mv?.(p) ?? null));
     const open: string[] = [];
@@ -507,7 +511,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       ed.current = editor;
       editor.onDidChangeModelContent(() => {
         const m = editor.getModel(), path = m ? pathOfUri(m.uri) : null;
-        if (applying.current || !m || !path) return;
+        // (a file from outside the folder is read only: nothing of it is written)
+        if (applying.current || !m || !path || m.uri.scheme === 'asmx') return;
         const text = m.getValue();
         setTexts(t => ({ ...t, [path]: text }));
         schedule(path);
@@ -585,16 +590,24 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       m.onDidChangeContent(() => { if (applying.current || m.isDisposed() || ed.current?.getModel() === m) return; setTexts(t => ({ ...t, [p]: m.getValue() })); schedule(p); keys.current.bmSync(); });
       bpIds.current[p] = []; setBps(p, useAssembler.getState().bps[`${dir}|${p}`] ?? [], m);
     }
-    for (const p of Object.keys(models.current)) if (!(p in texts)) { models.current[p].dispose(); delete models.current[p]; delete views.current[p]; }
+    // the sources imported from outside the folder: read only (`asmx:`), their texts as read again
+    for (const [p, text] of Object.entries(outside)) {
+      if (typeof text !== 'string') continue;
+      const m = models.current[p];
+      if (!m) { models.current[p] = monaco.editor.createModel(text, editorLang(p, lang), outsideUriOf(monaco, p)); bpIds.current[p] = []; setBps(p, useAssembler.getState().bps[`${dir}|${p}`] ?? [], models.current[p]); }
+      else if (m.getValue() !== text) { applying.current = true; m.setValue(text); applying.current = false; }
+    }
+    for (const p of Object.keys(models.current)) if (!(p in texts) && typeof outside[p] !== 'string') { models.current[p].dispose(); delete models.current[p]; delete views.current[p]; }
     for (const [p, m] of Object.entries(models.current)) { const l = editorLang(p, lang); if (m.getLanguageId() !== l) monaco.editor.setModelLanguage(m, l); }
-  }, [state, texts, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state, texts, lang, outside]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the files open when the folder opens: the tabs it had (those still there) and the file shown last, else the main
   // file (or the first source)
   useEffect(() => {
     if (!loaded || opened.current) return;
     opened.current = true;
-    const t = tabsNow(), open = t.open.filter(p => paths.has(p));
+    // (a file from outside the folder keeps its tab: it is read once the check asks for it)
+    const t = tabsNow(), open = t.open.filter(p => paths.has(p) || isOutsidePath(p));
     // (the main file found from the texts as they are: the check's lag a moment behind)
     const first = () => (chosen && paths.has(chosen) ? chosen : mainFile(Object.entries(texts).map(([path, text]) => ({ path, text })))) ?? Object.keys(texts)[0] ?? null;
     const p = shown && paths.has(shown) ? shown : open[0] ?? first();
@@ -627,9 +640,13 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const openFile = (path: string, o: OpenAt = {}) => {
     // (a problem in the arguments: they are in Settings)
     if (path === '<command line>') { onSettings(); return; }
-    // (a file the sources import from outside the folder: the check reads it, the editor has the folder's files)
-    if (!paths.has(path) && (path in outside || /^([A-Za-z]:)?[\\/]|^\.\.[\\/]/.test(path))) {
-      toast(`${foundOut.current[path] ?? path} is outside the project's folder: Mimir's check reads it as the build does, but the Assembler edits the folder's files (open it in your own editor)`, 'info');
+    // (a file the sources import from outside the folder: a source is shown read only in a tab of its own; data, or one
+    // not read, is said where it is)
+    if (!paths.has(path) && (path in outside || isOutsidePath(path))) {
+      if (typeof outside[path] !== 'string') { toast(`${foundOut.current[path] ?? path} is outside the project's folder${path in outside ? '' : ' and was not found'}: Mimir's check reads it as the build does`, 'info'); return; }
+      placeTab(path, !!o.keep);
+      if (o.line) reveal.current = { path, line: o.line, col: o.col, soft: o.soft };
+      if (path !== shownRef.current) setShown(path); else if (o.line) setTick(t => t + 1);
       return;
     }
     const ups: string[] = [];
@@ -831,7 +848,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         ui.set({ outTab: problems.some(p => p.file) ? 'problems' : 'build', outFolded: false });
         const p = problems.find(x => x.severity === 'error');
         toast(!o ? `${p?.msg ?? `${tool} is not set`}${/not set|not found|missing/i.test(p?.msg ?? '') ? ' (Settings → Toolchain)' : ''}` : `${tool} could not build ${main}${p ? `: ${p.file}${p.line ? `:${p.line}` : ''} ${p.msg}` : ''}`, 'err');
-        if (p?.file && paths.has(p.file)) openFile(p.file, { line: p.line, col: p.column || 1 });
+        if (p?.file && (paths.has(p.file) || typeof outside[p.file] === 'string')) openFile(p.file, { line: p.line, col: p.column || 1 });
         return null;
       }
       if (!forRun) toast(`Built ${fileName(o.prgPath)}: ${fmtBytes(prg!.size)} at $${h4(prg!.load)}`, 'ok');
@@ -978,6 +995,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const bookmarkHere = () => {
     const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
     if (!e || !p || !s) { toast('Open a source to bookmark a line in it', 'warn'); return; }
+    if (typeof outside[p] === 'string') { toast(`${baseName(p)} is outside the project's folder: bookmarks are on the project's own files`, 'info'); return; }
     const from = s.startLineNumber, to = s.endColumn === 1 && s.endLineNumber > from ? s.endLineNumber - 1 : s.endLineNumber;
     bmFlush();
     onBookmark({ file: p, line: from, end: to > from ? to : null, id: bookmarkOn(p, from) });
@@ -1156,7 +1174,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     seenAsk.current.show = show.n;
     const c = dbgRef.current?.c ?? check ?? useAsmLink.getState().check;
     const l = c ? asmLineAt(c, show.addr) : null;
-    if (l && paths.has(l.file)) openFile(l.file, { line: l.line, col: 1 });
+    if (l && (paths.has(l.file) || typeof outside[l.file] === 'string')) openFile(l.file, { line: l.line, col: 1 });
     else toast(`$${h4(show.addr)} has no line in the sources: ${c?.asm.written[show.addr & 0xffff] ? 'its bytes are written by a directive of an import Mimir does not follow' : 'the program does not write it'}`, 'info');
   }, [show, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -1309,7 +1327,13 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     toast(`Inserted the ${b.what}${b.file ? `, its bytes in ${b.file.path}` : ''}: Graphics and Memory show it once the program assembles`, 'ok');
   };
   // the code cannot change while it is being debugged
-  useEffect(() => { ed.current?.updateOptions({ readOnly: !!dbg }); }, [dbg, state]);
+  // read only while debugging, and a file from outside the folder always (it is edited where it is)
+  const shownOutside = !!shown && typeof outside[shown] === 'string';
+  /** the tabs of files from outside the folder, and where each was found (the tab row marks them read only) */
+  const outsideTabs = useMemo(() => new Map(tabs.open.filter(p => isOutsidePath(p) || typeof outside[p] === 'string').map(p => [p, foundOut.current[p] ?? p] as const)), [tabs.open, outside]);
+  useEffect(() => {
+    ed.current?.updateOptions({ readOnly: !!dbg || shownOutside, readOnlyMessage: { value: shownOutside ? `${foundOut.current[shown!] ?? shown} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : 'The program is being debugged: Stop to edit' } });
+  }, [dbg, state, shownOutside, shown]); // eslint-disable-line react-hooks/exhaustive-deps
   // the debugger's line, in the file shown; at no line of the sources (the KERNAL's CHROUT, an interrupt, code copied
   // elsewhere), the line it is running for: the JSR's, or the line an interrupt came before
   const pcDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -1357,7 +1381,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- the window ---- */
-  const shownText = !!shown && shown in texts;
+  // (a source from outside the folder is a text too: read only)
+  const shownText = !!shown && (shown in texts || shownOutside);
   const shownEntry = shown ? entryOf.get(shown) : undefined;
   const errors = check?.problems ?? [];
   const first = errors[0];
@@ -1395,7 +1420,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       {!ui.listFolded && <Splitter dir="v" className="asm-list-split" onDrag={d => ui.set({ listW: Math.max(160, Math.min(700, useAssembler.getState().listW + d)) })} />}
       <div className="scr-main">
         <div className="toolbar">
-          {shown ? <FileNameField key={shown} path={shown} dirty={dirty.has(shown)} onRename={n => void named(n, { kind: 'rename', path: shown })} /> : <span className="muted small">No file open</span>}
+          {shown && shownOutside ? <span className="asm-outside-name mono" title={`${foundOut.current[shown] ?? shown}: outside the project's folder, read only (Mimir's check and the build read it from there)`}><Icon name="lock" size={13} /><span className="asm-outside-file">{baseName(shown)}</span><span className="muted small">read only</span></span>
+            : shown ? <FileNameField key={shown} path={shown} dirty={dirty.has(shown)} onRename={n => void named(n, { kind: 'rename', path: shown })} /> : <span className="muted small">No file open</span>}
           {check && <span className={cx('pill scr-check', check.ok ? 'hi' : 'lo')} role="status" onClick={() => { if (first?.file && first.line) openFile(first.file, { line: first.line }); }}
             title={[...errors.map(p => `${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}`), check.ok ? `Mimir's own assembler assembles the program: ${check.ranges.slice(0, 4).map(r => `$${h4(r.start)}-$${h4(r.end - 1)}`).join(', ')}${check.entry != null ? `; a run starts at $${h4(check.entry)}` : ''}.` : 'What Mimir\'s own assembler finds as you type. It knows most of Kick Assembler and 64tass, not all: Run builds with the real one all the same.'].join('\n')}>
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}</span>}
@@ -1407,7 +1433,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           <button className={cx('btn asm-cycles-btn', cycOn && 'on')} aria-pressed={cycOn} onClick={toggleCycles}
             title={cycOn ? 'Hide the cycles' : 'Cycles: each instruction\'s 6510 cycles beside its line number (4+ one more across a page, 2/3 a branch not taken / taken); select lines to count them along one path under Cycles, where a box marks a branch taken'}>
             <Icon name="clock" size={14} /><span className="lbl">Cycles</span></button>
-          <button className="btn asm-block-btn" aria-label="Insert block" disabled={!!dbg || !shown || !shownText || !ASM_SOURCE.test(shown)} onClick={() => askBlock()}
+          <button className="btn asm-block-btn" aria-label="Insert block" disabled={!!dbg || !shown || !shownText || !ASM_SOURCE.test(shown) || shownOutside} onClick={() => askBlock()}
             title="Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data, from the library, a file, or empty .byte lines to fill in. Graphics and Memory show its bytes as what they are; the rest of the program is code (also in the editor's right-click menu)">
             <Icon name="blocks" size={14} /><span className="lbl">Block…</span></button>
           <button className="btn scr-screen-btn" aria-pressed={c64.open} onClick={() => setC64({ open: !c64.open })}
@@ -1447,11 +1473,11 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           ? <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in the whole C64 (Sindri, VICE's ROMs): {dbg.m.typed} was typed at READY and the program stopped at its first instruction. <b>Continue</b> runs it in the C64's own time with the screen live; click the screen and type to use the C64's keyboard. The code cannot be changed until you stop; a click left of a line number sets a breakpoint.</span></p>
           : <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in Mimir's 6510: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. It has no ROMs or I/O: the KERNAL's printing routines are done on the C64 screen.</span></p>)}
         <div className="scr-body">
-          <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf}
+          <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf} outside={outsideTabs}
             onShow={p => setShown(p)} onKeep={p => placeTab(p, true)} onClose={closeTabs} onMove={moveTab} onMenu={tabMenu} />
           <div className="scr-edit-row" ref={editRow}>
             <div className="mon-host scr-editor" ref={host} aria-label="Code" style={{ display: state === 'ready' && shownText ? 'block' : 'none' }} />
-            {state === 'fallback' && shownText && <textarea className="fallback-code scr-fallback" aria-label="Code" value={texts[shown!]} readOnly={!!dbg} onChange={e => { const p = shown!; setTexts(t => ({ ...t, [p]: e.target.value })); schedule(p); }} />}
+            {state === 'fallback' && shownText && <textarea className="fallback-code scr-fallback" aria-label="Code" value={shownOutside ? String(outside[shown!]) : texts[shown!]} readOnly={!!dbg || shownOutside} onChange={e => { const p = shown!; if (shownOutside) return; setTexts(t => ({ ...t, [p]: e.target.value })); schedule(p); }} />}
             {shown && !shownText && <div className="asm-binary" role="note">
               <Icon name={shownEntry?.dir ? 'folder' : fileIcon(shown)} size={28} />
               <h3>{baseName(shown)}</h3>
@@ -1480,7 +1506,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
             ui.set({ outH: Math.max(110, Math.min(window.innerHeight - 200, now + room, now - d)) });
           }} />}
           <AsmOutput check={check} build={build} kept={kept} tab={ui.outTab} folded={ui.outFolded} height={ui.outH}
-            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} cycles={cycles} notes={notes} />
+            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f) || f === '<command line>' || f in outside || isOutsidePath(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} cycles={cycles} notes={notes} />
         </div>
       </div>
       {blockAsk && shown && <AsmBlockDialog lang={lang} dir={dir} source={shown} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}

@@ -40,6 +40,8 @@ export const ICONS = {
   expand: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5', shrink: 'M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5',
   // a strip of film: frames one after the other (animation data, spec 13.5b)
   film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4',
+  // a padlock: read only (a file the Assembler shows from outside the project's folder)
+  lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
 } as const;
 
 export type IconName = keyof typeof ICONS;
