@@ -3747,8 +3747,8 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; 64tass flyttal, `.struct`, `.union`,
-  `.virtual`, `.lbl`/`.goto`): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; i 64tass bland annat dictionaries,
+  `.weak`, `.with` och 65816-direktiven): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3803,6 +3803,15 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     `.continueif`; variabler ändrade med `+=`, `-=` … och `::=`; `range()`, och en operator över en lista ger en lista
     (`%10000000 >> range(8)`, `<($0400 + range(0, 1000, 40))`). En vanlig etikett i en loop utan b är definierad två
     gånger, som i 64tass. En loop som går runt 100 000 gånger stoppas med ett fel, och kontrollen gör inga fler pass.
+  - *64tass flyttal, strukturer, unioner, `.virtual` och TASM-formerna* (2026-11-26): `1.5`, `1e3`, `1.5p3`, `pi` och
+    matematikfunktionerna (`sin`, `cos`, `sqrt`, `floor`, `round`, `trunc`, `frac` …, över en lista var och en);
+    `/` delar som flyttal när någon sida är ett, och ett flyttal avrundas nedåt där ett heltal behövs, som 64tass gör
+    (`.byte 128 + 127.5 * sin(range(256) * pi / 128)` ger 64tass sinustabell). Anonyma `.struct` … `.ends` och `.union`
+    … `.endu` kompileras på plats (en unions rader börjar var och en där den börjar, den är lika lång som sin längsta);
+    namngivna (`nn_s .struct col, row`) är definitioner med fältens förskjutningar (`nn_s.x`), och `nn .dstruct nn_s, 1, 2`,
+    `.dunion` eller `.nn_s 1, 2` gör en instans (`nn.x`; ett fält utan värde är `?`, plats utan byte), dess byte på
+    instansens rad. `.virtual [adress]` … `.endv` kompileras utan att något skrivs. TASM:s `.lbl`/`.goto`, `namn .var
+    värde` och `.ifne`, `.ifeq`, `.ifpl`, `.ifmi`.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

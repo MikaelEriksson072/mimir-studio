@@ -224,6 +224,60 @@ start: inc $d020
 });
 
 export const TASS: Record<string, string> = {
+  'floats, structures, unions, .virtual and .goto': `*       = $1000
+        .byte 128 + 127.5 * sin(range(8) * pi / 4)
+        .byte 1.7, -1.5 & 255, 7.0 / 2.0 * 2, 7 / 2, 1e1, 0.5 * 3
+        .byte trunc(-1.9) & 255, round(4.5), floor(-4.8) & 255, ceil(1.1), sqrt(16.0), abs(-3)
+        .byte 1.0 << 3, 2 ** 3, frac(2.75) * 4, int(3.9), float(3) / 2 * 4, sign(-5) & 255
+        .word 1.5p3, $1000 + 0.5 * 256
+        .byte 128 + 120 * cos(range(16) * 2 * pi / 16)
+        .struct
+sx      .byte 1
+sy      .byte 2
+        .endstruct
+        lda sy
+        .union
+ux      .byte 3
+uy      .word $0405
+        .endunion
+        lda uy
+nn_s    .struct col, row
+x       .byte \\col
+y       .byte \\row
+        .endstruct
+nn      .dstruct nn_s, 7, 8
+        lda nn.y
+        ldy #nn_s.y
+mm      .nn_s 9
+        lda mm.x
+nu      .union
+a       .byte ?
+b       .word \\1
+        .endunion
+uu      .dunion nu, $abcd
+        lda uu.b
+        .union
+        .struct
+p       .byte 1, 2, 3
+        .ends
+q       .word 9
+        .endu
+        .virtual $d400
+sid     .block
+freq    .word ?
+ctl     .byte ?
+        .bend
+        .endvirtual
+        lda sid.ctl
+i       .var 3
+loop    .lbl
+        nop
+i       .var i - 1
+        .ifne i
+        .goto loop
+        .endif
+        .byte i
+`,
   loops: `*       = $1000
         ldx #0
         lda #32

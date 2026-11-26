@@ -273,3 +273,32 @@ describe("64tass's loops in Mimir's check", () => {
     expect(Date.now() - t0).toBeLessThan(5000);
   });
 });
+
+describe("64tass's floats, structures, unions, .virtual and .goto in Mimir's check", () => {
+  it('divides as floats when either side is one and rounds down where an integer is needed', () => {
+    const r = tass('*       = $1000\n        .byte 7 / 2, 7.0 / 2 * 2, -1.5 & 255, 128 + 127 * sin(pi / 2), 1.5p2\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x1000, 5)).toEqual([3, 7, 254, 255, 6]);
+  });
+
+  it('lays out structures and unions: offsets from the definition, an instance\'s bytes on its line, a union as long as its longest', () => {
+    const r = tass('*       = $1000\npt      .struct x=1, y=2\nx       .byte \\x\ny       .byte \\y\n        .ends\nhere    .dstruct pt, 5\n        lda #pt.y\n        lda here.y\n        .union\na       .byte 1\nb       .word $0302\n        .endu\n        rts\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x1000, 10)).toEqual([5, 2, 0xa9, 1, 0xad, 0x01, 0x10, 0x02, 0x03, 0x60]);
+    expect(r.lines[0x1000]).toBe(6);
+  });
+
+  it('writes nothing in .virtual, and goes back to a .lbl with .goto', () => {
+    const r = tass('*       = $1000\n        .virtual $c000\nv1      .word ?\nv2      .byte 9\n        .endv\n        lda v2\nn       .var 2\nagain   .lbl\n        nop\nn       .var n - 1\n        .ifne n\n        .goto again\n        .endif\n');
+    expect(msgs(r)).toEqual([]);
+    expect(r.written[0xc002]).toBe(0);
+    expect(bytes(r, 0x1000, 5)).toEqual([0xad, 0x02, 0xc0, 0xea, 0xea]);
+  });
+
+  it('says what is wrong with them', () => {
+    expect(msgs(tass('        .endv\n'))).toEqual(['main.asm:1 .endv without .virtual']);
+    expect(msgs(tass('        .ends\n'))).toEqual(['main.asm:1 .ends without .struct']);
+    expect(msgs(tass('        .goto nowhere\n'))).toEqual(["main.asm:1 not defined symbol 'nowhere' (.goto goes back to a .lbl before it)"]);
+    expect(msgs(tass('x       .dstruct nothing, 1\n'))).toEqual(["main.asm:1 not defined symbol 'nothing' (no .struct of that name)"]);
+  });
+});

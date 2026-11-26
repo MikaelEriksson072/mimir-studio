@@ -19,6 +19,12 @@
  * and their b-forms (`.bfor`, `.brept`, `.bwhile`: each round a block of its own, a label before it the list of them:
  * `lst[1].label`), `.break`, `.continue`, `.breakif`, `.continueif`; variables changed with `+=`, `-=` … and `::=`;
  * `range()`, and an operator over a list giving a list (`%10000000 >> range(8)`).
+ * Floating point: `1.5`, `1e3`, `1.5p3`, `pi`, the math functions (sin, cos, sqrt, floor, round, trunc, frac …, over a
+ * list each), `/` dividing as floats when either side is one, rounded down where an integer is needed (as 64tass).
+ * Structures and unions: anonymous ones compiled in place (a union's lines each where it starts, as long as its longest),
+ * named ones (`nn_s .struct col, row` … `.ends`) giving their fields' offsets (`nn_s.x`) and instances by
+ * `nn .dstruct nn_s, 1, 2`, `.dunion` or `.nn_s 1, 2` (`nn.x`; a field not given `?`). `.virtual [address]` … `.endv`:
+ * compiled, nothing written. The TASM forms `.lbl`/`.goto`, `name .var value` and `.ifne`, `.ifeq`, `.ifpl`, `.ifmi`.
  * Sections: `.dsection name` where the bytes of every `.section name` … `.send` go, as 64tass, nested too; `.byte ?`,
  * `.word ?`, `.addr ?` take room only. Several passes until the sizes settle, as 64tass. The desktop app and the CLI
  * can additionally run the real 64tass.
@@ -31,9 +37,9 @@ import { importPath, type AssembleOptions } from './kick-subset-assembler';
 /** a statement: its label, its body and (`cmt`) the comment after it, which a `* =` line's names its block by */
 interface Stmt { file: string; line: number; src: string; label?: string; body: string; cmt?: string }
 
-type Tok = { t: 'n'; v: number } | { t: 's'; v: string } | { t: 'id'; v: string } | { t: 'op'; v: string };
+type Tok = { t: 'n'; v: number; f?: boolean } | { t: 's'; v: string } | { t: 'id'; v: string } | { t: 'op'; v: string };
 type Node =
-  | { k: 'n'; v: number } | { k: 's'; v: string } | { k: 'pc' } | { k: 'id'; v: string } | { k: 'anon'; dir: '+' | '-'; n: number }
+  | { k: 'n'; v: number; f?: boolean } | { k: 's'; v: string } | { k: 'pc' } | { k: 'id'; v: string } | { k: 'anon'; dir: '+' | '-'; n: number }
   | { k: 'mem'; o: Node; v: string } | { k: 'call'; f: Node; args: Node[] } | { k: 'list'; items: Node[] }
   | { k: 'idx'; o: Node; i: Node } | { k: 'slice'; o: Node; a: Node | null; b: Node | null }
   | { k: 'u'; op: string; a: Node } | { k: 'b'; op: string; a: Node; b: Node } | { k: 'q'; c: Node; a: Node; b: Node };
@@ -72,13 +78,16 @@ const BRANCH = new Set(['BPL', 'BMI', 'BVC', 'BVS', 'BCC', 'BCS', 'BNE', 'BEQ'])
 /** the namespace a `.namespace` or `.block` label (or a macro call's) stands for, and the address where it starts */
 interface Space { space: string; v?: number }
 /** a macro (`.macro`: a block of its own; `.segment`: none): its parameters with their defaults and its lines */
-interface TMacro { kind: 'macro' | 'segment'; name: string; params: { name: string; def: string | null }[]; lines: { raw: string; line: number }[]; file: string }
+interface TMacro { kind: 'macro' | 'segment' | 'struct' | 'union'; name: string; params: { name: string; def: string | null }[]; lines: { raw: string; line: number }[]; file: string }
 /** a function (`.function` … `.endf result`, or `.sfunction`): its parameters (`*rest` takes the rest as a list), its
  *  lines and the expressions it gives */
 interface TFunc { name: string; params: { name: string; def: string | null; rest: boolean }[]; body: Stmt[]; result: string; st: Stmt }
 /** an immediate value: a function's argument written `#1` (`lda value` is then lda #1) */
 interface Imm { imm: true; v: Value }
 const isImm = (v: Value): v is Imm => !!v && typeof v === 'object' && v.imm === true;
+/** a floating-point value (`1.5`, `1e3`, `pi`, `sin()`): where an integer is needed it is rounded down, as 64tass does */
+class Flt { constructor(readonly f: number) {} }
+const isFlt = (v: Value): v is Flt => v instanceof Flt;
 /** what .break and .continue throw to the loop they are in */
 class LoopSignal { constructor(readonly kind: 'break' | 'continue') {} }
 /** a loop's first line, and the lines that end one */
@@ -88,7 +97,7 @@ const LOOP = /^\.(b?)(for|rept|while)\b\s*(.*)$/, LOOP_END = /^\.(next|endfor|en
 interface Sect { name: string; key: string; pc0: number | null; off0: number; used: number; max: number; prevPc0: number | null; prevOff0: number; prevSize: number; frags: boolean }
 const isSpace = (v: Value): v is Space => !!v && typeof v === 'object' && typeof v.space === 'string';
 
-const typeName = (v: Value) => typeof v === 'boolean' ? 'bool' : typeof v === 'string' ? 'str' : typeof v === 'number' ? 'int' : v instanceof Uint8Array ? 'bytes' : Array.isArray(v) ? 'list' : 'namespace';
+const typeName = (v: Value) => v instanceof Flt ? 'float' : typeof v === 'boolean' ? 'bool' : typeof v === 'string' ? 'str' : typeof v === 'number' ? 'int' : v instanceof Uint8Array ? 'bytes' : Array.isArray(v) ? 'list' : 'namespace';
 
 /** `s` split at `sep` where it is outside strings, parentheses and brackets */
 function splitTop(s: string, sep: string): string[] {
@@ -123,7 +132,7 @@ function format(fmt: string, args: Value[]): string {
   let i = 0;
   return fmt.replace(/%(-?)(0?)(\d*)([dxXbsc%])/g, (_m, left: string, zero: string, w: string, c: string) => {
     if (c === '%') return '%';
-    const v = args[i++];
+    const v0 = args[i++], v = v0 instanceof Flt ? v0.f : v0;
     let s = c === 'd' ? String(Math.trunc(v)) : c === 'x' ? (Math.trunc(v) >>> 0).toString(16) : c === 'X' ? (Math.trunc(v) >>> 0).toString(16).toUpperCase()
       : c === 'b' ? (Math.trunc(v) >>> 0).toString(2) : c === 'c' ? String.fromCharCode(v) : String(v);
     const width = +w || 0;
@@ -173,8 +182,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (inComment) { if (/^\.endc(omment)?$/.test(body)) inComment = false; return; }
       // a macro's lines are kept as they are written, until its end
       if (def) {
-        if (/^\.(macro|segment)\b/.test(body)) inner++;
-        else if (/^\.(endm|endmacro|endsegment)\b/.test(body)) { if (inner) inner--; else { def = null; return; } }
+        const agg = def.kind === 'struct' || def.kind === 'union';
+        if (agg ? /^\.(struct|union)\b/.test(body) : /^\.(macro|segment)\b/.test(body)) inner++;
+        else if (agg ? /^\.(ends|endstruct|endu|endunion)\b/.test(body) : /^\.(endm|endmacro|endsegment)\b/.test(body)) { if (inner) inner--; else { def = null; return; } }
         def.lines.push({ raw, line: i + 1 });
         return;
       }
@@ -197,7 +207,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (fd[1] === 'function') fn = f;
         return;
       }
-      const md = body.match(/^\.(macro|segment)\b\s*(.*)$/);
+      // (a named .struct or .union is a definition, where its fields' offsets are found; an anonymous one is compiled in place)
+      const md = body.match(/^\.(macro|segment)\b\s*(.*)$/) ?? (label && label !== '+' && label !== '-' ? body.match(/^\.(struct|union)\b\s*(.*)$/) : null);
+      if (md && (md[1] === 'struct' || md[1] === 'union')) stmts.push({ ...st, label: undefined, body: `\u0001${md[1]} ${label}` });
       if (md) {
         def = { kind: md[1] as TMacro['kind'], name: label ?? '', params: md[2].trim() ? splitTop(md[2], ',').map(p => { const [n, d] = p.split('='); return { name: n.trim(), def: d == null ? null : d.trim() }; }) : [], lines: [], file: path };
         if (!label || label === '+' || label === '-') E(`a .${md[1]} needs its name before it (name .${md[1]})`, st);
@@ -222,7 +234,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const key = `${def.name}\u0000${argText}`;
     const done = expanded.get(key); if (done) return done;
     const given = argText.trim() ? splitTop(argText, ',') : [];
-    const texts = Array.from({ length: Math.max(given.length, def.params.length) }, (_, i) => (given[i] ?? '') !== '' ? given[i] : (def.params[i]?.def ?? ''));
+    // (a structure's or union's field not given is ? : room, nothing written)
+    const unset = def.kind === 'struct' || def.kind === 'union' ? '?' : '';
+    const texts = Array.from({ length: Math.max(given.length, def.params.length) }, (_, i) => (given[i] ?? '') !== '' ? given[i] : (def.params[i]?.def ?? unset));
     const named = new Map(def.params.map((p, i) => [p.name, texts[i]] as const).filter(([n]) => n));
     const sub = (raw: string) => {
       let out = '', q = '';
@@ -234,7 +248,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (c === '\\' || c === '@') {
           const r = raw.slice(k + 1);
           let m: RegExpMatchArray | null;
-          if ((m = r.match(/^[1-9]/))) { out += texts[+m[0] - 1] ?? ''; k += 1; continue; }
+          if ((m = r.match(/^[1-9]/))) { out += texts[+m[0] - 1] ?? unset; k += 1; continue; }
           if (c === '\\' && r[0] === '@') { out += argText.trim(); k += 1; continue; }
           if (c === '\\' && (m = r.match(/^\{([A-Za-z_]\w*)\}/)) && named.has(m[1])) { out += named.get(m[1]); k += m[0].length; continue; }
           if (c === '\\' && (m = r.match(/^[A-Za-z_]\w*/)) && named.has(m[0])) { out += named.get(m[0]); k += m[0].length; continue; }
@@ -255,6 +269,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   };
   /** a call of a macro: `#name …` or `.name …` (a name that is a macro) */
   const callOf = (body: string): { def: TMacro; args: string } | null => {
+    // an instance of a structure or union: .dstruct name, … / .dunion name, …
+    const d = body.match(/^\.(dstruct|dunion)\s+([A-Za-z_]\w*)\s*(?:,\s*(.*))?$/);
+    if (d) { const def = macros.get(d[2]); return def && (def.kind === 'struct' || def.kind === 'union') ? { def, args: d[3] ?? '' } : null; }
     const m = body.match(/^[#.]([A-Za-z_]\w*)(?:\s+(.*))?$/);
     const def = m ? macros.get(m[1]) : undefined;
     return def ? { def, args: m![2] ?? '' } : null;
@@ -270,7 +287,13 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (c === '%' && /[01]/.test(s[i + 1] ?? '') && !(out.length && (out[out.length - 1].t !== 'op' || /[)\]]/.test((out[out.length - 1] as { v: string }).v)))) {
         const m = s.slice(i + 1).match(/^[01_]+/)!; out.push({ t: 'n', v: parseInt(m[0].replace(/_/g, ''), 2) }); i += 1 + m[0].length; continue;
       }
-      if (/[0-9]/.test(c)) { const m = s.slice(i).match(/^[0-9][0-9_]*/)!; out.push({ t: 'n', v: parseInt(m[0].replace(/_/g, ''), 10) }); i += m[0].length; continue; }
+      if (/[0-9]/.test(c)) {
+        // (a point or an exponent makes it a float: 1.5, 1e3, and 1.5p3 = 1.5 * 2 ** 3)
+        const m = s.slice(i).match(/^[0-9][0-9_]*(\.[0-9][0-9_]*)?([eEpP][+-]?[0-9]+)?/)!, txt = m[0].replace(/_/g, '');
+        if (m[1] || m[2]) { const [mant, exp] = txt.split(/[eEpP]/); let v = parseFloat(mant); if (m[2]) v *= /[pP]/.test(m[2]) ? 2 ** +exp : 10 ** +exp; out.push({ t: 'n', v, f: true }); }
+        else out.push({ t: 'n', v: parseInt(txt, 10) });
+        i += m[0].length; continue;
+      }
       if (/[A-Za-z_]/.test(c)) { const m = s.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/)!; out.push({ t: 'id', v: m[0] }); i += m[0].length; continue; }
       if (c === '"' || c === "'") {
         // a string; the quote doubled inside it is the quote
@@ -298,7 +321,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const primary = (): Node => {
       const t = next();
       if (!t) throw new Error(`incomplete expression "${s}"`);
-      if (t.t === 'n') return post({ k: 'n', v: t.v });
+      if (t.t === 'n') return post({ k: 'n', v: t.v, ...(t.f ? { f: true } : {}) });
       if (t.t === 's') return post({ k: 's', v: t.v });
       if (t.t === 'id') return post({ k: 'id', v: t.v });
       if (t.v === '*') return { k: 'pc' };
@@ -398,13 +421,28 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     // a block's or a macro call's label is also the address where it starts
     if (isSpace(v) && typeof v.v === 'number') return v.v;
     if (isImm(v)) return numberOf(v.v);
+    if (isFlt(v)) { if (!Number.isFinite(v.f)) throw new Error(`${v.f} is not a number that fits in memory`); return Math.floor(v.f); }
     throw new Error(`a ${typeName(v)} is not a number`);
   };
-  const truth = (v: Value): boolean => (typeof v === 'boolean' ? v : numberOf(v) !== 0);
+  const truth = (v: Value): boolean => (typeof v === 'boolean' ? v : isFlt(v) ? v.f !== 0 : numberOf(v) !== 0);
+  /** a value as a float's number */
+  const fnum = (v: Value): number => (isFlt(v) ? v.f : typeof v === 'number' ? v : numberOf(v));
+  /** a function of one value, over a list each item's */
+  const each = (f: (x: Value) => Value) => { const g = (x: Value): Value => (Array.isArray(x) ? x.map(g) : f(x)); return g; };
+  /** a float's function (its result a float), and one that keeps an integer an integer */
+  const fl = (g: (x: number) => number) => each(x => new Flt(g(fnum(x))));
+  const keep = (g: (x: number) => number) => each(x => (isFlt(x) ? new Flt(g(x.f)) : g(fnum(x))));
   const bytesOf = (v: Value): Uint8Array => (v instanceof Uint8Array ? v : typeof v === 'string' ? Uint8Array.from(encode(v)) : (() => { throw new Error(`a ${typeName(v)} has no bytes`); })());
 
   const builtins: Record<string, Value> = {
-    true: true, false: false,
+    true: true, false: false, pi: new Flt(Math.PI),
+    floor: keep(Math.floor), ceil: keep(Math.ceil), round: keep(x => Math.sign(x) * Math.round(Math.abs(x))), trunc: keep(Math.trunc), abs: keep(Math.abs),
+    frac: fl(x => x - Math.trunc(x)), sqrt: fl(Math.sqrt), cbrt: fl(Math.cbrt), log10: fl(Math.log10), log: fl(Math.log), exp: fl(Math.exp),
+    sin: fl(Math.sin), asin: fl(Math.asin), sinh: fl(Math.sinh), cos: fl(Math.cos), acos: fl(Math.acos), cosh: fl(Math.cosh),
+    tan: fl(Math.tan), atan: fl(Math.atan), tanh: fl(Math.tanh), rad: fl(x => x * Math.PI / 180), deg: fl(x => x * 180 / Math.PI),
+    pow: (a: Value, b: Value) => new Flt(fnum(a) ** fnum(b)), hypot: (y: Value, x: Value) => new Flt(Math.hypot(fnum(y), fnum(x))),
+    atan2: (y: Value, x: Value) => new Flt(Math.atan2(fnum(y), fnum(x))),
+    sign: each(x => Math.sign(fnum(x))), int: each(x => Math.trunc(fnum(x))), float: each(x => new Flt(fnum(x))),
     binary: (path: string, off?: number, len?: number) => {
       const u = vfs[importPath(vfs, curStmt?.file ?? entryPath, path)]; if (!(u instanceof Uint8Array)) throw new Error(`can't open file "${path}"`);
       const o = off == null ? 0 : numberOf(off); return u.slice(o, len == null ? u.length : o + numberOf(len));
@@ -436,7 +474,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
 
   const ev = (node: Node): Value => {
     switch (node.k) {
-      case 'n': return node.v;
+      case 'n': return node.f ? new Flt(node.v) : node.v;
       case 's': return node.v;
       case 'pc': return pc;
       case 'id': { const v = lookup(node.v); if (v !== undefined) return v; unresolved.push(node.v); return null; }
@@ -481,8 +519,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       case 'u': {
         const v = ev(node.a); if (v == null) return null;
         if (node.op === '!') return !truth(v);
-        // of a list, each item's (`<(1234, 5678)`: both low bytes)
-        if (Array.isArray(v)) return v.map(x => ev({ k: 'u', op: node.op, a: { k: 'n', v: numberOf(x) } }));
+        // of a list, each item's (`<(1234, 5678)`: both low bytes); a float stays one under - and +
+        if (Array.isArray(v)) return each(x => (isFlt(x) && (node.op === '-' || node.op === '+') ? new Flt(node.op === '-' ? -x.f : x.f) : ev({ k: 'u', op: node.op, a: { k: 'n', v: numberOf(x) } })))(v);
+        if (isFlt(v) && (node.op === '-' || node.op === '+')) return new Flt(node.op === '-' ? -v.f : v.f);
         const n = numberOf(v);
         return node.op === '<' ? n & 0xff : node.op === '>' ? (n >> 8) & 0xff : node.op === '~' ? ~n : node.op === '+' ? n : -n;
       }
@@ -504,6 +543,20 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (Array.isArray(x) && Array.isArray(y) && x.length !== y.length) throw new Error(`lists of ${x.length} and ${y.length} values`);
       const n = Array.isArray(x) ? x.length : y.length;
       return Array.from({ length: n }, (_, i) => bin(op, Array.isArray(x) ? x[i] : x, Array.isArray(y) ? y[i] : y));
+    }
+    // a float on either side: float arithmetic (/ divides as floats, << and >> multiply and divide by powers of 2); the bit
+    // operators take their integers
+    if (isFlt(x) || isFlt(y)) {
+      const a = fnum(x), b = fnum(y);
+      switch (op) {
+        case '+': return new Flt(a + b); case '-': return new Flt(a - b); case '*': return new Flt(a * b);
+        case '/': if (!b) throw new Error('division by zero'); return new Flt(a / b);
+        case '%': if (!b) throw new Error('division by zero'); return new Flt(a - b * Math.floor(a / b));
+        case '**': return new Flt(a ** b);
+        case '<<': return new Flt(a * 2 ** b); case '>>': return new Flt(a / 2 ** b);
+        case '<': return a < b; case '<=': return a <= b; case '>': return a > b; case '>=': return a >= b;
+        case '==': return a === b; case '!=': return a !== b;
+      }
     }
     if (op === '==' || op === '!=') {
       const same = x instanceof Uint8Array || y instanceof Uint8Array ? numberOf(x) === numberOf(y) : typeof x === typeof y ? x === y : numberOf(x) === numberOf(y);
@@ -545,11 +598,16 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   /** the line a byte is said to come from: a macro's is the line that calls it (the outermost call) */
   const site = (st: Stmt) => calls.length ? calls[0].st : st;
   let fresh = false;
+  /** .virtual blocks open (what is compiled in one is written nowhere), and .struct and .union blocks open, innermost
+   *  last (a union's lines each start where it starts; it is as long as its longest) */
+  let virt: { pc: number; off: number }[] = [];
+  let aggs: { kind: 'struct' | 'union'; start: number; max: number }[] = [];
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
+    if (virt.length) { fresh = false; pc++; return; }
     const a = pc - off;
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
-    if (written[a] && pass === 'final') E(`memory at $${h4(a)} written twice`, st);
+    if (written[a] && pass === 'final' && !aggs.some(x => x.kind === 'union')) E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
     const at = site(st);
     if (pass === 'final' && mine(at)) { lines[a] = at.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(at.file); }
@@ -586,6 +644,11 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const active = () => cond.every(c => c.on);
     const report = (st: Stmt) => { if (unresolved.length) { missing = true; if (final) for (const u of new Set(unresolved)) E(`not defined symbol '${u}'`, st); } unresolved = []; };
 
+    virt = []; aggs = [];
+    /** a union ends: the program counter past its longest line */
+    const endUnion = () => { const u = aggs.pop(); if (u) { u.max = Math.max(u.max, pc - u.start); pc = u.start + u.max; } };
+    /** .lbl jump labels in each list of lines (.goto goes back to one) */
+    const lbls = new WeakMap<readonly Stmt[], Map<string, { ix: number; cond: number }>>();
     // ---- macros: each call runs the macro's lines with its parameters, a .macro in a block of its own ----
     calls = [];
     let callNo = 0;
@@ -593,9 +656,11 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (calls.length >= 100) throw new Error(`macros called ${calls.length} deep at ${def.name}: does it call itself without end?`);
       const list = expand(def, args);
       const wasSpaces = spaces, wasScope = scope;
-      if (def.kind === 'macro') spaces = [...spaces, st.label && st.label !== '+' && st.label !== '-' ? st.label : `#m${callNo++}`];
+      const scoped = def.kind !== 'segment';
+      if (scoped) spaces = [...spaces, st.label && st.label !== '+' && st.label !== '-' ? st.label : `#m${callNo++}`];
+      if (def.kind === 'union') aggs.push({ kind: 'union', start: pc, max: 0 });
       calls.push({ name: def.name, st });
-      try { runList(list); } finally { calls.pop(); if (def.kind === 'macro') { spaces = wasSpaces; scope = wasScope; } }
+      try { runList(list); } finally { calls.pop(); if (def.kind === 'union') endUnion(); if (scoped) { spaces = wasSpaces; scope = wasScope; } }
     };
 
     // ---- functions: each call a block of its own under the top level, its parameters variables in it ----
@@ -714,11 +779,12 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       try {
         let m: RegExpMatchArray | null;
         // the conditions, followed in every branch to find their ends
-        if ((m = s.match(/^\.(if|elsif|else|endif|fi)\b\s*(.*)$/))) {
-          const top = cond[cond.length - 1];
-          const test = () => { const v = ev(P(m![2])); if (v == null) return false; return truth(v); };
-          switch (m[1]) {
-            case 'if': { const o = active(), v = o && test(); cond.push({ on: v, taken: v, outer: o }); break; }
+        if ((m = s.match(/^\.(if|ifne|ifeq|ifpl|ifmi|elsif|else|endif|fi)\b\s*(.*)$/))) {
+          const top = cond[cond.length - 1], kind = m[1];
+          // (TASM's: .ifne not zero, .ifeq zero, .ifpl not negative, .ifmi negative)
+          const test = () => { const v = ev(P(m![2])); if (v == null) return false; return kind === 'ifeq' ? !truth(v) : kind === 'ifpl' ? fnum(v) >= 0 : kind === 'ifmi' ? fnum(v) < 0 : truth(v); };
+          switch (kind) {
+            case 'if': case 'ifne': case 'ifeq': case 'ifpl': case 'ifmi': { const o = active(), v = o && test(); cond.push({ on: v, taken: v, outer: o }); break; }
             case 'elsif': if (!top) E('.elsif without .if', st); else { const v = top.outer && !top.taken && test(); top.on = v; top.taken ||= v; } break;
             case 'else': if (!top) E('.else without .if', st); else { top.on = top.outer && !top.taken; top.taken = true; } break;
             default: if (!cond.pop()) E(`.${m[1]} without .if`, st);
@@ -727,6 +793,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           continue;
         }
         if (!active()) continue;
+        const inUnion = aggs[aggs.length - 1];
+        if (inUnion?.kind === 'union' && !/^\.(ends|endstruct|endu|endunion)\b/.test(s)) { inUnion.max = Math.max(inUnion.max, pc - inUnion.start); pc = inUnion.start; }
         // (a macro's lines are the call's: the program counter at a line is the line's own only)
         if (final && st.file === entryPath && !calls.length) linePcs.set(st.line, pc);
         const call = callOf(s), fcall = call ? null : fnCallOf(s);
@@ -743,15 +811,31 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           report(st);
           continue;
         }
+        // TASM's loop: `name .lbl` … `.goto name` assembles again from after the .lbl
+        if (/^\.lbl$/.test(s)) {
+          if (!st.label) { E('.lbl needs its name before it (name .lbl)', st); continue; }
+          let at = lbls.get(list); if (!at) { at = new Map(); lbls.set(list, at); }
+          at.set(st.label, { ix, cond: cond.length });
+          continue;
+        }
+        if ((m = s.match(/^\.goto\s+([A-Za-z_]\w*)$/))) {
+          const t = lbls.get(list)?.get(m[1]);
+          if (!t) { E(`not defined symbol '${m[1]}' (.goto goes back to a .lbl before it)`, st); continue; }
+          if (++rounds > 100_000) { stuck = true; throw new Error('.goto went round 100000 times: does its condition ever turn false?'); }
+          cond.length = t.cond; ix = t.ix;
+          continue;
+        }
         // a label: an anonymous one, `name = value`, `name := value`, a namespace, or the address here; one that
         // starts with _ is local to the code label before it (`loop._x`); one before a .macro's call names its block
         if (st.label === '+' || st.label === '-') anon.push({ dir: st.label, v: pc });
         else if (st.label) {
           const local = st.label.startsWith('_') && scope ? `${scope}.${st.label}` : st.label;
           if ((m = s.match(/^(:?)=(?!=)\s*(.+)$/))) { const v = ev(P(m[2])); if (v != null) define(local, v, st, m[1] === ':'); report(st); continue; }
+          // TASM's variable: `i .var 3`
+          if ((m = s.match(/^\.var\s+(.+)$/))) { const v = ev(P(m[1])); if (v != null) setVar(local, v, st, true); report(st); continue; }
           // a variable changed: `n += 1`, `n ::= 2` (the one the name finds)
           if (/^(::|\+|-|\*|\/|%|<<|>>|\||&|\^)=/.test(s)) { assign(`${local} ${s}`, st); report(st); continue; }
-          if (/^\.(namespace|block)\b/.test(s) || call?.def.kind === 'macro') {
+          if (/^\.(namespace|block)\b/.test(s) || (call && call.def.kind !== 'segment')) {
             define(st.label, { space: keyIn(spaces, st.label), ...(/^\.namespace\b/.test(s) ? {} : { v: pc }) } as Space, st);
             if (call) { runCall(call.def, call.args, st); continue; }
             spaces = [...spaces, st.label];
@@ -761,6 +845,27 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (!/^\.b(for|rept|while)\b/.test(s)) { define(local, pc, st); if (!st.label.startsWith('_')) scope = st.label; }
         }
         if (call) { runCall(call.def, call.args, st); continue; }
+        if ((m = s.match(/^\.(dstruct|dunion)\s+([A-Za-z_]\w*)/))) { E(`not defined symbol '${m[2]}' (no .${m[1] === 'dstruct' ? 'struct' : 'union'} of that name)`, st); continue; }
+        // .virtual [address] … .endv: compiled, nothing written, the program counter back where it was after
+        if ((m = s.match(/^\.virtual\b\s*(.*)$/))) { virt.push({ pc, off }); if (m[1].trim()) { const v = evn(m[1]); report(st); if (v != null) pc = v; } continue; }
+        if (/^\.(endv|endvirtual)$/.test(s)) { const v = virt.pop(); if (!v) E(`${s} without .virtual`, st); else { pc = v.pc; off = v.off; } continue; }
+        // an anonymous structure or union, compiled here
+        if (/^\.(struct|union)$/.test(s)) { aggs.push({ kind: s === '.union' ? 'union' : 'struct', start: pc, max: 0 }); continue; }
+        if ((m = s.match(/^\.(ends|endstruct|endu|endunion)\b/))) {
+          const top = aggs[aggs.length - 1], want = /^\.(endu|endunion)/.test(s) ? 'union' : 'struct';
+          if (!top || top.kind !== want) { E(`${m[0]} without .${want}`, st); continue; }
+          if (want === 'union') endUnion(); else aggs.pop();
+          continue;
+        }
+        // a named structure or union where it is defined: its fields compiled at 0, written nowhere (nn_s.x is an offset)
+        if ((m = s.match(/^\u0001(struct|union) ([A-Za-z_]\w*)$/))) {
+          const def = macros.get(m[2])!, was = { pc, off, spaces, scope };
+          define(m[2], { space: keyIn(spaces, m[2]), v: 0 } as Space, st);
+          virt.push({ pc, off }); pc = 0; spaces = [...spaces, m[2]];
+          if (def.kind === 'union') aggs.push({ kind: 'union', start: 0, max: 0 });
+          try { runList(expand(def, '')); } finally { if (def.kind === 'union') endUnion(); virt.pop(); pc = was.pc; off = was.off; spaces = was.spaces; scope = was.scope; }
+          continue;
+        }
         // a loop: its lines up to its end, again and again
         if ((m = s.match(LOOP))) {
           const end = endOf(list, ix);
@@ -916,7 +1021,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (op === undefined) { E(`not a valid addressing mode for ${mn.toLowerCase()} (${mode})`, st); continue; }
           if (OPC[op].ill && cpu !== '6502i') { E(`${mn.toLowerCase()} is an undocumented opcode: it needs .cpu "6502i"`, st); continue; }
           emit(op, st);
-          if (pass === 'final' && mine(site(st))) ops[(pc - off - 1) & 0xffff] = 1;
+          if (pass === 'final' && mine(site(st)) && !virt.length) ops[(pc - off - 1) & 0xffff] = 1;
           const len = MODE_LEN[mode as AddrMode];
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
@@ -938,6 +1043,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (x.pc0 !== x.prevPc0 || x.max !== x.prevSize) changed = true;
     }
     if (cond.length && final) E(`.if without .endif (${cond.length} open)`);
+    if (virt.length && final) E(`.virtual without .endv (${virt.length} open)`);
+    if (aggs.length && final) E(`.${aggs[aggs.length - 1].kind} without its end (${aggs.length} open)`);
     if (outer.length && final) E(`.logical without .here (${outer.length} open)`);
     if (final) endPc = pc;
     return changed;
