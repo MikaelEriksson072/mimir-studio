@@ -184,6 +184,10 @@ export const TASS_CPU_MNEMONICS: readonly string[] = [...new Set([
   ...Object.values(ALIASES).flatMap(a => Object.keys(a)), ...ALWAYS_BRANCHES,
 ].map(m => m.toLowerCase()))].sort();
 
+/** every mnemonic 64tass has on one processor or another, with the aliases and the always taken branches (lower case):
+ *  a word first on a line that is one is not a label in the editor */
+export const TASS_ALL_MNEMONICS: ReadonlySet<string> = new Set([...TASS_CPUS.flatMap(c => cpuMnemonics(c)), ...ALWAYS_BRANCHES].map(m => m.toLowerCase()));
+
 /** the instructions whose immediate is the accumulator's size (.al: 16 bits) and the index registers' (.xl) */
 export const ACCU_IMM = new Set(['ORA', 'AND', 'EOR', 'ADC', 'BIT', 'LDA', 'CMP', 'SBC']);
 export const INDEX_IMM = new Set(['LDX', 'LDY', 'CPX', 'CPY']);

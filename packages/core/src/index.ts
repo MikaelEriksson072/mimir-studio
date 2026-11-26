@@ -84,7 +84,7 @@ export { ASSEMBLERS, asmMnemonic, assemblerOf, forcedMnemonic, guessAssembler, i
 
 export { assemble, importPath, type AssembleOptions } from './verify/kick-subset-assembler';
 export { assembleTass } from './verify/tass-subset-assembler';
-export { TASS_CPU_MNEMONICS, tassCpu, type TassCpu } from './verify/tass-cpu';
+export { TASS_ALL_MNEMONICS, TASS_CPU_MNEMONICS, tassCpu, type TassCpu } from './verify/tass-cpu';
 export { comparePrg } from './verify/verify';
 export { parseKickOutput } from './verify/kick-output';
 export { parseTassOutput } from './verify/tass-output';

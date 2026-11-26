@@ -9,6 +9,7 @@ import type { AssembleResult, AssemblerId, ScriptLang, Vfs } from './types';
 import { assemble, type AssembleOptions } from './verify/kick-subset-assembler';
 import { assembleTass } from './verify/tass-subset-assembler';
 import { OPC, TASS_ENC, tassName } from './cpu/opcodes';
+import { TASS_ALL_MNEMONICS } from './verify/tass-cpu';
 
 export type { ScriptLang };
 
@@ -113,24 +114,24 @@ export function startsInBlockComment(lines: readonly string[], n: number, lang: 
   return open;
 }
 
-/** whether a word at the start of a 64tass line is an instruction there, not a label (`lda #1`: 64tass reads the
- *  mnemonic, in lower case with -C) */
-const tassMnemonic = (w: string) => /^[a-z]{3}$/.test(w) && !!TASS_ENC[w.toUpperCase()];
+/** whether a word first on a 64tass line is an instruction there, not a label (`lda #1`: 64tass reads the mnemonic, in
+ *  lower case with -C; any processor's, as the line's processor is not known here: `phx`, `gcc`, `bge`) */
+const tassMnemonic = (w: string) => /^[a-z]{3}$/.test(w) && (!!TASS_ENC[w.toUpperCase()] || TASS_ALL_MNEMONICS.has(w));
 
 /**
  * The label a line of code starts with, and the line from what follows it (`lead`: the line up to there, the label
- * and the space after it). Kick Assembler: `name:`, `!name:` or `!:` after any indent. 64tass: at the start of the
- * line only, `name` or `name:` (a lower-case mnemonic there is the instruction), `_local`, `+` or `-`.
+ * and the space after it). Kick Assembler: `name:`, `!name:` or `!:` after any indent. 64tass: first on the line, at
+ * its start or after white space as 64tass takes it, `name` or `name:` (a lower-case mnemonic there is the
+ * instruction), `_local`, `+` or `-`.
  */
 export function splitLabel(code: string, lang: ScriptLang | undefined): { label?: string; lead: string; rest: string } {
   if (langIs(lang) === '64tass') {
-    const m = /^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=|;)/.exec(code);
+    const ind = /^[ \t]*/.exec(code)![0], m = /^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=|;)/.exec(code.slice(ind.length));
     if (m && !(!m[2] && tassMnemonic(m[1]))) {
-      const sp = /^[ \t]*/.exec(code.slice(m[0].length))![0];
-      return { label: m[1], lead: code.slice(0, m[0].length + sp.length), rest: code.slice(m[0].length + sp.length) };
+      const end = ind.length + m[0].length, sp = /^[ \t]*/.exec(code.slice(end))![0];
+      return { label: m[1], lead: code.slice(0, end + sp.length), rest: code.slice(end + sp.length) };
     }
-    const sp = /^[ \t]*/.exec(code)![0];
-    return { lead: sp, rest: code.slice(sp.length) };
+    return { lead: ind, rest: code.slice(ind.length) };
   }
   const m = /^(\s*)([A-Za-z_][\w.]*|![A-Za-z_]\w*|!)\s*:[ \t]*/.exec(code);
   if (m) return { label: m[2], lead: m[0], rest: code.slice(m[0].length) };

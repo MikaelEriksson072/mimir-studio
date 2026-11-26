@@ -44,7 +44,7 @@ import { h4 } from '../util/hex';
 import { importPath, type AssembleOptions } from './kick-subset-assembler';
 
 /** a statement: its label, its body and (`cmt`) the comment after it, which a `* =` line's names its block by */
-interface Stmt { file: string; line: number; src: string; label?: string; body: string; cmt?: string; bare?: boolean }
+interface Stmt { file: string; line: number; src: string; label?: string; body: string; cmt?: string; bare?: boolean; indented?: boolean }
 
 type Tok = { t: 'n'; v: number; f?: boolean } | { t: 's'; v: string } | { t: 'id'; v: string } | { t: 'op'; v: string };
 type Node =
@@ -204,15 +204,17 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const parseLine = (raw: string, path: string, no: number): Stmt => {
     const line = stripComment(raw).replace(/\s+$/, '');
     const cmt = raw.slice(stripComment(raw).length).replace(/^;\s*/, '').trim();
-    let label: string | undefined, rest = line, bare = false;
-    if (line && !/^\s/.test(line)) {
-      // at the start of a line: a label (`name:`, `name`, `+`, `-`), else `*` or a directive
-      // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1` at the start of a line; one only
-      // another processor has is looked at again where it is run: `bare`, a label without its colon)
-      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=)/);
-      if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) { label = m[1]; rest = line.slice(m[0].length); bare = !m[2] && /^[a-z]{3}$/.test(m[1]); }
+    let label: string | undefined, rest = line, bare = false, indented = false;
+    // first on a line, at its start or after white space (64tass takes `  loop lda #1`, `  x = 5`, `  -` as it takes
+    // them at the start): a label (`name:`, `name`, `+`, `-`), else `*` or a directive
+    // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1`; a name without its colon is looked
+    // at again where it is run, `bare`: a mnemonic only another processor has, or a macro's or a function's call)
+    const lead = line.length - line.trimStart().length, text = line.slice(lead);
+    const m = text.match(/^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=)/);
+    if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) {
+      label = m[1]; rest = text.slice(m[0].length); bare = !m[2] && m[1] !== '+' && m[1] !== '-'; indented = lead > 0;
     }
-    return { file: path, line: no, src: raw, ...(label ? { label } : {}), body: rest.trim(), ...(cmt ? { cmt } : {}), ...(bare ? { bare } : {}) };
+    return { file: path, line: no, src: raw, ...(label ? { label } : {}), body: rest.trim(), ...(cmt ? { cmt } : {}), ...(bare ? { bare } : {}), ...(indented ? { indented } : {}) };
   };
   const loadFile = (path: string, depth: number) => {
     const src = vfs[path];
@@ -314,14 +316,16 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const def = m ? funcs.get(m[1]) : undefined;
     return def && !(m![0][0] !== '#' && m![0][0] !== '.' && TASS_ENC[m![1].toUpperCase()] && m![1].length === 3) ? { def, args: m![2] ?? '' } : null;
   };
-  /** a call of a macro: `#name …` or `.name …` (a name that is a macro) */
+  /** a call of a macro: `#name …` or `.name …` (a name that is a macro), or `name …` without them as 64tass takes it
+   *  too (a macro's or a segment's, not a mnemonic's: `lb name 1` names the call's block lb) */
   const callOf = (body: string): { def: TMacro; args: string } | null => {
     // an instance of a structure or union: .dstruct name, … / .dunion name, …
     const d = body.match(/^\.(dstruct|dunion)\s+([A-Za-z_]\w*)\s*(?:,\s*(.*))?$/);
     if (d) { const def = macros.get(d[2]); return def && (def.kind === 'struct' || def.kind === 'union') ? { def, args: d[3] ?? '' } : null; }
-    const m = body.match(/^[#.]([A-Za-z_]\w*)(?:\s+(.*))?$/);
-    const def = m ? macros.get(m[1]) : undefined;
-    return def ? { def, args: m![2] ?? '' } : null;
+    const m = body.match(/^([#.]?)([A-Za-z_]\w*)(?:\s+(.*))?$/);
+    const def = m ? macros.get(m[2]) : undefined;
+    if (def && !m![1] && ((def.kind !== 'macro' && def.kind !== 'segment') || (/^[a-z]{3}$/.test(m![2]) && TASS_ENC[m![2].toUpperCase()]))) return null;
+    return def ? { def, args: m![3] ?? '' } : null;
   };
 
   // ---- expressions ----
@@ -475,6 +479,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     return (a + b) & M64;
   };
   const warnings: AsmError[] = [];
+  /** the lines whose label not on the left side has been warned of (a macro's once) */
+  const leftWarned = new Set<string>();
+  /** each statement whose first word is an instruction or a call after all, as it is run (asInstruction) */
+  const asIs = new WeakMap<Stmt, Stmt>();
   /** what the check says of a processor that is not the C64's */
   const cpuNote = (c: TassCpu) => (c === '65816' ? 'The 65816\'s instructions run on a SuperCPU (VICE\'s xscpu64), not on the C64\'s 6510: Mimir\'s debugger and x64sc run a 6510'
     : c === '65dtv02' ? 'The 65DTV02\'s instructions (BRA, SAC, SIR) run on a C64 DTV, not on the C64\'s 6510: Mimir\'s debugger and x64sc run a 6510'
@@ -965,12 +973,27 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       return scopes;
     };
 
-    /** a line starting with a word that is a mnemonic of the processor now (one 64tass's 6502 has not: `phx` on the
-     *  65816, an alias such as `bge`) without a colon: that instruction, as 64tass reads it, else the label it was */
+    /** a line starting with a word without a colon that is a mnemonic of the processor now (one 64tass's 6502 has not:
+     *  `phx` on the 65816, an alias such as `bge`), or a macro's or a function's name (64tass calls them without the #
+     *  too: `name 1, 2`): that instruction or call, as 64tass reads it, else the label it was; one of three letters after
+     *  white space that nothing uses, alone or before an instruction or a call, is warned of as 64tass does (a mistyped
+     *  instruction?) */
     const asInstruction = (st: Stmt): Stmt => {
-      if (!st.bare || !st.label || /^(\.|:?=)/.test(st.body) || !(cpuOp(cpu, st.label.toUpperCase()) || (/^g[a-z]{2}$/.test(st.label) && alwaysBranch(cpu, st.label.slice(1))))) return st;
-      const { label, bare: _, ...rest } = st;
-      return { ...rest, body: `${label} ${st.body}`.trim() };
+      if (!st.bare || !st.label || /^(\.|:?=)/.test(st.body)) return st;
+      const name = st.label, mn = /^[a-z]{3}$/.test(name);
+      const def = macros.get(name), call = (def && (def.kind === 'macro' || def.kind === 'segment')) || funcs.has(name);
+      if ((mn && (cpuOp(cpu, name.toUpperCase()) || (name[0] === 'g' && alwaysBranch(cpu, name.slice(1))))) || call) {
+        // (the same statement each pass: a gcc's last end is kept by it)
+        let was = asIs.get(st);
+        if (!was) { const { label: _l, bare: _b, indented: _i, ...rest } = st; was = { ...rest, body: `${name} ${st.body}`.trim() }; asIs.set(st, was); }
+        return was;
+      }
+      if (final && mn && st.indented && (!st.body || /^[#*A-Za-z_]/.test(st.body)) && !/^g(cc|cs|eq|ne|mi|pl|vc|vs|lt|ge|ra)\b/.test(st.body)
+        && !refsPrev?.has(keyIn(spaces, name)) && !refsNow.has(keyIn(spaces, name))) {
+        const k = `${st.file}:${st.line}`;
+        if (!leftWarned.has(k)) { leftWarned.add(k); warnings.push({ file: st.file, line: st.line, msg: `label not on left side: is ${name} a mistyped instruction, or one this processor has not? (64tass's -Wlabel-left)` }); }
+      }
+      return st;
     };
     const runList = (list: readonly Stmt[]): void => { for (let ix = 0; ix < list.length; ix++) { const st = asInstruction(list[ix]);
       if (ended) return;
@@ -1367,8 +1390,11 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           /** the bytes after it: mvn/mvp's banks, a bit instruction's direct page */
           let tail: (number | null)[] = [], bitNo: number | null = null;
           const isJump = mn === 'JMP' || mn === 'JSR';
-          // 64tass's register forms: the transfer the processor has (lda x is TXA, ldx s TSX, stx s TXS, inc x INX …)
-          const reg = /^[xyzsbd]$/i.test(arg) || (arg.toLowerCase() === 'a' && !has('acc')) ? REG_FORMS[`${mn} ${arg.toUpperCase()}`] : undefined;
+          // 64tass's register forms: the transfer the processor has (lda x is TXA, ldx s TSX, stx s TXS, inc x INX …);
+          // a register's letter that is a name the code has (x .byte 1, seen from here, ahead too) is its address, as
+          // asl a is with a label a
+          const named = /^[axyzsbd]$/i.test(arg) && ((v: Value | undefined) => v !== undefined && typeof v !== 'function')(lookup(arg));
+          const reg = !named && (/^[xyzsbd]$/i.test(arg) || (arg.toLowerCase() === 'a' && !has('acc'))) ? REG_FORMS[`${mn} ${arg.toUpperCase()}`] : undefined;
           const regOp = reg ? cpuOp(cpu, reg)?.modes.imp : undefined;
           if (regOp != null) {
             emit(regOp, st);
@@ -1376,7 +1402,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             report(st);
             continue;
           }
-          if (!arg || (arg === 'a' && has('acc'))) mode = arg === 'a' || !has('imp') ? 'acc' : 'imp';
+          // (no operand: implied, or the accumulator's where it is asl, lsr, rol, ror, the 65CE02's neg and asr; not
+          // inc and dec, which need their a)
+          if (!arg || (arg === 'a' && has('acc') && !named)) mode = arg === 'a' ? 'acc' : has('imp') || !has('acc') || mn === 'INC' || mn === 'DEC' ? 'imp' : 'acc';
           else if (has('move')) {
             const parts = splitTop(arg, ',');
             if (parts.length !== 2) { E(`${m[1]} needs two banks (${m[1]} #source, #destination)`, st); continue; }
@@ -1437,7 +1465,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (mode === 'bit' || mode === 'bitrel') op = op! + ((bitNo ?? 0) & 7) * 16;
           if (op === undefined) {
             E(cpu === '6502' && cpuOp('6502i', mn)?.modes[mode as CpuMode] !== undefined ? `${m[1]} is an undocumented opcode: it needs .cpu "6502i"`
-              : `no ${force === 'l' ? 'long sized ' : ''}${mode ? `${mode} ` : ''}addressing mode for opcode '${m[1]}'`, st);
+              : `no ${force === 'l' ? 'long sized ' : ''}${mode === 'imp' ? 'implied ' : mode ? `${mode} ` : ''}addressing mode for opcode '${m[1]}'`, st);
             continue;
           }
           const md = mode as CpuMode;

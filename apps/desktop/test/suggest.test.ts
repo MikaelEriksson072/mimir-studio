@@ -87,6 +87,11 @@ describe('script suggestions', () => {
     expect(t('        ', 'ld')).toEqual(['lda', 'ldx', 'ldy']);
     expect(t('loop    ', 'ro')).toEqual(['rol', 'ror']);
     expect(t('+       ', 'rt')).toEqual(['rti', 'rts']);
+    // (a label after white space too, as 64tass takes it; a mnemonic there is the instruction: its operand next)
+    expect(t('  loop  ', 'ro')).toEqual(['rol', 'ror']);
+    expect(t('\t- ', 'rt')).toEqual(['rti', 'rts']);
+    expect(t('  lda ', 'T')).toEqual(['tabell', 'text_out', 'true']);
+    expect(t('  loop lda tabell,', 'x')).toEqual([]);
     expect(t('        .', 'en')).toEqual(['.enc', '.endc', '.endif', '.endnamespace']);
     expect(t('        lda ', 'T')).toEqual(['tabell', 'text_out', 'true']);
     expect(t('        lda ', 'le')).toEqual(['len']);

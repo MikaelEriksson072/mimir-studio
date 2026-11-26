@@ -4,7 +4,7 @@
  * (Ctrl+Shift+O). */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { jsMembers } from '../lib/jsmembers';
-import { asmNameRefs, asmNames, asmRenameProblem, driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptLang, type ScriptPad } from '@mimir/core';
+import { asmNameRefs, asmNames, asmRenameProblem, driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, TASS_ALL_MNEMONICS, undocumentedText, type AnalysisResult, type RenderResult, type ScriptLang, type ScriptPad } from '@mimir/core';
 import { KICKASS } from './kickass-language';
 import { TASS64 } from './tass-language';
 
@@ -42,9 +42,10 @@ const AT_MNEMONIC = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?$/;
 /** an instruction's operand after a comma: `,x` or `,y` (the index register), never a name */
 const AT_INDEX = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+[^/]*,\s*$/;
 
-/** the same for 64tass: a label at the start of the line, with or without its colon (`loop`, `+`), then the mnemonic */
-const TASS_AT_MNEMONIC = /^(?:\s*|(?:[A-Za-z_]\w*:?|[+-])\s+)$/;
-const TASS_AT_INDEX = /^(?:(?:[A-Za-z_]\w*:?|[+-])\s+|\s+)[A-Za-z]{3}\s+[^;]*,\s*$/;
+/** the same for 64tass: a label first on the line, indented or not, with or without its colon (`loop`, `+`), then the
+ *  mnemonic (a word that is a mnemonic itself is the instruction: its operand comes next) */
+const TASS_AT_MNEMONIC = { test: (s: string) => { const m = /^\s*(?:([A-Za-z_]\w*)(:?)\s+|[+-]\s+)?$/.exec(s); return !!m && !(m[1] && !m[2] && TASS_ALL_MNEMONICS.has(m[1].toLowerCase())); } };
+const TASS_AT_INDEX = /^\s*(?:(?:[A-Za-z_]\w*:?|[+-])\s+)?[A-Za-z]{3}\s+[^;]*,\s*$/;
 export interface ScriptSuggestion { label: string; kind: 'link' | 'pad' | 'name' | 'hardware' | 'mnemonic' | 'word'; detail?: string }
 
 /**
@@ -294,24 +295,24 @@ export function registerProviders(monaco: typeof Monaco): void {
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerDefinitionProvider(lang, {
     provideDefinition(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;
-      // `name:`; in 64tass also `name = value` and `name .namespace` at the start of a line
+      // `name:`; in 64tass the name first on its line, indented too (`loop lda #1`, `  x = 5`, `name .macro`), that is
+      // not a mnemonic or a call, as asmNames finds it
       const word = w.word.replace(/[^\w]/g, '');
-      const re = new RegExp(lang === TASS64 ? `^${word}(?::|\\s*:?=|\\s+\\.(?:namespace|block|macro|function|sfunction|segment|struct|union)\\b)` : `^${word}:`, 'm');
       // the Assembler's (spec 10.7): also in the folder's other sources and the files imported from outside it, the
       // file shown first (Kick Assembler's labels may be indented there, constants are `.label`, `.const` or `.var`
       // lines, and macros, functions and pseudo commands are named after their directive)
-      if (ownOrOutside(model)) {
-        const own = lang === TASS64 ? re : new RegExp(`^\\s*(?:${word}:|\\.(?:label|const|var)\\s+${word}\\s*=|\\.(?:macro|function|pseudocommand)\\s+${word}\\b)`, 'm');
-        for (const x of [model, ...monaco.editor.getModels().filter(o => o !== model && ownOrOutside(o))]) {
-          const m = own.exec(x.getValue()); if (!m) continue;
-          const p = x.getPositionAt(m.index + m[0].indexOf(word));
-          return { uri: x.uri, range: new monaco.Range(p.lineNumber, p.column, p.lineNumber, p.column + word.length) };
-        }
-        return null;
+      const asm = ownOrOutside(model);
+      const kick = new RegExp(asm ? `^\\s*(?:${word}:|\\.(?:label|const|var)\\s+${word}\\s*=|\\.(?:macro|function|pseudocommand)\\s+${word}\\b)` : `^${word}:`, 'm');
+      const defIn = (x: Monaco.editor.ITextModel): Monaco.IPosition | null => {
+        if (lang === TASS64) { const n = asmNames(x.getValue(), '64tass').find(a => a.def && a.name === word); return n ? { lineNumber: n.line, column: n.col } : null; }
+        const m = kick.exec(x.getValue());
+        return m ? x.getPositionAt(m.index + m[0].indexOf(word)) : null;
+      };
+      for (const x of asm ? [model, ...monaco.editor.getModels().filter(o => o !== model && ownOrOutside(o))] : [model]) {
+        const p = defIn(x); if (!p) continue;
+        return { uri: x.uri, range: new monaco.Range(p.lineNumber, p.column, p.lineNumber, p.column + word.length) };
       }
-      const m = re.exec(model.getValue()); if (!m) return null;
-      const p = model.getPositionAt(m.index);
-      return { uri: model.uri, range: new monaco.Range(p.lineNumber, 1, p.lineNumber, w.word.length + 1) };
+      return null;
     },
   });
 }

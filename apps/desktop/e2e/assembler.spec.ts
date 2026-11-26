@@ -1229,6 +1229,69 @@ test('the 65816 in an Assembler project in 64tass: Mimir\'s check writes its ins
   await closeProject(page, 'scpu');
 });
 
+test('64tass\'s labels after white space in an Assembler project: the check takes them and a macro called without its # as 64tass does, warns of one that looks like a mistyped instruction, F12 finds them, a bookmark is named after one, and Build gives the same program', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'indent');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [
+    '        * = $0801',
+    '        .word (+), 2026',
+    '        .null $9e, format("%4d", start)',
+    '+       .word 0',
+    'border  .macro',
+    '        lda #\\1',
+    '        sta $d020',
+    '        .endm',
+    '  start ldx #0',
+    '  loop  lda text,x',
+    '        beq done',
+    '        sta $0400,x',
+    '        inx',
+    '        bne loop',
+    '  done  border 2',
+    '        rts',
+    '  text  .null "hi"',
+    '  ldz',
+    '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await expect(page.getByRole('button', { name: 'Language' })).toHaveText('64tass');
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  // 12 bytes of BASIC line, then 2+3+2+3+1+2, the macro's 2+3, 1 and the text's 3
+  await expect(problems).toContainText('The program assembles: 34 bytes');
+  // ldz is the 65CE02's: on the 6502 a label, which nothing uses
+  await expect(problems.getByRole('list', { name: 'What the check warns of' })).toContainText('label not on left side: is ldz a mistyped instruction');
+  // the editor colours the labels as labels, the mnemonics as mnemonics
+  const line = (n: number) => page.locator('.scr-editor .view-line').nth(n - 1);
+  await expect(line(10).locator('span', { hasText: /^loop$/ })).toHaveClass(/mtk/);
+  const cls = async (n: number, word: string) => line(n).locator('span', { hasText: new RegExp(`^${word}$`) }).first().getAttribute('class');
+  expect(await cls(10, 'loop')).not.toBe(await cls(10, 'lda'));
+  expect(await cls(10, 'loop')).toBe(await cls(9, 'start'));
+  expect(await cls(14, 'bne')).toBe(await cls(10, 'lda'));
+  // F12 on loop in bne loop: its line; a bookmark there is named after it
+  await line(14).getByText('loop').click();
+  await page.keyboard.press('F12');
+  // (F12 goes there when the definition is found: the caret on line 10 first, then Ctrl+F2 takes its line)
+  const top = (el: Element) => parseFloat((el as HTMLElement).style.top);
+  const line10 = await line(10).evaluate(top);
+  await expect.poll(() => page.locator('.scr-editor .cursors-layer .cursor').first().evaluate(top)).toBe(line10);
+  await page.keyboard.press('Control+F2');
+  const add = page.getByRole('form', { name: 'Add bookmark' });
+  await expect(add.getByLabel('Line', { exact: true })).toHaveValue('10');
+  await expect(add.getByLabel('Title')).toHaveValue('loop');
+  await add.getByRole('button', { name: 'Cancel', exact: true }).last().click();
+  await expect(add).toHaveCount(0);
+  await shot(page, '36-asm-64tass-indented-labels');
+  // the real 64tass builds the same bytes
+  await page.getByRole('button', { name: 'Build', exact: true }).click();
+  await expect(page.locator('.scr-run-stat')).toContainText('Built main.prg', { timeout: 60_000 });
+  expect([...readFileSync(join(dir, 'out', 'main.prg')).subarray(2 + 12)]).toEqual([0xa2, 0, 0xbd, 0x20, 0x08, 0xf0, 0x06, 0x9d, 0, 0x04, 0xe8, 0xd0, 0xf5, 0xa9, 2, 0x8d, 0x20, 0xd0, 0x60, 0x48, 0x49, 0]);
+  await closeProject(page, 'indent');
+});
+
 test('bookmarks in an Assembler project, as in the re-assembler: on lines of the sources, Ctrl+F2 adds or edits, an area, they move with their lines, Alt+F2 goes from one to the next, a file renamed takes its own along, kept in the project file', async ({ workDir: work, app, page }) => {
   const dir = join(work, 'marks');
   mkdirSync(dir);

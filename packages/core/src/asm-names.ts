@@ -3,12 +3,14 @@
  * defined, for the editor's references (Shift+F12), rename (F2) and outline (Ctrl+Shift+O). A name is a word of the
  * code: not in a comment (`//`, `/* *\/` in Kick Assembler, `;` and `.comment` … `.endc` in 64tass) or a string, not a
  * number's digits ($c000, %0101), not a member or a directive after a dot (music.init, .byte), not a local label of
- * Kick Assembler's (!loop). It is defined where it is a label (`name:`; in 64tass a name at the start of its line) or
+ * Kick Assembler's (!loop). It is defined where it is a label (`name:`; in 64tass a name first on its line, indented
+ * too, that is not a mnemonic or a call) or
  * given a value (`.label`, `.const`, `.var` in Kick Assembler; `name = value` in 64tass).
  * ===================================================================== */
 import type { ScriptLang } from './types';
 import { OPC } from './cpu/opcodes';
 import { langIs } from './code-lang';
+import { TASS_ALL_MNEMONICS } from './verify/tass-cpu';
 
 /** a name written in a source: its line and column (from 1), and whether it is defined there */
 export interface AsmNameAt { name: string; line: number; col: number; def: boolean; how?: 'label' | 'value' | 'macro' }
@@ -21,8 +23,10 @@ export function asmNames(text: string, lang: ScriptLang): AsmNameAt[] {
   const out: AsmNameAt[] = [];
   const lines = text.split('\n');
   let block = false, tassComment = false;
-  // (64tass: the macros the source defines, which `.name` calls)
-  const macroSet = new Set(tass ? lines.map(l => l.match(/^([A-Za-z_]\w*):?\s+\.(?:macro|segment)\b/)?.[1]).filter((n): n is string => !!n) : []);
+  // (64tass: the macros the source defines, which `.name` calls, and the functions: the name alone first on a line calls
+  // them too)
+  const defined = (re: RegExp) => new Set(tass ? lines.map(l => l.match(re)?.[1]).filter((n): n is string => !!n) : []);
+  const macroSet = defined(/^\s*([A-Za-z_]\w*):?\s+\.(?:macro|segment)\b/), callSet = defined(/^\s*([A-Za-z_]\w*):?\s+\.(?:macro|segment|function|sfunction)\b/);
   lines.forEach((raw, li) => {
     const s = raw.replace(/\r$/, '');
     if (tass) {
@@ -49,9 +53,16 @@ export function asmNames(text: string, lang: ScriptLang): AsmNameAt[] {
         const lead = s.slice(0, i), rest = s.slice(j);
         let def = false, how: AsmNameAt['how'];
         if (tass) {
-          if (i === 0) { def = true; how = /^\s*:?=/.test(rest) ? 'value' : /^\s*\.(macro|segment|function|sfunction)\b/.test(rest) ? 'macro' : 'label'; }
-          else if (/^\s*$/.test(lead) && /^\s*:?=/.test(rest)) { def = true; how = 'value'; }
-          else if (/^\s*$/.test(lead) && /^:(?!=)/.test(rest)) { def = true; how = 'label'; }
+          // the first word on its line, at its start or after white space (64tass takes `  loop lda #1` as it takes
+          // `loop lda #1`): a value, a macro's or a function's name, else a label; not an instruction's mnemonic (of any
+          // processor), a macro's or a function's call without its #, nor a variable changed (`n += 1`)
+          if (/^\s*$/.test(lead)) {
+            if (/^\s*:?=(?!=)/.test(rest)) { def = true; how = 'value'; }
+            else if (/^:?\s*\.(macro|segment|function|sfunction)\b/.test(rest)) { def = true; how = 'macro'; }
+            else if (/^:(?!=)/.test(rest) || (/^(\s|$)/.test(rest) && !/^\s*((::|[-+*/%|&^]|<<|>>)=)/.test(rest) && !TASS_ALL_MNEMONICS.has(name.toLowerCase()) && !callSet.has(name))) {
+              def = true; how = 'label';
+            }
+          }
         } else if (/^\s*$/.test(lead) && /^\s*:(?![:=])/.test(rest)) { def = true; how = 'label'; }
         else if (/^\s*\.(label|const|var)\s+$/.test(lead) && /^\s*=/.test(rest)) { def = true; how = 'value'; }
         else if (/^\s*\.(macro|function|pseudocommand)\s+$/.test(lead)) { def = true; how = 'macro'; }

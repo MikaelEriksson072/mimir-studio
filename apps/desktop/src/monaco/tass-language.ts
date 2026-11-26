@@ -1,5 +1,5 @@
 /* Monarch definition for 64tass (spec 14.3, 11.8): `;` comments and `.comment` … `.endc`, its directives, label
- * definitions (`name:`, `name = value` at the start of a line, the anonymous `+` and `-`), documented and undocumented
+ * definitions (`name:`, `name = value` first on a line, indented too, the anonymous `+` and `-`), documented and undocumented
  * mnemonics by 64tass's names (isb, asr, sbx …), the 65C02's and 65816's, `@w`/`@b`/`@l`, its functions, hardware symbols, numbers, strings. */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { OPC, SYM, TASS_CPU_MNEMONICS, TASS_NAMES } from '@mimir/core';
@@ -33,9 +33,14 @@ export function register64tass(monaco: typeof Monaco): void {
       root: [
         [/;.*$/, 'comment'],
         [/^\s*\.comment\b.*$/, 'comment', '@comment'],
-        // at the start of a line: a label (`name:`, `name` before `=`, `.namespace`, an instruction), or `+` / `-`
+        // first on a line, at its start or after white space (64tass takes `  loop lda #1` so): a label (`name:`, `name`
+        // before `=`, `.namespace`, an instruction), or `+` / `-`; a mnemonic there is the instruction
         [/^[+-](?=\s|$)/, 'label.def'],
-        [/^[a-zA-Z_]\w*:?/, 'label.def'],
+        [/^[a-zA-Z_]\w*:/, 'label.def'],
+        [/^[a-zA-Z_]\w*(?=\s|$|=|;)/, { cases: { '@illegals': 'keyword.illegal', '@mnemonics': 'keyword.mnemonic', '@default': 'label.def' } }],
+        [/^(\s+)([+-])(?=\s|$)/, ['', 'label.def']],
+        [/^(\s+)([a-zA-Z_]\w*:)/, ['', 'label.def']],
+        [/^(\s+)([a-zA-Z_]\w*)(?=\s|$|=|;)/, ['', { cases: { '@illegals': 'keyword.illegal', '@mnemonics': 'keyword.mnemonic', '@default': 'label.def' } }]],
         [/\.[a-zA-Z]+\b/, { cases: { '@directives': 'keyword.directive', '@default': 'identifier' } }],
         [/@[wbl]\b/, 'keyword.mnemonic'],
         [/[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)+/, 'variable.member'],

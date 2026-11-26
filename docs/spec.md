@@ -3868,6 +3868,18 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     `jmp`/`brl`; `@b` håller grenen kort; 65CE02:s egna långa grenar som förut; `bbr`/`bbs` och 65816:ans hopp till en
     annan bank säger fel som i 64tass 1.57. Mätt: varje registerform och de långa grenarna på alla tio processorerna,
     samma bytes som 64tass, och fel där 64tass säger fel.
+  - *64tass etiketter efter blanktecken* (2026-11-26): 64tass läser en rad likadant var den börjar, så en etikett får
+    stå indragen (`  loop lda #1`, `  loop:`, `  x = 5`, `  n += 1`, `  -`/`  +`, `  n .macro`, `.proc`, `.block`,
+    `.struct` …); ett ord utan kolon som är en mnemonic i processorn som gäller är instruktionen, ett som bara en annan
+    processor har en etikett. Ett makros, ett segments eller en funktions namn utan `#` är ett anrop (`name 1`, `lb name`
+    namnger anropets block). En registerbokstav som är ett namn koden har (`x .byte 1` … `lda x`, `asl a` med en etikett
+    `a`, också ett som definieras längre fram) är dess adress, annars registerformen. Utan operand är `asl`, `lsr`,
+    `rol`, `ror` (och 65CE02:s `neg`, `asr`) ackumulatorns, men inte `inc`/`dec` (*no implied addressing mode*).
+    Varningen *label not on left side* (64tass `-Wlabel-left`) där 64tass ger den: en indragen etikett på tre små
+    bokstäver utan kolon som inget använder, ensam eller före en instruktion eller ett anrop. Editorn: färgen, F12,
+    referenser, outline, bokmärkets titel och förslagen tar indragna etiketter (`asmNames`, `splitLabel`); en mnemonic
+    i någon processor räknas inte som etikett där (`TASS_ALL_MNEMONICS`). Mätt med 64tass 1.57: alla formerna (24 fall
+    i `asm-labels.integration.test.ts`), samma bytes, fel där 64tass säger fel och varningen på samma rader.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger

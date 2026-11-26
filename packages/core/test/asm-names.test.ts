@@ -60,6 +60,13 @@ describe('the names in the sources', () => {
     expect(asmNameRefs(t, '64tass', 'start').map(r => r.line)).toEqual([1, 2]);
     expect(asmNameRefs(t, '64tass', 'value').map(r => r.line)).toEqual([3, 8]);
   });
+  it('knows 64tass\'s labels after white space too, not a mnemonic there nor a macro\'s call without its #', () => {
+    const t = '  * = $1000\n  loop lda #1\n  next\n  - nop\n  phx\n  gcc loop\nm .macro\n  nop\n  .endm\n  m\n  f .function a\n  .endf a\n  f 3\n  lb m\n  n += 1\n  k := 2\n  lda #0\n';
+    expect(asmNames(t, '64tass').filter(n => n.def).map(n => [n.name, n.line, n.how])).toEqual([
+      ['loop', 2, 'label'], ['next', 3, 'label'], ['m', 7, 'macro'], ['f', 11, 'macro'], ['lb', 14, 'label'], ['k', 16, 'value'],
+    ]);
+    expect(asmNameRefs(t, '64tass', 'm').map(r => [r.line, r.def])).toEqual([[7, true], [10, false], [14, false]]);
+  });
   it('renames a name over all the files to the same program', () => {
     const files = { 'main.asm': KICK, 'lib.asm': LIB };
     const before = checkAsm(files, 'main.asm', 'kickass');

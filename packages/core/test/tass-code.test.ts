@@ -53,7 +53,12 @@ describe('a line of code in each language', () => {
     expect(splitLabel('loop  sta $d020,x', '64tass')).toEqual({ label: 'loop', lead: 'loop  ', rest: 'sta $d020,x' });
     expect(splitLabel('lda #1', '64tass')).toEqual({ lead: '', rest: 'lda #1' });
     expect(splitLabel('+ rts', '64tass')).toEqual({ label: '+', lead: '+ ', rest: 'rts' });
-    expect(splitLabel('   loop: rts', '64tass')).toEqual({ lead: '   ', rest: 'loop: rts' });
+    // (64tass takes a label after white space as it takes one at the start; a mnemonic of any processor is the
+    // instruction, a register form's too)
+    expect(splitLabel('   loop: rts', '64tass')).toEqual({ label: 'loop', lead: '   loop: ', rest: 'rts' });
+    expect(splitLabel('\tloop\tlda #1', '64tass')).toEqual({ label: 'loop', lead: '\tloop\t', rest: 'lda #1' });
+    expect(splitLabel('  - bne -', '64tass')).toEqual({ label: '-', lead: '  - ', rest: 'bne -' });
+    for (const l of ['  lda #1', '  phx', '  gcc loop', '  bge loop', '  lda x']) expect(splitLabel(l, '64tass').label, l).toBeUndefined();
     expect(splitLabel('   loop: rts', 'kickass')).toEqual({ label: 'loop', lead: '   loop: ', rest: 'rts' });
     expect(codeOfLine('loop sta @w $02 ; x', '64tass')).toBe('sta @w $02');
     expect(codeOfLine('!: sta $02 // x', 'kickass')).toBe('sta $02');
