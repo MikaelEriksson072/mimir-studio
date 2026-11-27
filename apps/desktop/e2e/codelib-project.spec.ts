@@ -143,3 +143,61 @@ test('the project\'s macro file: built from the library as the code calls its ma
   expect(file()).toBe(before);
   expect(readFileSync(join(dir, 'main.asm'), 'utf8')).toContain('#import "macros.asm"');
 });
+
+test('the macro library\'s macros in the Assembler\'s suggestions: one chosen is put in with its parameters to type, and goes in macros.asm', async ({ workDir: work, userData, app, page }) => {
+  const dir = join(work, 'proj'), macros = join(userData, 'library', 'Macros');
+  mkdirSync(dir); mkdirSync(macros, { recursive: true });
+  writeFileSync(join(macros, 'raster.asm'), `${head({ collection: true })}// Sets the border's colour
+.macro SetBorder(c) {
+    lda #c
+    sta $d020
+}
+// Saves A and X
+.macro irq_save() {pha;txa;pha}
+`);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', '', 'start:', '        lda #$00', 'loop:   jmp loop', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const all = page.locator('.scr-editor .view-line');
+  const at = () => all.evaluateAll(ls => ls.findIndex(l => (l.textContent ?? '').replace(/ /g, ' ').trim() === 'lda #$00'));
+  await expect.poll(at).toBeGreaterThanOrEqual(0);
+  await all.nth(await at()).click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+
+  // where an instruction goes: the library's macro among the mnemonics, with its call, what it does and where from
+  const suggest = page.locator('.suggest-widget.visible');
+  await page.keyboard.type('Se');
+  await expect(suggest.locator('.monaco-list-row .label-name')).toContainText(['SetBorder']);
+  await expect(suggest.locator('.monaco-list-row', { hasText: 'SetBorder' })).toContainText('SetBorder(c) — from raster, macro library');
+  // (a part after a _ finds one too)
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type('sav');
+  await expect(suggest.locator('.monaco-list-row .label-name')).toHaveText(['irq_save']);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type('SetB');
+  await expect(suggest.locator('.monaco-list-row .label-name')).toHaveText(['SetBorder']);
+  await shot(page, '48-codelib-suggest');
+  // Tab takes it: the call with its parameter selected to type over
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('2');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => all.evaluateAll(ls => ls.map(l => (l.textContent ?? '').replace(/ /g, ' ').trim()))).toContain('SetBorder(2)');
+  // the project had no macro file: it is made with it, the main source imports it, and the call assembles
+  await expect(toast(page, /SetBorder goes in macros\.asm/)).toBeVisible();
+  const file = () => { try { return readFileSync(join(dir, 'macros.asm'), 'utf8'); } catch { return ''; } };
+  await expect.poll(file).toContain('// Sets the border\'s colour\n.macro SetBorder(c) {');
+  await expect.poll(() => readFileSync(join(dir, 'main.asm'), 'utf8')).toMatch(/^#import "macros\.asm"\n\nBasicUpstart2\(start\)/);
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  // one the project defines itself is not suggested
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('\n.macro irq_save() {nop}\n        irq_');
+  await expect(suggest).toBeHidden();
+});

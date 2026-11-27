@@ -1333,8 +1333,8 @@ describe('collections of the macro library (spec 10.8)', () => {
   it('a collection\'s macro changed in its place (renamed, its decoration kept), out to a file of its own, into a new collection, taken out to the Recycle Bin', async () => {
     const dir = join(tmp(), 'Library'), trashed: string[] = [], lib = store(dir, trashed);
     lib3(dir);
-    const made = clock;
-    await lib.list();
+    // (a file put there by hand: made when its file was)
+    const made = (await lib.list()).items[0].created;
     clock += 3600_000;
     const r = await lib.save({ kind: 'macro', name: 'Border', code: '.macro SetBorder(c) {\n    lda #c\n    sta $d020\n}', lang: 'kickass', description: 'The border\'s colour', color: 'pink', was: { kind: 'macro', file: 'raster.asm', macro: 'SetBorder' }, into: { file: 'raster.asm' } });
     expect(r.macro).toBe('Border');
@@ -1343,7 +1343,8 @@ describe('collections of the macro library (spec 10.8)', () => {
     // out to a file of its own: when it was made the collection's (it had none of its own)
     const own = await lib.save({ kind: 'macro', name: 'Border', code: '.macro Border(c) {\n    lda #c\n    sta $d020\n}', lang: 'kickass', description: 'The border\'s colour', color: 'pink', was: { kind: 'macro', file: 'raster.asm', macro: 'Border' } });
     expect(own.item).toMatchObject({ file: 'Border.asm', description: 'The border\'s colour', color: 'pink' });
-    expect(own.item.created).toBeLessThanOrEqual(made);
+    // (to the millisecond: the file's line keeps it so)
+    expect(Math.abs(own.item.created - made)).toBeLessThan(1);
     expect(own.listing.items.find(i => i.file === 'raster.asm')!.macros!.map(m => m.name)).toEqual(['save']);
     // a macro of its own into a new collection: its file to the Recycle Bin, when it was made kept
     const coll = await lib.save({ kind: 'macro', name: 'Border', code: own.item.code, lang: 'kickass', description: own.item.description, color: 'pink', was: { kind: 'macro', file: 'Border.asm' }, into: { name: 'Colours' } });

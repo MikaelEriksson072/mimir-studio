@@ -30,9 +30,10 @@ import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type As
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
 import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
-import { codeLibMacroAt, codeLibProjectFile, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
+import { codeLibAllMacros, codeLibCall, codeLibMacroAt, codeLibMacros, codeLibProjectFile, codeLibSignature, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
 import { useCodeLib } from '../store/codelib';
 import { AsmMacroPanel, AsmMacroZone, macroZoneRows } from './AsmMacroList';
+import type { AsmLibMacro } from '../monaco/providers';
 import { asmBookmarkSpan } from './AsmBookmarks';
 
 const kr = window.kr;
@@ -1442,10 +1443,22 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const makingMacros = useRef(false);
   /** a file's text as the editor has it now */
   const textNow = (p: string): string | undefined => { const m = models.current[p]; return m && !m.isDisposed() ? m.getValue() : textsRef.current[p]; };
-  /** a file's whole text put in (one step to undo), written a moment later */
+  /** a file's text put in (one step to undo), written a moment later: only what changed, so the caret, a selection and
+   *  a call's places being typed in stay where they are */
   const putText = (p: string, text: string) => {
-    const m = models.current[p];
-    if (m && !m.isDisposed()) { applying.current = true; m.pushStackElement(); m.pushEditOperations([], [{ range: m.getFullModelRange(), text }], () => null); m.pushStackElement(); applying.current = false; }
+    const m = models.current[p], monaco = monacoRef.current;
+    if (m && !m.isDisposed() && monaco) {
+      const old = m.getValue();
+      let a = 0, b = 0;
+      while (a < old.length && a < text.length && old[a] === text[a]) a++;
+      while (b < old.length - a && b < text.length - a && old[old.length - 1 - b] === text[text.length - 1 - b]) b++;
+      const s = m.getPositionAt(a), e = m.getPositionAt(old.length - b);
+      applying.current = true;
+      m.pushStackElement();
+      m.pushEditOperations([], [{ range: new monaco.Range(s.lineNumber, s.column, e.lineNumber, e.column), text: text.slice(a, text.length - b) }], () => null);
+      m.pushStackElement();
+      applying.current = false;
+    }
     setTexts(t => ({ ...t, [p]: text }));
     schedule(p);
   };
@@ -1549,6 +1562,34 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     zones.current = { key, ids, roots, widgets, subs };
   }, [macroBuilt, mf, shown, state, zoneOpen, quiet]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => clearZones(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // the macro library's macros in the editor's suggestions (those the project's sources define themselves left out);
+  // one chosen goes in the macro file: it is made with it when the project has none, added when the calls are off
+  const macroFileOf = () => `${main?.includes('/') ? main.slice(0, main.lastIndexOf('/') + 1) : ''}macros.asm`;
+  const useMacroRef = useRef<(name: string) => void>(() => { });
+  useMacroRef.current = (name: string) => {
+    if (!mf) {
+      const file = macroFileOf();
+      onInfo(`Build ${file}`, { macros: { file, macros: [name], collections: [] } });
+      toast(`${name} goes in ${file}: Mimir builds it from the macro library, and ${main ?? 'the main source'} imports it`, 'ok');
+    } else if (mf.called === false && !mf.macros.includes(name)) {
+      onInfo(`Add ${name} to ${mf.file}`, { macros: { ...mf, macros: [...mf.macros, name] } });
+      toast(`${name} goes in ${mf.file}`, 'ok');
+    }
+  };
+  useEffect(() => {
+    const own = new Set<string>();
+    for (const [p, t] of Object.entries(quiet)) if (p !== mf?.file && ASM_SOURCE.test(p)) for (const d of codeLibMacros(t, lang)) own.add(d.name);
+    for (const t of Object.values(outside)) if (typeof t === 'string') for (const d of codeLibMacros(t, lang)) own.add(d.name);
+    const inFile = new Set(macroBuilt?.macros.map(m => m.name) ?? []), file = mf?.file ?? macroFileOf();
+    const macros: AsmLibMacro[] = (codeLib ? codeLibAllMacros(codeLib.items, lang) : []).filter(e => !own.has(e.name)).map(e => ({
+      name: e.name, how: e.how, sig: codeLibSignature(e, lang), snippet: codeLibCall(e, lang, true), description: e.description, in: e.coll?.name ?? null,
+      note: inFile.has(e.name) ? `In ${file} already.` : mf ? (mf.called !== false ? `It goes in ${file} as the code calls it.` : `Chosen, it is added to ${file}.`) : `Chosen, Mimir builds ${file} with it, and the main source imports it once.`,
+    }));
+    void import('../monaco/providers').then(({ asmContext }) => { asmContext.macros = macros; asmContext.useMacro = n => useMacroRef.current(n); });
+  }, [codeLib, lang, mf, macroBuilt, quiet, outside]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { void import('../monaco/providers').then(({ asmContext }) => { asmContext.macros = []; }); }, []);
+  // (the library read when the Assembler opens: its macros are suggested)
+  useEffect(() => { if (!useCodeLib.getState().listing) void useCodeLib.getState().load(); }, []);
   useEffect(() => {
     ed.current?.updateOptions({ readOnly: !!dbg || shownOutside || shownMacros, readOnlyMessage: { value: shownOutside ? `${foundOut.current[shown!] ?? shown} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : shownMacros ? `${shown} is built by Mimir from the macro library: change the macros there (Macros and code), or add one to it` : 'The program is being debugged: Stop to edit' } });
   }, [dbg, state, shownOutside, shownMacros, shown]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -18,11 +18,44 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
    *  be changed (debugging) */
   padStore: ((line: number, pad: number) => void) | null } = { names: new Map(), pads: [], links: new Set(), kinds: new Map(), padStore: null };
 
+/** a macro of the macro library as the Assembler's editor suggests it (spec 10.8): its name and kind, its call as the
+ *  list shows it and as a snippet (its parameters places to type in), its description, its collection, and what
+ *  choosing it does to the project (it goes in macros.asm) */
+export interface AsmLibMacro { name: string; how: 'macro' | 'pseudocommand' | 'function' | 'segment' | 'sfunction'; sig: string; snippet: string; description: string; in: string | null; note: string }
+
 /** The Assembler's files (models of the `asm` scheme, spec 10.7): the names the program defines (its labels and
  *  constants, as Mimir's check of it last found them) and what each is. */
 export const asmContext: { names: ReadonlyMap<string, number>; kinds: ReadonlyMap<string, string>;
   /** says why a rename was not done (Monaco's standalone editor shows a rename's refusal nowhere) */
-  notify: (msg: string) => void } = { names: new Map(), kinds: new Map(), notify: () => { } };
+  notify: (msg: string) => void;
+  /** the macro library's macros of the project's assembler (those the project defines itself left out), and a macro of
+   *  them chosen in the suggestions: the project gets it (its macro file) */
+  macros: readonly AsmLibMacro[]; useMacro: (name: string) => void } = { names: new Map(), kinds: new Map(), notify: () => { }, macros: [], useMacro: () => { } };
+
+/** the command a library macro chosen in the suggestions runs (asmContext.useMacro) */
+export const USE_MACRO_CMD = 'mimir.codeLib.useMacro';
+
+/**
+ * The macro library's macros the Assembler's editor suggests where the cursor is: where an instruction goes the macros
+ * (Kick Assembler's pseudo commands too) whose names start with what is typed (from two letters on, also a part after a
+ * `_`), their call put in with its parameters to type; in 64tass after a `#` there the call without it. In an operand
+ * the functions. Nothing in a comment or after an instruction's comma. `label` is what is matched, `insert` the snippet.
+ */
+export function asmMacroSuggestions(before: string, typed: string, macros: readonly AsmLibMacro[], lang: ScriptLang): { m: AsmLibMacro; label: string; insert: string }[] {
+  const tass = lang === '64tass';
+  if ((tass ? before.includes(';') : /\/\//.test(before)) || (tass ? TASS_AT_INDEX : AT_INDEX).test(before)) return [];
+  const t = typed.toLowerCase();
+  const fits = (n: string) => { const l = n.toLowerCase(); return (l.startsWith(t) && l !== t) || (t.length >= 2 && l.split('_').slice(1).some(p => p.startsWith(t))); };
+  const call = (m: AsmLibMacro) => m.how === 'macro' || m.how === 'segment' || m.how === 'pseudocommand';
+  const atStatement = tass ? TASS_AT_MNEMONIC : AT_MNEMONIC;
+  // 64tass: `#` typed where an instruction goes, the call without it
+  if (tass && before.endsWith('#') && atStatement.test(before.slice(0, -1))) return macros.filter(m => call(m) && fits(m.name)).map(m => ({ m, label: m.name, insert: m.snippet.replace(/^#/, '') }));
+  if (!typed) return [];
+  if (atStatement.test(before)) return macros.filter(m => call(m) && fits(m.name)).map(m => ({ m, label: m.name, insert: m.snippet }));
+  // an operand: the functions (a name with a dot before it is a scope's, not one)
+  if (/[\w.]$/.test(before)) return [];
+  return macros.filter(m => !call(m) && fits(m.name)).map(m => ({ m, label: m.name, insert: m.snippet }));
+}
 
 /** the command a store's code actions run (scriptContext.padStore) */
 export const PAD_STORE_CMD = 'mimir.script.padStore';
@@ -154,9 +187,12 @@ export function dottedNameAt(line: string, at: number): string | null {
 
 export function registerProviders(monaco: typeof Monaco): void {
   // a script's code: what fits where the cursor is (scriptSuggestions); Tab takes one, Enter always ends the line
+  // (a library macro chosen: the project gets it)
+  monaco.editor.registerCommand(USE_MACRO_CMD, (_: unknown, name: string) => asmContext.useMacro(name));
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerCompletionItemProvider(lang, {
-    triggerCharacters: ['.'],
-    provideCompletionItems(model, pos) {
+    // (`#`: a 64tass macro's call starts with it)
+    triggerCharacters: lang === TASS64 ? ['.', '#'] : ['.'],
+    provideCompletionItems(model, pos, cx) {
       const asm = model.uri.scheme === 'asm';
       if (model.uri.scheme !== 'script' && !asm) return { suggestions: [] };
       const w = model.getWordUntilPosition(pos), line = model.getLineContent(pos.lineNumber);
@@ -166,7 +202,18 @@ export function registerProviders(monaco: typeof Monaco): void {
       const kind = { link: K.Reference, pad: K.Struct, name: K.Variable, hardware: K.Constant, mnemonic: K.Keyword, word: K.Function } as const;
       const order = { link: '0', pad: '1', name: '2', hardware: '3', mnemonic: '4', word: '5' } as const;
       const ctx = asm ? { names: asmContext.names, pads: [], kinds: asmContext.kinds } : scriptContext;
-      return { suggestions: scriptSuggestions(before, w.word, ctx.names, ctx.pads, { ...(asm ? { kinds: asmContext.kinds } : scriptContext), lang: lang === TASS64 ? '64tass' : 'kickass' }).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
+      const l = lang === TASS64 ? '64tass' : 'kickass';
+      // the macro library's macros (the Assembler's sources only): their calls, with what they are and do
+      const lib = asm && !dot ? asmMacroSuggestions(before, w.word, asmContext.macros, l).map(({ m, label, insert }) => ({
+        label, kind: m.how === 'function' || m.how === 'sfunction' ? K.Function : K.Module, insertText: insert, insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range: new monaco.Range(pos.lineNumber, w.startColumn, pos.lineNumber, w.endColumn), sortText: `35${label}`, filterText: label,
+        detail: `${m.sig} — ${m.in ? `from ${m.in}, ` : ''}macro library`,
+        documentation: { value: `**${m.sig}**\n\n${m.description ? m.description.replace(/\n/g, '  \n') : '_No description._'}\n\n_${m.note}_` },
+        command: { id: USE_MACRO_CMD, title: 'Use the library macro', arguments: [m.name] },
+      })) : [];
+      // (a `#` typed: only the macros, never every name for an immediate operand)
+      if (cx.triggerCharacter === '#') return { suggestions: lib };
+      return { suggestions: [...scriptSuggestions(before, w.word, ctx.names, ctx.pads, { ...(asm ? { kinds: asmContext.kinds } : scriptContext), lang: l }).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })), ...lib] };
     },
   });
   // a script in JavaScript: what it is given, and the program's names inside addr("…")

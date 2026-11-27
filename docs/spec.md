@@ -4150,6 +4150,16 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   text är som den är: bara importraden. Filen själv öppnad är samma lista som en sida (samlingarnas egna rader med; ett
   klick fäller ut ett makros kod, att peka visar beskrivningen nedanför), och *Show the code* visar koden Mimir skriver
   (skrivskyddad), *Show the list* listan igen.
+- **I editorns förslag** (`asmMacroSuggestions`, `asmContext.macros`): där en instruktion står föreslås
+  makrobibliotekets makron för projektets assembler (`codeLibAllMacros`, ett per namn; Kick Assemblers pseudokommandon
+  med) vars namn börjar med det som skrivs (från två bokstäver också en del efter `_`: `sav` hittar `irq_save`), bland
+  mnemonics; i ett operandfält funktionerna. Förslaget säger anropet och samlingen, och dess detaljer beskrivningen och
+  vad valet gör. Valt (Tab) sätts anropet in med parametrarna som platser att skriva i (i 64tass `#Namn`; efter ett `#`
+  som skrivits där anropet utan det: `#` öppnar förslagen, aldrig efter ett omedelbart värdes `#`). Projektet får
+  makrot: utan makrofil görs `macros.asm` med det (och importen i huvudkällan), med *Calls* av läggs det till, annars
+  kommer det in som anropat. Makron som projektets källor (eller filer de importerar utifrån) definierar själva
+  föreslås inte. Mimirs ändringar i en öppen fil (importraden, makrofilen) läggs in som bara det som ändrats, så
+  markören och platserna man skriver i står kvar.
 
 ## 11. Kick Assembler-generatorn
 

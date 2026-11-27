@@ -1,7 +1,7 @@
 /* What the script editor suggests where the cursor is (spec 10.3): words that start with what is typed, the right
  * kind for the place, and nothing for an index register. */
 import { describe, expect, it } from 'vitest';
-import { dottedNameAt, jsSuggestions, scriptSuggestions } from '../src/monaco/providers';
+import { asmMacroSuggestions, dottedNameAt, jsSuggestions, scriptSuggestions, type AsmLibMacro } from '../src/monaco/providers';
 
 const names = new Map([['tabell', 0x0939], ['SID_POT_X', 0xd419], ['VIC_SPR0_X', 0xd000], ['loop_0870', 0x0870], ['text_out', 0x2000], ['pad1', 0xc800], ['pad1_end', 0xc900]]);
 const pads = [{ name: 'pad1' }];
@@ -120,5 +120,44 @@ describe('suggestions in a JavaScript script', () => {
     expect(js('const p = pad("', 'pa')).toEqual(['pad1']);
     // not inside another string
     expect(js('print("', 'pr')).toEqual([]);
+  });
+});
+
+describe('the macro library\'s macros in the Assembler\'s suggestions (spec 10.8)', () => {
+  const lib = (lang: 'kickass' | '64tass'): AsmLibMacro[] => [
+    { name: 'SetBorder', how: 'macro', sig: lang === 'kickass' ? 'SetBorder(c)' : 'SetBorder c', snippet: lang === 'kickass' ? 'SetBorder(${1:c})' : '#SetBorder ${1:c}', description: 'The border', in: 'raster', note: '' },
+    { name: 'irq_save', how: 'macro', sig: 'irq_save()', snippet: lang === 'kickass' ? 'irq_save()' : '#irq_save', description: '', in: 'irq_lib', note: '' },
+    { name: 'Move', how: 'pseudocommand', sig: 'Move src : dst', snippet: 'Move ${1:src} : ${2:dst}', description: '', in: null, note: '' },
+    { name: 'Lo', how: 'function', sig: 'Lo(a)', snippet: 'Lo(${1:a})', description: '', in: null, note: '' },
+  ];
+  const kick = (before: string, typed: string) => asmMacroSuggestions(before, typed, lib('kickass'), 'kickass').map(s => s.insert);
+  const tass = (before: string, typed: string) => asmMacroSuggestions(before, typed, lib('64tass'), '64tass').map(s => s.insert);
+
+  it('give the macros where an instruction goes, their calls with places for the parameters', () => {
+    expect(kick('        ', 'se')).toEqual(['SetBorder(${1:c})']);
+    expect(kick('loop:   ', 'M')).toEqual(['Move ${1:src} : ${2:dst}']);
+    // a part after a _, from two letters on
+    expect(kick('        ', 'sa')).toEqual(['irq_save()']);
+    expect(kick('        ', 's')).toEqual(['SetBorder(${1:c})']);
+    // nothing typed, typed in full, in a comment, after an instruction's comma
+    expect(kick('        ', '')).toEqual([]);
+    expect(kick('        ', 'SetBorder')).toEqual([]);
+    expect(kick('        // ', 'Se')).toEqual([]);
+    expect(kick('        lda tab,', 'x')).toEqual([]);
+  });
+
+  it('give the functions in an operand, not the macros', () => {
+    expect(kick('        lda #', 'L')).toEqual(['Lo(${1:a})']);
+    expect(kick('        lda #', 'Se')).toEqual([]);
+    expect(kick('        lda music.', 'L')).toEqual([]);
+  });
+
+  it('(64tass) the call with its # where an instruction goes, without it after a # typed there', () => {
+    expect(tass('        ', 'Se')).toEqual(['#SetBorder ${1:c}']);
+    expect(tass('        #', 'Se')).toEqual(['SetBorder ${1:c}']);
+    expect(tass('        #', '')).toEqual(['SetBorder ${1:c}', 'irq_save', 'Move ${1:src} : ${2:dst}']);
+    // an immediate operand's # is no call
+    expect(tass('        lda #', '')).toEqual([]);
+    expect(tass('        ; ', 'Se')).toEqual([]);
   });
 });

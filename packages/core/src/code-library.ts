@@ -522,6 +522,26 @@ export interface CodeLibBuilt {
   own: string[];
 }
 
+/** a macro of the macro library as a source can use it: its name, parameters and kind, its definition alone, its
+ *  description, its collection (null: a file of its own), and where it is in the library's order */
+export interface CodeLibLibMacro { name: string; params: string[]; how: CodeLibMacro['how']; code: string; description: string; decor?: CodeLibSub['decor']; coll: CodeLibItem | null; order: number }
+/** Every macro of the macro library written for `lang`, once by name (the first of a name in the library's order): a
+ *  collection's each, a file of one macro its macro. */
+export function codeLibAllMacros(items: readonly CodeLibItem[], lang: ScriptLang): CodeLibLibMacro[] {
+  const out: CodeLibLibMacro[] = [], seen = new Set<string>();
+  let order = 0;
+  for (const i of codeLibOrder(items.filter(x => x.kind === 'macro' && langIs(x.lang) === langIs(lang)))) {
+    const subs = i.collection ? i.macros ?? codeLibSubs(i.code, i.lang) : codeLibIsMacro(i.code, i.lang) ? codeLibSubs(i.code, i.lang).slice(0, 1) : [];
+    for (const s of subs) {
+      const o = order++;
+      if (seen.has(s.name)) continue;
+      seen.add(s.name);
+      out.push({ name: s.name, params: s.params, how: s.how, code: s.code, description: i.collection ? s.description : i.description || s.description, ...(s.decor ? { decor: s.decor } : {}), coll: i.collection ? i : null, order: o });
+    }
+  }
+  return out;
+}
+
 /**
  * The project's macro file built from the macro library (`items`, the library's; those of the project's assembler
  * only): the macros `want` adds and the collections it adds whole, those `sources` (the project's own sources, the
@@ -532,16 +552,7 @@ export interface CodeLibBuilt {
 export function codeLibProjectFile(items: readonly CodeLibItem[], want: { macros: readonly string[]; collections: readonly string[]; called?: boolean }, sources: readonly string[], lang: ScriptLang, file: string): CodeLibBuilt {
   const tass = langIs(lang) === '64tass';
   // the library's macros by name (the first of a name in the library's order)
-  type Entry = { name: string; params: string[]; how: CodeLibMacro['how']; code: string; description: string; decor?: CodeLibSub['decor']; coll: CodeLibItem | null; order: number };
-  const all: Entry[] = [], byName = new Map<string, Entry>();
-  for (const i of codeLibOrder(items.filter(x => x.kind === 'macro' && langIs(x.lang) === langIs(lang)))) {
-    const subs = i.collection ? i.macros ?? codeLibSubs(i.code, i.lang) : codeLibIsMacro(i.code, i.lang) ? codeLibSubs(i.code, i.lang).slice(0, 1) : [];
-    for (const s of subs) {
-      const e: Entry = { name: s.name, params: s.params, how: s.how, code: s.code, description: i.collection ? s.description : i.description || s.description, ...(s.decor ? { decor: s.decor } : {}), coll: i.collection ? i : null, order: all.length };
-      all.push(e);
-      if (!byName.has(s.name)) byName.set(s.name, e);
-    }
-  }
+  const byName = new Map(codeLibAllMacros(items, lang).map(e => [e.name, e]));
   const own = new Set<string>();
   for (const s of sources) for (const d of codeLibMacros(s, lang)) own.add(d.name);
   const why = new Map<string, CodeLibBuilt['macros'][number]['why']>();
