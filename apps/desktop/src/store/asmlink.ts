@@ -3,7 +3,7 @@
  * Graphics, Memory, the inspector and the Explorer, show it); the window asks it to show an address's line in the
  * sources, to run or build, and to write what is not written yet before the window closes or the project does. */
 import { create } from 'zustand';
-import type { Addr, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram, CodeLibKind, ScriptLang } from '@mimir/core';
+import type { Addr, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram, CodeLibBuilt, CodeLibKind, ScriptLang } from '@mimir/core';
 import type { LibraryRef } from './library';
 
 /** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
@@ -56,6 +56,8 @@ interface AsmLinkState {
   /** the source that defines a macro (a pseudo command, a function, a segment) of that name (null: none does), for
    *  the macro library (spec 10.8) */
   macroDefined: (name: string) => string | null;
+  /** the project's macro file as Mimir built it last (what is in it and why; null: the project has none) */
+  macroFile: (CodeLibBuilt & { file: string }) | null;
   /** the caret's line in the Assembler, and the lines selected (`to` > `from`: more than one) */
   caret: { file: string; line: number } | null;
   selection: { file: string; from: number; to: number } | null;
@@ -78,7 +80,7 @@ interface AsmLinkState {
 const none = () => Promise.resolve();
 const noBuild = () => Promise.resolve(null);
 /** no folder open: no text files, no caret */
-const NO_TEXT = { textFiles: [], linesOf: () => null, titleAt: (file: string, line: number) => `${file}:${line}`, macroDefined: () => null, caret: null, selection: null };
+const NO_TEXT = { textFiles: [], linesOf: () => null, titleAt: (file: string, line: number) => `${file}:${line}`, macroDefined: () => null, macroFile: null, caret: null, selection: null };
 export const useAsmLink = create<AsmLinkState>(set => ({
   program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], live: null, flush: none, buildPrg: noBuild,
   set: p => set(p),

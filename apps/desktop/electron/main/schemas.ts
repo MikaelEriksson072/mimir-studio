@@ -179,6 +179,14 @@ const asmInfo = z.object({
     file: inFolder, line: z.number().int().min(1).max(10_000_000), end: z.number().int().min(1).max(10_000_000).optional().catch(undefined),
     title: z.string().max(200), text: z.string().max(20000), color: z.string().max(16).refine(isBookmarkColor).optional().catch(undefined),
   })).optional(),
+  /** the project's macro file Mimir builds from the macro library (spec 10.8): its path in the folder, the macros and
+   *  collections added (by name), whether the macros the code calls go in too */
+  macros: z.object({
+    file: inFolder.refine(p => /\.\w+$/.test(p), 'a file\'s path'),
+    macros: z.array(z.string().max(100)).max(5000),
+    collections: z.array(z.string().max(100)).max(1000),
+    called: z.boolean().optional(),
+  }).nullable().optional().catch(undefined),
 });
 
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */

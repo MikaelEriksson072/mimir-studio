@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkAsm } from '../src/asm-project';
-import { codeLibCall, codeLibFileText, codeLibIsMacro, codeLibSubText, codeLibTake, codeLibWrap } from '../src/code-library';
+import { codeLibCall, codeLibFileText, codeLibIsMacro, codeLibProjectFile, codeLibSubText, codeLibTake, codeLibWrap, readCodeLibFile } from '../src/code-library';
 import { find64tass, findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
 import type { ScriptLang, Vfs } from '../src/types';
 
@@ -97,3 +97,14 @@ for (const c of CASES) {
     }, 60_000);
   });
 }
+
+// the project's macro file Mimir builds, imported once by the main source, with the real Kick Assembler
+describe.skipIf(!kick)('the project\'s macro file with the real Kick Assembler', () => {
+  it('builds as the code written out', async () => {
+    const lib = [readCodeLibFile('macro', 'raster.asm', COLLECTION, { changed: 1 })!];
+    const main = '#import "macros.asm"\n* = $1000\n        Both(2)\n        SetBorder(0)\n        rts\n';
+    const b = codeLibProjectFile(lib, { macros: [], collections: [] }, [main], 'kickass', 'macros.asm');
+    expect(b.macros.map(m => m.name)).toEqual(['SetBorder', 'Both']);
+    expect([...await build('kickass', { 'main.asm': main, 'macros.asm': b.text })]).toEqual([...await build('kickass', { 'main.asm': COLLECTION_INLINE })]);
+  }, 60_000);
+});

@@ -516,7 +516,14 @@ export interface AsmProjectInfo {
   args?: string | null;
   /** the bookmarks in the sources, by an id of their own (they move with their lines as the code is edited) */
   bookmarks?: Record<string, AsmBookmark>;
+  /** the project's macro file, which Mimir builds from the macro library (missing or null: none) */
+  macros?: AsmMacroFile | null;
 }
+/** The project's macro file (spec 10.8): one file in the project's folder that Mimir builds from the macro library as
+ *  the code changes, which the main source imports once in place of the library's files: the macros added (`macros`,
+ *  by name; `collections`: all of theirs, by name) and, unless `called` is false, those the code calls and does not
+ *  define itself; with the macros they use. */
+export interface AsmMacroFile { file: string; macros: string[]; collections: string[]; called?: boolean }
 /** A bookmark in an Assembler project's sources, as a Bookmark is on an address: on a line of a file (`end`: the last
  *  line of its area; missing: the line only), with its title, note and colour. Kept in the project file. */
 export interface AsmBookmark { file: string; line: number; end?: number; title: string; text: string; color?: string }

@@ -5186,7 +5186,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           onDiskFileMenu={(f, x, y) => fileScriptMenu(`dir/${f.track}/${f.sector}`, f.name, x, y)} onTapeFileMenu={(f, x, y) => fileScriptMenu(`tape/${tape?.img.files.indexOf(f)}`, f.name, x, y)}
           asmBm={asmMode ? { bookmarks: asmBms, selected: asmBmSel, onSelect: setAsmBmSel, onGo: id => asmAsk2('bmGo', { id }), onAdd: () => asmAsk2('bmAdd'), onEdit: editAsmBookmark, onDelete: deleteAsmBookmark,
             editing: asmBmEdit ? { ...asmBmEdit, onSave: saveAsmBookmark, onCancel: () => setAsmBmEdit(null), onPreview: (file, line, end) => asmAsk2('line', { at: file, line, end }) } : null } : null}
-          codelib={asmMode ? { desktop: !!kr, lang: stored.asm?.lang ?? 'kickass', onInsert: insertCodeLib, onNew: (kind, into) => asmAsk2('codeLib', { libKind: kind, ...(into ? { libInto: into } : {}) }), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast } : undefined}
+          codelib={asmMode ? { desktop: !!kr, lang: stored.asm?.lang ?? 'kickass', onInsert: insertCodeLib, onNew: (kind, into) => asmAsk2('codeLib', { libKind: kind, ...(into ? { libInto: into } : {}) }), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast,
+            // the project's macro file (spec 10.8): kept in the project (undo takes a change back), a new one beside the main source
+            project: { macros: stored.asm?.macros ?? null, defaultFile: `${asmMain?.includes('/') ? asmMain.slice(0, asmMain.lastIndexOf('/') + 1) : ''}macros.asm`,
+              onChange: (label, m) => update(label, d => { if (d.asm) d.asm.macros = m; }), onOpen: file => asmAsk2('line', { at: file, line: 1 }) } } : undefined}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),

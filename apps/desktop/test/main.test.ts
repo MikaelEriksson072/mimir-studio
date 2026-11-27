@@ -339,6 +339,16 @@ describe('schemas', () => {
     expect(projectSchema.safeParse({ ...p, notes: { 0x0810: 'not a note' } }).success).toBe(false);
   });
 
+  it('reads an Assembler project\'s macro file (spec 10.8): kept as it is, one outside the folder left out', () => {
+    const p = { ...demoProject(), asm: { lang: 'kickass' as const, main: 'src/main.asm', macros: { file: 'src/macros.asm', macros: ['Black'], collections: ['irq_lib'], called: false } } };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(deserializeProject(serializedProjectSchema.parse(json) as SerializedProject).asm!.macros).toEqual({ file: 'src/macros.asm', macros: ['Black'], collections: ['irq_lib'], called: false });
+    json.asm.macros.file = '../macros.asm';
+    expect(serializedProjectSchema.parse(json).asm?.macros).toBeUndefined();
+    json.asm.macros = { file: 'src' };
+    expect(serializedProjectSchema.parse(json).asm?.macros).toBeUndefined();
+  });
+
   it('reads the user scripts with what their scratchpads hold, and older files without them', () => {
     const init = { a: 0x10, x: 3, p: 0x25, zp: [{ at: 0xfb, value: 0x0830, word: true }, { at: 0x02, value: 0x7f }] };
     const script = { id: 's1', name: 'decrypt', lang: 'kickass' as const, source: '* = $c000\nstart: rts', safe: true, init, pads: [{ name: 'pad1', start: 0xc800, size: 4, bytes: new Uint8Array([1, 2, 3, 4]) }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff, data: new Uint8Array([9, 8]), src: { form: 'hex' as const, text: '09 08' } }] };

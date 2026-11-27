@@ -4128,6 +4128,20 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   `mimir-`-rader). *Again* skriver samlingen till filen den senast exporterades till eller importerades från (CRLF
   behålls), men inte över en fil som ändrats sedan Mimir skrev eller läste den utan att fråga (*Overwrite it* / *Keep
   it*). En assemblers makron i en fil.
+- **Projektets makrofil** (`AsmProjectInfo.macros`, `AsmMacroFile`; i stället för många importer): en fil i
+  Assembler-projektet, `macros.asm` bredvid huvudkällan, som Mimir bygger ur makrobiblioteket i realtid
+  (`codeLibProjectFile`), och som huvudkällan importerar en gång (`#import "macros.asm"`, `.include` i 64tass; raden
+  läggs överst efter de importer den har när filen görs). I den: makrona som lagts till den (*To macros.asm* på ett
+  makro, *All to macros.asm* på en samling: dess alla), makrona som koden anropar och inte definierar själv
+  (`codeLibCalled`: Kick Assemblers `Namn(…)` eller ett pseudokommando först i en sats, 64tass `#Namn`/`.Namn` eller
+  `Namn(…)`; inte en etikett, en kommentar eller en sträng; *Calls* av: bara de tillagda), och de makron de använder
+  (`codeLibNeeds` över hela biblioteket); en samlings egna rader (`.const`, `.var` …, `codeLibRest`) med dess makron;
+  inget som projektets källor definierar själva (det sägs). Den byggs om när koden, biblioteket (ett makro ändrat,
+  mappen läst igen) eller listan ändras, skrivs bara när den blir en annan, och är skrivskyddad i editorn (Mimir skriver
+  den: ändra makrot i biblioteket). Vyn visar den överst i makrobiblioteket (hur många, varför: tillagda, anropade,
+  använda; vad som saknas i biblioteket; *Stop*: filen och importen står kvar), och listan märker makrona som är i den.
+  Sparas i projektfilen (ångra tar tillbaka en ändring). Mätt: filen som Mimir bygger, importerad av riktiga
+  KickAss.jar, ger samma bytes som koden utskriven.
 
 ## 11. Kick Assembler-generatorn
 

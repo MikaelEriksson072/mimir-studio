@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   CODE_LIB_LETTERS, codeLibGroups, codeLibHit, codeLibMacros, codeLibMatches, codeLibNeeds, codeLibSignature, codeLibSubItems, isBookmarkColor, LANG_TITLE,
-  type CodeLibEntry, type CodeLibItem, type CodeLibKind, type CodeLibMacro, type ScriptLang,
+  type AsmMacroFile, type CodeLibBuilt, type CodeLibEntry, type CodeLibItem, type CodeLibKind, type CodeLibMacro, type ScriptLang,
 } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
@@ -55,9 +55,15 @@ export interface CodeLibViewProps {
   onMenu: (x: number, y: number, items: MenuItem[]) => void;
   onCopy: (text: string, what: string) => void;
   toast: (msg: string, kind?: 'info' | 'ok' | 'warn' | 'err') => void;
+  /** the project's macro file (an Assembler project's): what the project keeps of it, where a new one goes (beside the
+   *  main source), a change of it, its file opened */
+  project?: { macros: AsmMacroFile | null; defaultFile: string; onChange: (label: string, m: AsmMacroFile | null) => void; onOpen: (file: string) => void };
 }
 
-export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, toast }: CodeLibViewProps) {
+/** what the project's macro file does with a macro: it is added to it, or in it as the code calls it or another uses it */
+interface FileMark { file: string; added: boolean; why: CodeLibBuilt['macros'][number]['why'] | null; onAdd: () => void; onTakeOut: () => void }
+
+export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, toast, project }: CodeLibViewProps) {
   const { listing, loading, error, kind, q, color, open, expanded, flat, set, setFlat, toggle, load, remove, importFiles, exportMacros } = useCodeLib();
   const defined = useAsmLink(s => s.macroDefined);
   // (read when the view is shown: the folders may have changed outside Mimir)
@@ -168,12 +174,35 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
     }, e => toast(`The files were not put in: ${errorText(e)}`, 'err'));
   };
 
+  /* ---- the project's macro file: the macros added to it, and those in it as the code calls them ---- */
+  const built = useAsmLink(s => s.macroFile);
+  const pm = project?.macros ?? null;
+  const fileName = (pm?.file ?? project?.defaultFile ?? 'macros.asm').split('/').pop()!;
+  const inFile = useMemo(() => new Map((built?.macros ?? []).map(m => [m.name, m])), [built]);
+  /** the project's macro file with `names` (and collections `colls`) added or taken out (made when there is none) */
+  const fileChange = (names: string[], colls: string[], add: boolean) => {
+    if (!project) return;
+    const base: AsmMacroFile = pm ?? { file: project.defaultFile, macros: [], collections: [] };
+    const without = (a: string[], b: string[]) => a.filter(x => !b.includes(x));
+    const next = { ...base, macros: add ? [...new Set([...base.macros, ...names])] : without(base.macros, names), collections: add ? [...new Set([...base.collections, ...colls])] : without(base.collections, colls) };
+    const what = [...names, ...colls].join(', ');
+    project.onChange(add ? `Add ${what} to ${fileName}` : `Take ${what} out of ${fileName}`, next);
+    toast(add ? `${what} goes in ${fileName}${pm ? '' : ': Mimir builds it from the library, and the main source imports it'}` : `${what} is out of ${fileName}${next.called !== false ? ' (it stays while the code calls it)' : ''}`, 'ok');
+  };
+  const markOf = (e: CodeLibEntry): FileMark | undefined => {
+    const m = itemMacro(e);
+    if (!project || !m || e.kind !== 'macro' || (lang && e.lang !== lang)) return undefined;
+    const b = inFile.get(m.name);
+    return { file: fileName, added: !!pm?.macros.includes(m.name), why: b?.why ?? null, onAdd: () => fileChange([m.name], [], true), onTakeOut: () => fileChange([m.name], [], false) };
+  };
+
   const T = CODE_LIB_TITLE[kind];
   const row = (e: CodeLibEntry, nested: boolean) => {
     const ref = refOf(e), on = sameCodeLib(open, ref);
     const coll = collOf(e), m = itemMacro(e);
     const needs = coll && e.macro ? codeLibNeeds(coll.macros ?? [], e.macro, e.lang) : [];
     return <EntryRow key={`${e.file}/${e.macro ?? ''}`} entry={e} nested={nested} showIn={!nested && !!e.in} on={on} q={q} lang={lang} macro={m} needs={needs} primary={primary(e)}
+      mark={pm ? markOf(e) : undefined} body={markOf(e)}
       rowRef={on ? openRef : undefined} onToggle={() => set({ open: on ? null : ref })} onInsert={how => onInsert(e, how)} onCopy={() => onCopy(e.code, `Copied ${e.name}`)}
       onEdit={() => edit(e)} onMenu={(x, y) => menu(e, x, y)} />;
   };
@@ -215,6 +244,7 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
           <button key={l} type="button" disabled={!letters.has(l)} aria-label={`Go to ${l === '#' ? 'the names that start with no letter' : l}`} onClick={() => jump(l)}>{l}</button>))}
       </div>}
       {error && <p className="side-hint err-text" role="alert">{error}</p>}
+      {project && kind === 'macro' && lang && <ProjectMacros project={project} built={built} lang={lang} fileName={fileName} onTakeOut={(names, colls) => fileChange(names, colls, false)} />}
       <div className="cl-list" ref={listRef} role="list" aria-label={kind === 'macro' ? 'The macro library' : 'The code library'}>
         {groups.map(g => (
           <div key={g.letter} className="cl-group" role="group" aria-label={g.letter} ref={el => { groupRef.current[g.letter] = el; }}>
@@ -238,6 +268,9 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
                     <div className="cl-coll-bar">
                       <button className="btn small" disabled={!lang} title={lang ? `Put the line that imports ${c.file} at the top of the source: all its macros are the project's` : 'Open an Assembler project to put it in a source'} onClick={() => onInsert(c, 'import')}><Icon name="play" size={12} />Import it</button>
                       <button className="btn small" title={`Add a macro to ${c.name}, of the lines selected in the Assembler`} onClick={() => onNew('macro', c.file)}><Icon name="plus" size={12} />Add</button>
+                      {project && lang === c.lang && (pm?.collections.includes(c.name)
+                        ? <button className="btn small on" title={`All of ${c.name}'s macros are in ${fileName}: a click takes them out (those the code calls stay)`} onClick={() => fileChange([], [c.name], false)}><Icon name="check" size={12} />In {fileName}</button>
+                        : <button className="btn small" title={`Put all of ${c.name}'s macros in ${fileName}, the file Mimir builds for this project`} onClick={() => fileChange([], [c.name], true)}><Icon name="plus" size={12} />All to {fileName}</button>)}
                       <button className="btn small" title="Export it, or some of its macros, to a file or another collection" onClick={() => set({ exporting: [{ kind: c.kind, file: c.file }] })}><Icon name="upload" size={12} />Export…</button>
                       {was && <button className="btn small" title={`Write it to ${was.path} again (where it was exported to or read from)`} aria-label={`Export ${c.name} again`} onClick={() => exportAgain(c)}><Icon name="refresh" size={12} />Again</button>}
                       <span className="grow" />
@@ -273,8 +306,10 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
 
 /** a row of the list: an item, or a collection's macro (`nested` in its collection; `showIn`: its collection's name
  *  beside it, as A–Ö lists it), opened on a click */
-function EntryRow({ entry: i, nested, showIn, on, q, lang, macro: m, needs, primary, rowRef, onToggle, onInsert, onCopy, onEdit, onMenu }: {
+function EntryRow({ entry: i, nested, showIn, on, q, lang, macro: m, needs, primary, mark, body, rowRef, onToggle, onInsert, onCopy, onEdit, onMenu }: {
   entry: CodeLibEntry; nested: boolean; showIn: boolean; on: boolean; q: string; lang: ScriptLang | null; macro: CodeLibMacro | null; needs: string[]; primary: 'code' | 'call';
+  /** the project's macro file has it (the row says so); `body`: what its body offers for the file */
+  mark?: FileMark; body?: FileMark;
   rowRef?: React.Ref<HTMLDivElement>; onToggle: () => void; onInsert: (how: 'code' | 'call') => void; onCopy: () => void; onEdit: () => void; onMenu: (x: number, y: number) => void;
 }) {
   const sig = m ? codeLibSignature(m, i.lang) : null, hit = codeLibHit(i, q), first = i.description.split('\n')[0];
@@ -285,17 +320,18 @@ function EntryRow({ entry: i, nested, showIn, on, q, lang, macro: m, needs, prim
         onClick={e => { if (e.detail < 2) onToggle(); }} onDoubleClick={() => { if (lang) onInsert(primary); }}
         onContextMenu={e => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
         <span className="cl-name-row"><span className="cl-name">{i.name}</span>{showIn && <span className="cl-in" title={`In the collection ${i.in}`}>{i.in}</span>}{other && <span className="cl-lang" title={`Written for ${LANG_TITLE[i.lang]}: the project is ${LANG_TITLE[lang!]}`}>{i.lang === '64tass' ? '64tass' : 'Kick'}</span>}
+          {mark && (mark.added || mark.why) && <span className={cx('cl-infile', mark.added && 'added')} title={`In ${mark.file}: ${mark.added ? 'added to it' : mark.why === 'called' ? 'the code calls it' : 'a macro in it uses it'}`}><Icon name="check" size={10} />{mark.file}</span>}
           <span className="cl-date mono" title={`Made ${codeLibTime(i.created)}${i.changed > i.created + 60_000 ? `, changed ${codeLibTime(i.changed)}` : ''}`}>{codeLibTime(i.created, true)}</span></span>
         {sig && sig !== i.name && <span className="cl-sig mono">{sig}</span>}
         {first ? <span className="cl-desc">{first}</span> : !sig || sig === i.name ? <span className="cl-desc muted">{i.code.split('\n').find(l => l.trim())?.trim() ?? ''}</span> : null}
         {hit === 'code' && <span className="cl-hit small">found in the code</span>}
       </button>
-      {on && <ItemBody item={i} lang={lang} macro={m} needs={needs} primary={primary} onInsert={onInsert} onCopy={onCopy} onEdit={onEdit} onMore={onMenu} />}
+      {on && <ItemBody item={i} lang={lang} macro={m} needs={needs} primary={primary} mark={body} onInsert={onInsert} onCopy={onCopy} onEdit={onEdit} onMore={onMenu} />}
     </div>);
 }
 
 /** an item opened in the list: its description, its code, when it was made and where it came from, and what to do */
-function ItemBody({ item: i, lang, macro, needs, primary, onInsert, onCopy, onEdit, onMore }: { item: CodeLibEntry; lang: ScriptLang | null; macro: CodeLibMacro | null; needs: string[]; primary: 'code' | 'call';
+function ItemBody({ item: i, lang, macro, needs, primary, mark, onInsert, onCopy, onEdit, onMore }: { item: CodeLibEntry; lang: ScriptLang | null; macro: CodeLibMacro | null; needs: string[]; primary: 'code' | 'call'; mark?: FileMark;
   onInsert: (how: 'code' | 'call') => void; onCopy: () => void; onEdit: () => void; onMore: (x: number, y: number) => void }) {
   const [all, setAll] = useState(false);
   const lines = i.code.split('\n'), long = lines.length > 14 && !all;
@@ -316,12 +352,59 @@ function ItemBody({ item: i, lang, macro, needs, primary, onInsert, onCopy, onEd
           <button className={cx('btn small', primary === 'call' && 'primary')} disabled={!lang} title={no || `Put ${codeLibSignature(macro, i.lang)} where the caret is (Tab goes from parameter to parameter)`} onClick={() => onInsert('call')}><Icon name="play" size={12} />Insert call</button>
           <button className={cx('btn small', primary === 'code' && 'primary')} disabled={!lang} title={no || `Put the macro's definition in the source, at the caret's line${needs.length ? `, with ${needs.join(', ')} it uses` : ''}`} onClick={() => onInsert('code')}>Insert definition</button>
         </> : <button className="btn small primary" disabled={!lang} title={no || 'Put the code in the source, at the caret\'s line'} onClick={() => onInsert('code')}><Icon name="play" size={12} />Insert</button>}
+        {mark && (mark.added
+          ? <button className="btn small on" title={`It is added to ${mark.file}: a click takes it out (it stays while the code calls it)`} onClick={mark.onTakeOut}><Icon name="check" size={12} />In {mark.file}</button>
+          : mark.why ? <span className="small muted cl-why" title={`Mimir puts it in ${mark.file} because ${mark.why === 'called' ? 'the code calls it' : 'a macro in it uses it'}`}><Icon name="check" size={11} />In {mark.file} ({mark.why === 'called' ? 'called' : 'used'})</span>
+            : <button className="btn small" title={`Put it in ${mark.file}, the file Mimir builds for this project from the library (the main source imports it once)`} onClick={mark.onAdd}><Icon name="plus" size={12} />To {mark.file}</button>)}
         <button className="btn small" onClick={onCopy} title="Copy the code"><Icon name="copy" size={12} />Copy</button>
         <button className="btn small" onClick={onEdit}><Icon name="pencil" size={12} />Edit</button>
         <button className="icon-btn" aria-label={`More for ${i.name}`} title="More" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); onMore(r.left, r.bottom + 2); }}><Icon name="more" size={14} /></button>
       </div>
     </div>
   );
+}
+
+/** The project's macro file at the top of the macro library: none yet (what it is, and a button that makes it), or its
+ *  file, how many macros are in it and why (added, called, used), the calls on or off, what is in it to see and take
+ *  out, the names added that the library has not, and Stop. */
+function ProjectMacros({ project, built, lang, fileName, onTakeOut }: { project: NonNullable<CodeLibViewProps['project']>; built: (CodeLibBuilt & { file: string }) | null; lang: ScriptLang; fileName: string;
+  onTakeOut: (names: string[], colls: string[]) => void }) {
+  const [list, setList] = useState(false);
+  const pm = project.macros;
+  if (!pm) return (
+    <div className="cl-proj off">
+      <span className="small">One file of macros for this project, built from the library as the code calls them: one {lang === '64tass' ? '.include' : '#import'} in place of many.</span>
+      <button className="btn small" title={`Mimir writes ${project.defaultFile} with the library's macros the code calls and those you add (and the macros they use), and the main source imports it once`}
+        onClick={() => project.onChange(`Build ${fileName}`, { file: project.defaultFile, macros: [], collections: [] })}><Icon name="plus" size={12} />Build {fileName}</button>
+    </div>);
+  const n = built?.macros.length ?? 0, called = pm.called !== false;
+  const counts = { added: 0, called: 0, used: 0 };
+  for (const m of built?.macros ?? []) counts[m.why]++;
+  return (
+    <div className="cl-proj" role="region" aria-label="The project's macro file">
+      <div className="cl-proj-row">
+        <button type="button" className="cl-proj-name" aria-expanded={list} title={`${pm.file}: built by Mimir from the library. A click shows what is in it`} onClick={() => setList(!list)}>
+          <Icon name="chevron" size={11} className={cx('cl-chev', list && 'on')} /><Icon name="doc" size={12} /><span className="mono">{fileName}</span>
+          <span className="lib-n">{n} macro{n === 1 ? '' : 's'}</span></button>
+        <span className="grow" />
+        <label className="check small" title="Also the library's macros the code calls and does not define: they go in as you type the calls"><input type="checkbox" checked={called} onChange={e => project.onChange(e.target.checked ? 'Calls in the macro file' : 'No calls in the macro file', { ...pm, ...(e.target.checked ? { called: undefined } : { called: false }) })} /> Calls</label>
+        <button className="icon-btn" aria-label={`Open ${fileName}`} title={`Open ${pm.file} (read only: Mimir writes it)`} onClick={() => project.onOpen(pm.file)}><Icon name="code" size={13} /></button>
+        <button className="icon-btn" aria-label={`Stop building ${fileName}`} title={`Stop building ${pm.file}: the file and its import stay as they are`} onClick={() => project.onChange(`Stop building ${fileName}`, null)}><Icon name="x" size={13} /></button>
+      </div>
+      <div className="small muted cl-proj-sum">{n ? [counts.added && `${counts.added} added`, counts.called && `${counts.called} called`, counts.used && `${counts.used} used by them`].filter(Boolean).join(' · ') : called ? 'Call a library macro in the code, or add one (To ' + fileName + '), and it goes in.' : 'Add macros to it (To ' + fileName + ').'}</div>
+      {!!built?.missing.length && <div className="small warn-text cl-proj-sum">Not in the library: {built.missing.join(', ')} <button type="button" className="linkish" onClick={() => onTakeOut(built.missing.filter(m => pm.macros.includes(m)), built.missing.filter(m => pm.collections.includes(m)))}>Take out</button></div>}
+      {!!built?.own.length && <div className="small muted cl-proj-sum" title="The project's own sources define these: the file leaves them out">The project defines {built.own.join(', ')} itself</div>}
+      {list && <div className="cl-proj-list" role="list" aria-label={`What is in ${fileName}`}>
+        {(built?.macros ?? []).map(m => (
+          <div key={m.name} role="listitem" className="cl-proj-item">
+            <span className="mono">{m.name}</span><span className="muted small">{m.why === 'added' ? 'added' : m.why === 'called' ? 'called' : 'used'}{m.in ? ` · ${m.in}` : ''}</span>
+            <span className="grow" />
+            {pm.macros.includes(m.name) && <button className="icon-btn" aria-label={`Take ${m.name} out of ${fileName}`} title="Take it out (it stays while the code calls it)" onClick={() => onTakeOut([m.name], [])}><Icon name="x" size={11} /></button>}
+          </div>))}
+        {pm.collections.map(c => <div key={`c:${c}`} role="listitem" className="cl-proj-item"><Icon name="library" size={11} /><span>{c}</span><span className="muted small">all its macros</span><span className="grow" />
+          <button className="icon-btn" aria-label={`Take ${c} out of ${fileName}`} onClick={() => onTakeOut([], [c])}><Icon name="x" size={11} /></button></div>)}
+      </div>}
+    </div>);
 }
 
 /** the search asked for (the palette's Search the macro library: the view's search field focused) */

@@ -29,7 +29,7 @@ import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type As
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
 import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
-import { codeLibMacroAt, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
+import { codeLibMacroAt, codeLibProjectFile, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
 import { useCodeLib } from '../store/codelib';
 import { asmBookmarkSpan } from './AsmBookmarks';
 
@@ -1430,9 +1430,64 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const shownOutside = !!shown && typeof outside[shown] === 'string';
   /** the tabs of files from outside the folder, and where each was found (the tab row marks them read only) */
   const outsideTabs = useMemo(() => new Map(tabs.open.filter(p => isOutsidePath(p) || typeof outside[p] === 'string').map(p => [p, foundOut.current[p] ?? p] as const)), [tabs.open, outside]);
+  /* ---- the project's macro file (spec 10.8): Mimir builds it from the macro library as the code calls the library's
+   * macros and as they are added, writes it when it changes (read only in the editor), and the main source imports it
+   * once in place of the library's files ---- */
+  const mf = info.macros ?? null;
+  const shownMacros = !!mf && shown === mf.file;
+  const codeLib = useCodeLib(s => s.listing);
+  useEffect(() => { if (mf && !useCodeLib.getState().listing) void useCodeLib.getState().load(); }, [mf]);
+  const makingMacros = useRef(false);
+  /** a file's text as the editor has it now */
+  const textNow = (p: string): string | undefined => { const m = models.current[p]; return m && !m.isDisposed() ? m.getValue() : textsRef.current[p]; };
+  /** a file's whole text put in (one step to undo), written a moment later */
+  const putText = (p: string, text: string) => {
+    const m = models.current[p];
+    if (m && !m.isDisposed()) { applying.current = true; m.pushStackElement(); m.pushEditOperations([], [{ range: m.getFullModelRange(), text }], () => null); m.pushStackElement(); applying.current = false; }
+    setTexts(t => ({ ...t, [p]: text }));
+    schedule(p);
+  };
+  /** the line that imports the macro file at the top of the main source, after the imports it has (when it has none
+   *  of it): its path from the main source's folder */
+  const importMacros = (file: string) => {
+    const at = main, text = at ? textNow(at) : undefined;
+    if (!at || text == null || at === file) return;
+    const from = at.includes('/') ? at.slice(0, at.lastIndexOf('/') + 1) : '';
+    const rel = file.startsWith(from) ? file.slice(from.length) : `${'../'.repeat(from.split('/').length - 1)}${file}`;
+    const lines = text.split('\n');
+    const has = new RegExp(`^\\s*(?:#import(?:once)?|\\.include)\\s+"(?:\\./)?${rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`);
+    if (lines.some(l => has.test(l))) return;
+    let last = 0;
+    lines.forEach((l, i) => { if (/^\s*(?:#import(?:once)?|\.include|\.import\s+source)\b/.test(l)) last = i + 1; });
+    const line = lang === '64tass' ? `.include "${rel}"` : `#import "${rel}"`;
+    lines.splice(last, 0, ...(last || !lines[0]?.trim() ? [line] : [line, '']));
+    putText(at, lines.join('\n'));
+    toast(`${at} imports ${rel} (line ${last + 1}): the macros Mimir puts in it are the project's`, 'ok');
+  };
+  const macrosImported = useRef(new Set<string>());
   useEffect(() => {
-    ed.current?.updateOptions({ readOnly: !!dbg || shownOutside, readOnlyMessage: { value: shownOutside ? `${foundOut.current[shown!] ?? shown} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : 'The program is being debugged: Stop to edit' } });
-  }, [dbg, state, shownOutside, shown]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!mf || !loaded || !main || dbg) return;
+    const k = `${main}\n${mf.file}`;
+    if (macrosImported.current.has(k) || !(main in textsRef.current)) return;
+    macrosImported.current.add(k);
+    importMacros(mf.file);
+  }, [mf?.file, loaded, main, dbg]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!mf || !loaded || !codeLib) { if (!mf) useAsmLink.getState().set({ macroFile: null }); return; }
+    // (what the project's sources are, the file itself not among them, and what they import from outside the folder)
+    const sources = Object.entries(quiet).filter(([p]) => p !== mf.file && ASM_SOURCE.test(p)).map(([, t]) => t)
+      .concat(Object.values(outside).filter((v): v is string => typeof v === 'string'));
+    const built = codeLibProjectFile(codeLib.items, mf, sources, lang, mf.file.split('/').pop()!);
+    useAsmLink.getState().set({ macroFile: { ...built, file: mf.file } });
+    if (dbg || makingMacros.current || textNow(mf.file) === built.text) return;
+    if (paths.has(mf.file) || mf.file in textsRef.current) { putText(mf.file, built.text); return; }
+    makingMacros.current = true;
+    void change({ dir, op: 'file', path: mf.file, text: built.text }).finally(() => { makingMacros.current = false; });
+  }, [quiet, codeLib, mf, lang, outside, loaded, dbg, paths]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => useAsmLink.getState().set({ macroFile: null }), []);
+  useEffect(() => {
+    ed.current?.updateOptions({ readOnly: !!dbg || shownOutside || shownMacros, readOnlyMessage: { value: shownOutside ? `${foundOut.current[shown!] ?? shown} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : shownMacros ? `${shown} is built by Mimir from the macro library: change the macros there (Macros and code), or add one to it` : 'The program is being debugged: Stop to edit' } });
+  }, [dbg, state, shownOutside, shownMacros, shown]); // eslint-disable-line react-hooks/exhaustive-deps
   // the debugger's line, in the file shown; at no line of the sources (the KERNAL's CHROUT, an interrupt, code copied
   // elsewhere), the line it is running for: the JSR's, or the line an interrupt came before
   const pcDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);

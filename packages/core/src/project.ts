@@ -1,5 +1,5 @@
 /* Project creation and the on-disk `.mimir.json` format (file bytes as base64). */
-import { LEGACY_PROJECT_FORMAT, type AsmBookmark, type AsmProjectInfo, type Cartridge, type FileInput, type LoadedFile, type Project, type SerializedProject, type Settings } from './types';
+import { LEGACY_PROJECT_FORMAT, type AsmBookmark, type AsmMacroFile, type AsmProjectInfo, type Cartridge, type FileInput, type LoadedFile, type Project, type SerializedProject, type Settings } from './types';
 import { DEFAULT_SETTINGS } from './model';
 import { makeDemo } from './demo';
 import { parsePrg } from './c64/prg';
@@ -41,8 +41,13 @@ function asmInfo(a: AsmProjectInfo): AsmProjectInfo {
   return {
     lang: a.lang === '64tass' ? '64tass' : 'kickass', main: a.main || null, ...(args ? { args } : {}),
     ...(bookmarks.length ? { bookmarks: Object.fromEntries(bookmarks.map(([id, b]) => [id, asmBookmark(b)])) } : {}),
+    ...(a.macros?.file ? { macros: asmMacroFile(a.macros) } : {}),
   };
 }
+/** the project's macro file as it is kept: its names once each, `called` only when it is off */
+const asmMacroFile = (m: AsmMacroFile): AsmMacroFile => ({
+  file: m.file, macros: [...new Set(m.macros ?? [])], collections: [...new Set(m.collections ?? [])], ...(m.called === false ? { called: false } : {}),
+});
 /** a bookmark as it is kept: an area's end only past its line, the colour only when it has one */
 const asmBookmark = (b: AsmBookmark): AsmBookmark => ({
   file: b.file, line: Math.floor(b.line), ...(b.end != null && b.end > b.line ? { end: Math.floor(b.end) } : {}), title: b.title ?? '', text: b.text ?? '', ...(b.color ? { color: b.color } : {}),
@@ -68,7 +73,7 @@ export function serializeProject(p: Project): SerializedProject {
     ...(p.patches?.length ? { patches: p.patches.map(({ id: _, bytes, old, ...q }) => ({ ...q, bytes: b64enc(bytes), old: b64enc(old) })) } : {}),
     ...(p.userScripts?.length ? { userScripts: p.userScripts.map(({ pads, ...u }) => ({ ...u, pads: pads.map(({ bytes, data, ...d }) => ({ ...d, ...(bytes ? { bytes: b64enc(bytes) } : {}), ...(data ? { data: b64enc(data) } : {}) })) })) } : {}),
     ...(p.cart ? { cart: { name: p.cart.name, data: b64enc(p.cart.crt) } } : {}),
-    ...(p.asm ? { asm: (({ lang, main, args, bookmarks }) => ({ lang, ...(main ? { main } : {}), ...(args ? { args } : {}), ...(bookmarks ? { bookmarks } : {}) }))(asmInfo(p.asm)) } : {}),
+    ...(p.asm ? { asm: (({ lang, main, args, bookmarks, macros }) => ({ lang, ...(main ? { main } : {}), ...(args ? { args } : {}), ...(bookmarks ? { bookmarks } : {}), ...(macros ? { macros } : {}) }))(asmInfo(p.asm)) } : {}),
     settings: p.settings,
   };
 }
