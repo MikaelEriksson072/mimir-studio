@@ -2106,6 +2106,40 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .cl-notes { display: flex; flex-direction: column; gap: 3px; margin: -4px 0 8px; }
 .cl-notes:empty { display: none; }
 .cl-made { margin: 4px 0 0; overflow-wrap: anywhere; }
+/* collections: a row that opens on its macros (indented under it), its buttons; A–Ö: a macro's collection beside it */
+.cl-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 0 14px 6px 0; }
+.cl-tools .cl-colors { padding-bottom: 0; }
+.cl-shape { margin-left: auto; }
+.cl-shape button { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; font-size: 11px; height: 20px; }
+.cl-chev { flex: none; align-self: center; color: var(--fg-3); transition: transform 0.12s; }
+.cl-chev.on { transform: rotate(90deg); }
+.cl-coll-icon { flex: none; align-self: center; color: var(--accent-hi); }
+.cl-coll > .cl-row .cl-name-row { gap: 5px; }
+.cl-coll > .cl-row .lib-n { flex: none; font-size: 10.5px; }
+.cl-coll.expanded { background: color-mix(in srgb, var(--panel-2) 55%, transparent); }
+.cl-coll-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 8px 4px 28px; }
+.cl-coll-bar .btn.small { height: 22px; padding: 0 7px; font-size: 11px; }
+.cl-subs { display: flex; flex-direction: column; gap: 1px; padding: 0 0 4px 16px; }
+.cl-subs .side-hint { padding: 2px 12px 6px; }
+.cl-item.nested .cl-row { padding-top: 3px; padding-bottom: 3px; }
+.cl-item.nested .cl-name { font-weight: 500; font-size: 12px; }
+.cl-in { flex: none; max-width: 40%; padding: 0 4px; border-radius: 3px; font-size: 10px; color: var(--accent-hi); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 8px 6px 28px; padding: 5px 8px; border-radius: 5px; background: color-mix(in srgb, var(--warn) 12%, transparent); overflow-wrap: anywhere; }
+.cl-into select, .cl-into input { min-width: 180px; }
+/* the export dialog: the macros checked, a collection's under it */
+.modal.cl-export { width: min(640px, 100%); }
+.cl-ex-search { margin: 0 0 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; }
+.cl-ex-list { height: min(46vh, 380px); overflow: auto; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--editor); }
+.cl-ex-row { display: flex; align-items: center; gap: 4px; min-height: 24px; }
+.cl-ex-row .check, .cl-ex-sub { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--fg); font-size: 12.5px; }
+.cl-ex-row .muted { margin-left: auto; padding-right: 6px; }
+.cl-ex-chev { width: 18px; height: 18px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.cl-ex-coll { font-weight: 600; }
+.cl-ex-subs { display: flex; flex-direction: column; padding: 0 0 4px 44px; }
+.cl-ex-sub { min-height: 21px; font-size: 12px; }
+.cl-ex-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-ex-to { margin-top: 10px; align-items: flex-end; }
+.cl-ex-opt { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; font-size: 12px; color: var(--fg-2); }
 
 /* ---------- the library (spec 10.6): the Library view, the Library tab and Add to library ---------- */
 .lib-thumb { display: block; image-rendering: pixelated; max-width: 100%; height: auto; }

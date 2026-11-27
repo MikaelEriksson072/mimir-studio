@@ -28,7 +28,7 @@ import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
   gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema,
-  scriptsFileSchema, scriptsSaveSchema, libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema, codelibFileSchema, codelibRevealSchema, codelibSaveSchema,
+  scriptsFileSchema, scriptsSaveSchema, libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema, codelibExportSchema, codelibFileSchema, codelibImportSchema, codelibRevealSchema, codelibSaveSchema,
 } from './schemas';
 import type { LibraryStore } from './library';
 import type { CodeLibStore } from './code-library';
@@ -403,6 +403,25 @@ export function registerIpc(deps: IpcDeps): void {
     const problem = await shell.openPath(codelib.folder(req.kind));
     if (problem) throw new Error(problem);
   });
+  // files from anywhere put in a library: only those picked in the dialog here
+  const CODELIB_FILTERS = [{ name: 'Assembler sources', extensions: ['asm', 's', 'inc', 'a', 'a65', 'tas', '65s'] }, { name: 'All files', extensions: ['*'] }];
+  handle(CHANNELS.codelibImport, codelibImportSchema, async (req, e) => {
+    const start = recent.folder('codelib') ?? recent.folder('asm');
+    const paths = await pickPaths(e, { title: req.kind === 'macro' ? 'Put macro files in the macro library' : 'Put files in the code library', properties: ['openFile', 'multiSelections'], filters: CODELIB_FILTERS, ...(start ? { defaultPath: start } : {}) });
+    if (!paths.length) return null;
+    chose(dirname(paths[0]), 'codelib');
+    return codelib.importFiles(req.kind, paths);
+  });
+  // macros exported: to a file picked in the save dialog here, to the one an item was exported to before (the store
+  // remembers it, never the renderer), or to a collection of the macro library
+  handle(CHANNELS.codelibExport, codelibExportSchema, (req, e) => codelib.export(req, async (name, at) => {
+    const win = windowOf(e.sender), start = recent.folder('codelib');
+    const options = { title: 'Export the macros', defaultPath: at ?? (start ? join(start, name) : name), filters: CODELIB_FILTERS };
+    const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (r.canceled || !r.filePath) return null;
+    chose(dirname(r.filePath), 'codelib');
+    return r.filePath;
+  }));
   // the library's scripts (10.3): a file only by its plain name in the folder Scripts
   handle(CHANNELS.scriptsList, none, () => scripts.list());
   handle(CHANNELS.scriptsSave, scriptsSaveSchema, req => scripts.save(req));

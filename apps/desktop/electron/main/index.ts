@@ -92,7 +92,7 @@ app.whenReady().then(() => {
   // the library's folder: the one in the settings, else Mimir\Library in the documents folder (spec 10.6)
   const library = new LibraryStore(() => settings.get().libraryDir || defaultLibraryDir(app.getPath('documents')), p => shell.trashItem(p));
   const scripts = new ScriptStore(() => library.root(), p => shell.trashItem(p));
-  const codelib = new CodeLibStore(() => library.root(), p => shell.trashItem(p));
+  const codelib = new CodeLibStore(() => library.root(), p => shell.trashItem(p), Date.now, join(app.getPath('userData'), 'codelib-files.json'));
   // the folder open in the Assembler (spec 10.7), watched on its own: its changes go to the Assembler (fs:changed)
   const asmWatcher = new ExportWatcher(path => {
     for (const w of appWindows()) w.webContents.send(CHANNELS.fsChanged, { path });

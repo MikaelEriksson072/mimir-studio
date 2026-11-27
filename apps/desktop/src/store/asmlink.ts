@@ -11,17 +11,18 @@ import type { LibraryRef } from './library';
  *  the lines that write them; `drop`: files dropped on the window copied into the folder; the bookmarks': `bmAdd` the
  *  editor for the caret's line, `bmGo` the line of bookmark `id`, `bmJump` the next (`dir` 1) or previous one,
  *  `line` a file's `line` shown (to `end`, selected) while a bookmark is edited; the macro and code libraries' (10.8):
- *  `codeLib` the dialog for a new item of the lines selected (`libKind` its library), `insert` an item put in the source */
+ *  `codeLib` the dialog for a new item of the lines selected (`libKind` its library, `libInto` a collection it goes in),
+ *  `insert` an item put in the source */
 export interface AsmAsk {
   what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop' | 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib' | 'insert'; n: number;
   kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[]; files?: AsmDropped[]; at?: string | null;
-  id?: string; dir?: 1 | -1; line?: number; end?: number | null; libKind?: CodeLibKind; insert?: AsmInsert;
+  id?: string; dir?: 1 | -1; line?: number; end?: number | null; libKind?: CodeLibKind; libInto?: string; insert?: AsmInsert;
 }
 /** an item of the macro or code library put in the source shown, where the caret is: `call` a macro's call (`text` a
  *  snippet: its parameters places to type in), else its lines at the caret's line (`block`: a macro's definition, an
  *  empty line before and after it where the lines beside it have text); `lang` the assembler it is written for,
  *  `macro` the name of the macro it calls or defines */
-export interface AsmInsert { text: string; call: boolean; block: boolean; lang: ScriptLang; name: string; macro: string | null; library: string }
+export interface AsmInsert { text: string; call: boolean; block: boolean; lang: ScriptLang; name: string; macro: string | null; library: string; top?: boolean }
 /** a file dropped on the window: copied into the project's folder (`drop`; `at`: the folder or file it was dropped on in the file list) */
 export interface AsmDropped { name: string; bytes: Uint8Array }
 export interface AsmLive { mem: Uint8Array; pc: Addr; where: string | null; whole: boolean; running: boolean; n: number }
@@ -68,7 +69,7 @@ interface AsmLinkState {
   /** the main file built (what is not written yet is written first); null: it was not (the tab said why) */
   buildPrg: () => Promise<AsmBuilt | null>;
   set: (p: Partial<Omit<AsmLinkState, 'set' | 'reset' | 'request' | 'showAddr'>>) => void;
-  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at' | 'id' | 'dir' | 'line' | 'end' | 'libKind' | 'insert'>) => void;
+  request: (what: AsmAsk['what'], o?: Pick<AsmAsk, 'kind' | 'lib' | 'text' | 'changes' | 'files' | 'at' | 'id' | 'dir' | 'line' | 'end' | 'libKind' | 'libInto' | 'insert'>) => void;
   showAddr: (addr: Addr) => void;
   /** the project closed: nothing is kept */
   reset: () => void;

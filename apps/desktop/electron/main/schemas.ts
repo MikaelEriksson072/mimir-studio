@@ -384,7 +384,9 @@ export const scriptsFileSchema = z.object({ file: scriptFile }).strict();
 /* ---- the macro and code libraries (spec 10.8): a file by its kind and plain name in that kind's folder ---- */
 const codelibKind = z.enum(['macro', 'code']);
 const codelibFile = z.string().min(1).max(130).refine(isCodeLibFileName, 'not a plain file name of the libraries');
-export const codelibFileSchema = z.object({ kind: codelibKind, file: codelibFile }).strict();
+/** a macro's name in a collection */
+const codelibMacro = z.string().min(1).max(CODE_LIB_NAME_MAX).regex(/^[A-Za-z_]\w*$/, 'not a macro\'s name');
+export const codelibFileSchema = z.object({ kind: codelibKind, file: codelibFile, macro: codelibMacro.optional() }).strict();
 export const codelibSaveSchema = z.object({
   kind: codelibKind,
   name: z.string().trim().min(1).max(CODE_LIB_NAME_MAX),
@@ -394,8 +396,18 @@ export const codelibSaveSchema = z.object({
   color: z.string().max(7).refine(isBookmarkColor, 'not a colour').optional(),
   from: z.string().max(500).optional(),
   was: codelibFileSchema.optional(),
+  into: z.union([z.object({ file: codelibFile }).strict(), z.object({ name: z.string().trim().min(1).max(CODE_LIB_NAME_MAX) }).strict()]).optional(),
+  collection: z.boolean().optional(),
 }).strict();
 export const codelibRevealSchema = z.object({ kind: codelibKind, file: codelibFile.optional() }).strict();
+export const codelibImportSchema = z.object({ kind: codelibKind }).strict();
+export const codelibExportSchema = z.object({
+  macros: z.array(codelibFileSchema).min(1).max(5000),
+  to: z.union([z.literal('file'), z.literal('again'), z.object({ collection: z.string().trim().min(1).max(CODE_LIB_NAME_MAX) }).strict()]),
+  lines: z.boolean(),
+  move: z.boolean().optional(),
+  force: z.boolean().optional(),
+}).strict();
 export const libraryPickSchema = z.object({ current: z.string().max(1024).optional() }).strict();
 
 /* the Assembler (spec 10.7): a folder, and a file by its path inside it (assembler.ts inFolder checks it again) */

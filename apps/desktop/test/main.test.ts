@@ -13,7 +13,7 @@ import { RecentFolders } from '../electron/main/recent';
 import { answerClose, askBeforeClose, CLOSE_ANSWER_MS, type ClosingWindow } from '../electron/main/closing';
 import { findInFolder, startFolder, toolLook } from '../electron/main/locate';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { codelibFileSchema, codelibRevealSchema, codelibSaveSchema, deepSidPlaySchema, diskOpenSchema, libraryAddSchema, libraryFileSchema, libraryRevealSchema, libraryUpdateSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
+import { codelibExportSchema, codelibFileSchema, codelibRevealSchema, codelibSaveSchema, deepSidPlaySchema, diskOpenSchema, libraryAddSchema, libraryFileSchema, libraryRevealSchema, libraryUpdateSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
 import { buildWithAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
@@ -29,7 +29,7 @@ const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings =>
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing', 'git:version', 'git:status', 'git:init', 'git:stage', 'git:unstage', 'git:commit', 'git:push', 'git:remote', 'git:diff', 'git:compare', 'library:list', 'library:add', 'library:update', 'library:remove', 'library:reveal', 'library:pick', 'scripts:list', 'scripts:save', 'scripts:remove', 'scripts:reveal', 'codelib:list', 'codelib:save', 'codelib:remove', 'codelib:reveal', 'assembler:start', 'assembler:open', 'assembler:create', 'assembler:forget', 'assembler:close', 'assembler:list', 'assembler:read', 'assembler:readOutside', 'assembler:write', 'assembler:change', 'assembler:reveal', 'assembler:pickData'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing', 'git:version', 'git:status', 'git:init', 'git:stage', 'git:unstage', 'git:commit', 'git:push', 'git:remote', 'git:diff', 'git:compare', 'library:list', 'library:add', 'library:update', 'library:remove', 'library:reveal', 'library:pick', 'scripts:list', 'scripts:save', 'scripts:remove', 'scripts:reveal', 'codelib:list', 'codelib:save', 'codelib:remove', 'codelib:reveal', 'codelib:import', 'codelib:export', 'assembler:start', 'assembler:open', 'assembler:create', 'assembler:forget', 'assembler:close', 'assembler:list', 'assembler:read', 'assembler:readOutside', 'assembler:write', 'assembler:change', 'assembler:reveal', 'assembler:pickData'].sort());
   });
 });
 
@@ -1226,7 +1226,7 @@ describe('the macro and code libraries (spec 10.8)', () => {
 
   it('lists nothing before anything is added, and writes nothing then', async () => {
     const dir = join(tmp(), 'Library');
-    expect(await store(dir).list()).toEqual({ dir, folders: { macro: join(dir, 'Macros'), code: join(dir, 'Code') }, items: [] });
+    expect(await store(dir).list()).toEqual({ dir, folders: { macro: join(dir, 'Macros'), code: join(dir, 'Code') }, items: [], exports: {} });
     expect(existsSync(dir)).toBe(false);
   });
 
@@ -1293,5 +1293,146 @@ describe('the macro and code libraries (spec 10.8)', () => {
     expect(codelibFileSchema.safeParse({ kind: 'code', file: 'x.txt' }).success).toBe(false);
     expect(codelibRevealSchema.safeParse({ kind: 'macro' }).success).toBe(true);
     expect(codelibRevealSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('collections of the macro library (spec 10.8)', () => {
+  let clock = Date.UTC(2026, 10, 27, 9, 0);
+  const store = (dir: string, trashed: string[] = [], state?: string) => new CodeLibStore(() => dir, async p => { trashed.push(readFileSync(p, 'utf8')); rmSync(p); }, () => clock, state);
+  const LIB = '#importonce\n\n// =====\n// Border colour\n// =====\n.macro SetBorder(c) {\n    lda #c\n    sta $d020\n}\n\n.macro save() {pha;txa;pha}\n';
+  const lib3 = (dir: string) => { mkdirSync(join(dir, 'Macros'), { recursive: true }); writeFileSync(join(dir, 'Macros', 'raster.asm'), LIB); };
+
+  it('a file with several macros is a collection; a macro put in it at its end, in its style, made now', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    lib3(dir);
+    const l = await lib.list();
+    expect(l.items[0]).toMatchObject({ file: 'raster.asm', collection: true, own: true });
+    expect(l.items[0].macros!.map(m => [m.name, m.description])).toEqual([['SetBorder', 'Border colour'], ['save', '']]);
+    const r = await lib.save({ kind: 'macro', name: 'Black', code: 'lda #0\nsta $d020', lang: 'kickass', description: '', into: { file: 'raster.asm' } }).catch(e => e as Error);
+    expect(r).toBeInstanceOf(Error);
+    const ok = await lib.save({ kind: 'macro', name: 'Black', code: '.macro Black() {\n    lda #0\n    sta $d020\n}', lang: 'kickass', description: 'Border black', color: 'teal', into: { file: 'raster.asm' } });
+    expect(ok.macro).toBe('Black');
+    expect(ok.item.macros!.map(m => m.name)).toEqual(['SetBorder', 'save', 'Black']);
+    const text = readFileSync(join(dir, 'Macros', 'raster.asm'), 'utf8');
+    expect(text).toBe(`// mimir-library {"lang":"kickass","created":"${new Date(l.items[0].created).toISOString()}","collection":true}\n${LIB}\n// =====\n// Border black\n// =====\n// mimir-macro {"created":"2026-11-27T09:00:00.000Z","color":"teal"}\n.macro Black() {\n    lda #0\n    sta $d020\n}\n`);
+    // a name it has already; one of the other assembler
+    await expect(lib.save({ kind: 'macro', name: 'save', code: '.macro save() {pha}', lang: 'kickass', description: '', into: { file: 'raster.asm' } })).rejects.toThrow(/has a macro named save already/);
+    await expect(lib.save({ kind: 'macro', name: 'W', code: 'W .macro\n .endm', lang: '64tass', description: '', into: { file: 'raster.asm' } })).rejects.toThrow(/written for Kick Assembler/);
+  });
+
+  it('a collection\'s macro changed in its place (renamed, its decoration kept), out to a file of its own, into a new collection, taken out to the Recycle Bin', async () => {
+    const dir = join(tmp(), 'Library'), trashed: string[] = [], lib = store(dir, trashed);
+    lib3(dir);
+    const made = clock;
+    await lib.list();
+    clock += 3600_000;
+    const r = await lib.save({ kind: 'macro', name: 'Border', code: '.macro SetBorder(c) {\n    lda #c\n    sta $d020\n}', lang: 'kickass', description: 'The border\'s colour', color: 'pink', was: { kind: 'macro', file: 'raster.asm', macro: 'SetBorder' }, into: { file: 'raster.asm' } });
+    expect(r.macro).toBe('Border');
+    const text = readFileSync(join(dir, 'Macros', 'raster.asm'), 'utf8');
+    expect(text).toContain('#importonce\n\n// =====\n// The border\'s colour\n// =====\n// mimir-macro {"color":"pink"}\n.macro Border(c) {');
+    // out to a file of its own: when it was made the collection's (it had none of its own)
+    const own = await lib.save({ kind: 'macro', name: 'Border', code: '.macro Border(c) {\n    lda #c\n    sta $d020\n}', lang: 'kickass', description: 'The border\'s colour', color: 'pink', was: { kind: 'macro', file: 'raster.asm', macro: 'Border' } });
+    expect(own.item).toMatchObject({ file: 'Border.asm', description: 'The border\'s colour', color: 'pink' });
+    expect(own.item.created).toBeLessThanOrEqual(made);
+    expect(own.listing.items.find(i => i.file === 'raster.asm')!.macros!.map(m => m.name)).toEqual(['save']);
+    // a macro of its own into a new collection: its file to the Recycle Bin, when it was made kept
+    const coll = await lib.save({ kind: 'macro', name: 'Border', code: own.item.code, lang: 'kickass', description: own.item.description, color: 'pink', was: { kind: 'macro', file: 'Border.asm' }, into: { name: 'Colours' } });
+    expect(coll.item).toMatchObject({ file: 'Colours.asm', collection: true, created: clock });
+    expect(coll.item.macros![0]).toMatchObject({ name: 'Border', created: own.item.created, color: 'pink', description: 'The border\'s colour' });
+    expect(existsSync(join(dir, 'Macros', 'Border.asm'))).toBe(false);
+    expect(trashed).toHaveLength(1);
+    // a name of a macro of its own is no collection
+    await lib.save({ kind: 'macro', name: 'Solo', code: '.macro Solo() {\n nop\n}', lang: 'kickass', description: '' });
+    await expect(lib.save({ kind: 'macro', name: 'X', code: '.macro X() {\n nop\n}', lang: 'kickass', description: '', into: { name: 'solo' } })).rejects.toThrow(/not a collection/);
+    // taken out: to the Recycle Bin as a file of its own
+    const after = await lib.remove({ kind: 'macro', file: 'raster.asm', macro: 'save' });
+    expect(after.items.find(i => i.file === 'raster.asm')!.macros ?? []).toEqual([]);
+    expect(trashed[1]).toMatch(/^\/\/ mimir-library \{"lang":"kickass".*"from":"raster"\}\n\.macro save\(\) \{pha;txa;pha\}\n$/);
+  });
+
+  it('imports files as they are (the line added, a collection said), remembers where from, exports back there; not over a file changed since', async () => {
+    const base = tmp(), dir = join(base, 'Library'), state = join(base, 'codelib-files.json'), lib = store(dir, [], state);
+    const outside = join(base, 'c64_lib');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'irq_lib.asm'), LIB.replace(/\n/g, '\r\n'));
+    writeFileSync(join(outside, 'one.asm'), '// Burns a line\n.macro Burn() {\n  .fill 20, $ea\n}\n');
+    writeFileSync(join(outside, 'big.bin'), Buffer.alloc(10, 0));
+    const r = await lib.importFiles('macro', [join(outside, 'irq_lib.asm'), join(outside, 'one.asm'), join(outside, 'big.bin'), join(outside, 'gone.asm')]);
+    expect(r.imported).toEqual([{ kind: 'macro', file: 'irq_lib.asm' }, { kind: 'macro', file: 'one.asm' }]);
+    expect(r.skipped).toEqual([expect.stringMatching(/^big\.bin: not a text file/), expect.stringMatching(/^gone\.asm: /)]);
+    const irq = r.listing.items.find(i => i.file === 'irq_lib.asm')!, one = r.listing.items.find(i => i.file === 'one.asm')!;
+    expect(irq).toMatchObject({ collection: true, from: join(outside, 'irq_lib.asm'), code: LIB.trimEnd() });
+    expect(irq).not.toHaveProperty('own');
+    expect(one).toMatchObject({ description: 'Burns a line' });
+    expect(one.collection).toBeUndefined();
+    expect(r.listing.exports).toEqual({ 'macro/irq_lib.asm': { path: join(outside, 'irq_lib.asm'), lines: false }, 'macro/one.asm': { path: join(outside, 'one.asm'), lines: false } });
+
+    // changed in Mimir, exported again: as it was written by hand (no Mimir lines, its CRLF kept)
+    await lib.save({ kind: 'macro', name: 'save', code: '.macro save() {pha;txa;pha;tya;pha}', lang: 'kickass', description: 'Saves A, X and Y', color: 'teal', was: { kind: 'macro', file: 'irq_lib.asm', macro: 'save' }, into: { file: 'irq_lib.asm' } });
+    const pick = async () => { throw new Error('no dialog for again'); };
+    const again = await lib.export({ macros: [{ kind: 'macro', file: 'irq_lib.asm' }], to: 'again', lines: true }, pick);
+    expect(again).toMatchObject({ path: join(outside, 'irq_lib.asm'), count: 2 });
+    const back = readFileSync(join(outside, 'irq_lib.asm'), 'utf8');
+    // (given a description, in the collection's style)
+    expect(back).toBe(LIB.replace('.macro save() {pha;txa;pha}', '// =====\n// Saves A, X and Y\n// =====\n.macro save() {pha;txa;pha;tya;pha}').replace(/\n/g, '\r\n'));
+    // changed outside since: not written, unless told to
+    writeFileSync(join(outside, 'irq_lib.asm'), `${back}// mine\r\n`);
+    const no = await lib.export({ macros: [{ kind: 'macro', file: 'irq_lib.asm' }], to: 'again', lines: false }, pick);
+    expect(no).toMatchObject({ changed: true, path: join(outside, 'irq_lib.asm') });
+    expect(readFileSync(join(outside, 'irq_lib.asm'), 'utf8').endsWith('// mine\r\n')).toBe(true);
+    await lib.export({ macros: [{ kind: 'macro', file: 'irq_lib.asm' }], to: 'again', lines: false, force: true }, pick);
+    expect(readFileSync(join(outside, 'irq_lib.asm'), 'utf8')).toBe(back);
+    // remembered for the next run
+    expect((await store(dir, [], state).list()).exports['macro/irq_lib.asm']).toEqual({ path: join(outside, 'irq_lib.asm'), lines: false });
+    // one never exported has no again
+    await lib.save({ kind: 'macro', name: 'Solo', code: '.macro Solo() {\n nop\n}', lang: 'kickass', description: '' });
+    await expect(lib.export({ macros: [{ kind: 'macro', file: 'Solo.asm' }], to: 'again', lines: false }, pick)).rejects.toThrow(/not exported before/);
+  });
+
+  it('exports macros from here and there to a file (the dialog\'s), with Mimir\'s lines or as by hand, and into a collection (moved)', async () => {
+    clock = Date.UTC(2026, 10, 27, 9, 0);
+    const base = tmp(), dir = join(base, 'Library'), lib = store(dir);
+    lib3(dir);
+    await lib.save({ kind: 'macro', name: 'Black', code: '.macro Black() {\n    lda #0\n    sta $d020\n}', lang: 'kickass', description: 'Border black', color: 'teal' });
+    await lib.save({ kind: 'macro', name: 'Tass', code: 'Tass .macro\n .endm', lang: '64tass', description: '' });
+    const to = join(base, 'out', 'mine.asm');
+    mkdirSync(join(base, 'out'));
+    const asked: string[] = [];
+    const pick = async (name: string) => { asked.push(name); return to; };
+    const macros = [{ kind: 'macro' as const, file: 'Black.asm' }, { kind: 'macro' as const, file: 'raster.asm', macro: 'SetBorder' }];
+    const plain = await lib.export({ macros, to: 'file', lines: false }, pick);
+    expect(plain).toMatchObject({ path: to, count: 2 });
+    expect(asked).toEqual(['macros.asm']);
+    expect(readFileSync(to, 'utf8')).toBe('// Border black\n.macro Black() {\n    lda #0\n    sta $d020\n}\n\n// =====\n// Border colour\n// =====\n.macro SetBorder(c) {\n    lda #c\n    sta $d020\n}\n');
+    await lib.export({ macros, to: 'file', lines: true }, pick);
+    const kept = readFileSync(to, 'utf8');
+    expect(kept.split('\n')[0]).toBe('// mimir-library {"lang":"kickass","created":"2026-11-27T09:00:00.000Z","collection":true}');
+    expect(kept).toContain('// mimir-macro {"created":"2026-11-27T09:00:00.000Z","color":"teal"}\n.macro Black() {');
+    // the dialog closed: nothing written
+    expect(await lib.export({ macros, to: 'file', lines: false }, async () => null)).toMatchObject({ canceled: true, count: 0 });
+    // two assemblers in one file: no
+    await expect(lib.export({ macros: [...macros, { kind: 'macro', file: 'Tass.asm' }], to: 'file', lines: false }, pick)).rejects.toThrow(/do not go in one file/);
+    // into a new collection, moved: out of where they were
+    const into = await lib.export({ macros, to: { collection: 'Borders' }, lines: true, move: true }, pick);
+    expect(into).toMatchObject({ count: 2, collection: { kind: 'macro', file: 'Borders.asm' } });
+    const borders = into.listing.items.find(i => i.file === 'Borders.asm')!;
+    expect(borders.macros!.map(m => [m.name, m.description, m.color ?? null])).toEqual([['Black', 'Border black', 'teal'], ['SetBorder', 'Border colour', null]]);
+    expect(into.listing.items.map(i => i.file).sort()).toEqual(['Borders.asm', 'Tass.asm', 'raster.asm']);
+    expect(into.listing.items.find(i => i.file === 'raster.asm')!.macros!.map(m => m.name)).toEqual(['save']);
+    // again into it: the names it has
+    await lib.save({ kind: 'macro', name: 'Black', code: '.macro Black() {\n nop\n}', lang: 'kickass', description: '' });
+    await expect(lib.export({ macros: [{ kind: 'macro', file: 'Black.asm' }], to: { collection: 'borders' }, lines: true }, pick)).rejects.toThrow(/Borders has a macro named Black already/);
+  });
+
+  it('takes only what it should over IPC', () => {
+    expect(codelibFileSchema.safeParse({ kind: 'macro', file: 'x.asm', macro: 'SetBorder' }).success).toBe(true);
+    expect(codelibFileSchema.safeParse({ kind: 'macro', file: 'x.asm', macro: 'a b' }).success).toBe(false);
+    expect(codelibSaveSchema.safeParse({ kind: 'macro', name: 'x', code: 'nop', lang: 'kickass', description: '', into: { file: 'raster.asm' } }).success).toBe(true);
+    expect(codelibSaveSchema.safeParse({ kind: 'macro', name: 'x', code: 'nop', lang: 'kickass', description: '', into: { file: '../raster.asm' } }).success).toBe(false);
+    expect(codelibSaveSchema.safeParse({ kind: 'macro', name: 'x', code: 'nop', lang: 'kickass', description: '', into: { name: 'New' } }).success).toBe(true);
+    expect(codelibExportSchema.safeParse({ macros: [{ kind: 'macro', file: 'x.asm' }], to: 'file', lines: false }).success).toBe(true);
+    expect(codelibExportSchema.safeParse({ macros: [{ kind: 'macro', file: 'x.asm' }], to: 'C:\\x.asm', lines: false }).success).toBe(false);
+    expect(codelibExportSchema.safeParse({ macros: [{ kind: 'macro', file: 'x.asm' }], to: { path: 'C:\\x.asm' }, lines: false }).success).toBe(false);
+    expect(codelibExportSchema.safeParse({ macros: [], to: 'file', lines: false }).success).toBe(false);
   });
 });

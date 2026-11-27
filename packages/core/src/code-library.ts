@@ -14,7 +14,8 @@
  *
  * A macro's definition is read from its code: Kick Assembler's `.macro Name(a, b) { … }` (`.pseudocommand`,
  * `.function` too), 64tass's `Name .macro a, b` … `.endm` (`.segment` … `.endsegment`, `.function` … `.endf`,
- * `.sfunction`). Code taken from a source becomes a macro wrapped in one (codeLibWrap).
+ * `.sfunction`). Code taken from a source becomes a macro wrapped in one (codeLibWrap). A file with several macros is a
+ * collection (irq_lib.asm): each of its macros listed as one of its own, described by the comments above it.
  * ===================================================================== */
 import type { ScriptLang } from './types';
 import { isBookmarkColor } from './types';
@@ -38,9 +39,12 @@ export interface CodeLibMeta {
   color?: string;
   created: number;
   from?: string;
+  /** a collection of macros (a file of the macro library with macros of their own in it), one macro or none in it yet */
+  collection?: boolean;
 }
 /** a macro or a piece of code of the library: its kind (its folder), its file there and its name (the file's
- *  without the extension), its code, when its file changed; `own`: a file without the line (put there by hand) */
+ *  without the extension), its code, when its file changed; `own`: a file without the line (put there by hand);
+ *  a collection (a file of the macro library with several macros, or one said to be one) has its macros */
 export interface CodeLibItem extends CodeLibMeta {
   kind: CodeLibKind;
   file: string;
@@ -48,6 +52,7 @@ export interface CodeLibItem extends CodeLibMeta {
   code: string;
   changed: number;
   own?: boolean;
+  macros?: CodeLibSub[];
 }
 
 const EXT = /\.(asm|s|inc|a|a65|tas|65s)$/i;
@@ -76,6 +81,7 @@ export function codeLibFileText(meta: CodeLibMeta, code: string): string {
     ...(meta.color && isBookmarkColor(meta.color) ? { color: meta.color.toLowerCase() } : {}),
     ...(meta.description.trim() ? { description: meta.description.replace(/\r\n/g, '\n').trimEnd() } : {}),
     ...(meta.from ? { from: meta.from } : {}),
+    ...(meta.collection ? { collection: true } : {}),
   };
   const body = code.replace(/\r\n/g, '\n').replace(/\s+$/, '');
   return `${langIs(meta.lang) === '64tass' ? ';' : '//'} mimir-library ${JSON.stringify(j)}\n${body}\n`;
@@ -96,9 +102,17 @@ export function readCodeLibFile(kind: CodeLibKind, file: string, text: string, t
   const made = typeof o.created === 'string' ? Date.parse(o.created) : typeof o.created === 'number' ? o.created : NaN;
   const created = Number.isFinite(made) && made > 0 ? made : times.born && times.born > 0 ? Math.min(times.born, times.changed) : times.changed;
   const color = typeof o.color === 'string' && isBookmarkColor(o.color) ? o.color.toLowerCase() : undefined;
-  const description = typeof o.description === 'string' ? o.description.slice(0, CODE_LIB_DESCRIPTION_MAX) : '';
+  let description = typeof o.description === 'string' ? o.description.slice(0, CODE_LIB_DESCRIPTION_MAX) : '';
   const from = typeof o.from === 'string' && o.from.length <= 500 ? o.from : undefined;
-  return { kind, file, name: codeLibNameOf(file), code, lang, description, created, changed: times.changed, ...(color ? { color } : {}), ...(from ? { from } : {}), ...(m ? {} : { own: true }) };
+  // a macro's file: several macros (or one said to be a collection) a collection of them, each with what its own
+  // lines say; one macro with no description of its own described by the comments above it
+  const subs = kind === 'macro' ? codeLibSubs(code, lang) : [];
+  const collection = kind === 'macro' && (o.collection === true || subs.length > 1);
+  if (!description && subs.length === 1 && !collection) description = subs[0].description;
+  return {
+    kind, file, name: codeLibNameOf(file), code, lang, description, created, changed: times.changed, ...(color ? { color } : {}), ...(from ? { from } : {}), ...(m ? {} : { own: true }),
+    ...(collection ? { collection: true, macros: subs } : {}),
+  };
 }
 
 /** The assembler code is written for, guessed from what only one of them has (`fallback`: neither, or as much of both). */
@@ -266,6 +280,202 @@ export function definesMacro(text: string, lang: ScriptLang, name: string): numb
   const re = langIs(lang) === '64tass' ? TASS_DEF : KICK_DEF;
   for (let i = 0; i < lines.length; i++) { const m = re.exec(lines[i]); if (m && (langIs(lang) === '64tass' ? m[1] : m[2]) === name) return i + 1; }
   return 0;
+}
+
+/* ---------------------------------------------------------------------
+ * Collections: a file of the macro library with several macros in it (irq_lib.asm, a library a source imports), each
+ * macro one of its own in the lists. What a macro is besides its code is in its own lines above it: the comments right
+ * above its definition are its description (the lines that only decorate them, // ======, left out), and a line
+ *
+ *     // mimir-macro {"created":"2026-11-27T09:12:00.000Z","color":"teal"}
+ *
+ * says its colour and when it was made (none: the collection's). The rest of the file (#importonce, .var, code between
+ * the macros) stays as it is.
+ * --------------------------------------------------------------------- */
+
+/** a macro of a collection: its definition (`line` to `end`, from 1, in the collection's code; `top` the first of its
+ *  own lines above it), the definition alone (`code`), its description, and its own colour and time (if any); `decor`:
+ *  the lines that decorate its comments (above and under them), as they are */
+export interface CodeLibSub {
+  name: string;
+  params: string[];
+  how: CodeLibMacro['how'];
+  top: number;
+  line: number;
+  end: number;
+  code: string;
+  description: string;
+  color?: string;
+  created?: number;
+  decor?: { top?: string; bottom?: string };
+}
+
+const SUB_HEAD = /^\s*(?:\/\/|;)\s*mimir-macro\s+(\{.*\})\s*$/;
+/** a line's comment when the line is only a comment (its text after // or ;), else null */
+const commentOnly = (line: string, tass: boolean): string | null => { const m = (tass ? /^\s*;+ ?(.*)$/ : /^\s*\/\/+ ?(.*)$/).exec(line); return m ? m[1].trimEnd() : null; };
+/** a comment's text that only decorates (=====, -----, *****): three or more, no letter or digit */
+const isDecor = (text: string): boolean => text.trim().length >= 3 && !/[\p{L}\p{N}]/u.test(text);
+
+/** What a mimir-macro line says (its JSON read with care: what is not as it should be left out). */
+function subMeta(line: string): { color?: string; created?: number; description?: string } {
+  const m = SUB_HEAD.exec(line);
+  if (!m) return {};
+  try {
+    const j: unknown = JSON.parse(m[1]);
+    if (!j || typeof j !== 'object' || Array.isArray(j)) return {};
+    const o = j as Record<string, unknown>;
+    const made = typeof o.created === 'string' ? Date.parse(o.created) : typeof o.created === 'number' ? o.created : NaN;
+    return {
+      ...(typeof o.color === 'string' && isBookmarkColor(o.color) ? { color: o.color.toLowerCase() } : {}),
+      ...(Number.isFinite(made) && made > 0 ? { created: made } : {}),
+      ...(typeof o.description === 'string' ? { description: o.description.slice(0, CODE_LIB_DESCRIPTION_MAX) } : {}),
+    };
+  } catch { return {}; }
+}
+
+/** The macros of a piece of code as a collection's, in the order they are written, each with its own lines above it. */
+export function codeLibSubs(code: string, lang: ScriptLang): CodeLibSub[] {
+  const tass = langIs(lang) === '64tass', lines = code.split('\n').map(l => l.replace(/\r$/, ''));
+  const at = (n: number) => lines[n - 1] ?? '';
+  let prevEnd = 0;
+  return codeLibMacros(code, lang).map(d => {
+    let top = d.line, meta: ReturnType<typeof subMeta> = {};
+    const texts: string[] = [];
+    // its comments and its mimir-macro line, right above it (not the macro's above it)
+    while (top - 1 > prevEnd) {
+      const l = at(top - 1);
+      if (HEAD.test(l)) break;
+      if (SUB_HEAD.test(l)) { meta = { ...subMeta(l), ...meta }; top--; continue; }
+      const c = commentOnly(l, tass);
+      if (c == null) break;
+      texts.unshift(c);
+      top--;
+    }
+    // the lines that decorate them, the first and the last
+    const decor: CodeLibSub['decor'] = {};
+    if (texts.length && isDecor(texts[0])) decor.top = at(top + (SUB_HEAD.test(at(top)) ? 1 : 0));
+    if (texts.length > 1 && isDecor(texts[texts.length - 1])) { for (let n = d.line - 1; n >= top; n--) { const l = at(n); if (!SUB_HEAD.test(l)) { decor.bottom = l; break; } } }
+    const words = texts.filter(t => !isDecor(t));
+    while (words.length && !words[0].trim()) words.shift();
+    while (words.length && !words[words.length - 1].trim()) words.pop();
+    const description = words.length ? words.join('\n') : meta.description ?? '';
+    prevEnd = d.end;
+    return {
+      name: d.name, params: d.params, how: d.how, top, line: d.line, end: d.end, code: lines.slice(d.line - 1, d.end).join('\n'), description,
+      ...(meta.color ? { color: meta.color } : {}), ...(meta.created ? { created: meta.created } : {}), ...(decor.top || decor.bottom ? { decor } : {}),
+    };
+  });
+}
+
+/** the lines that decorate a collection's descriptions, as most of its macros have them (none: no such lines) */
+export function codeLibDecor(subs: readonly Pick<CodeLibSub, 'decor'>[]): CodeLibSub['decor'] | undefined {
+  const n = new Map<string, { d: NonNullable<CodeLibSub['decor']>; n: number }>();
+  for (const s of subs) if (s.decor?.top || s.decor?.bottom) { const k = `${s.decor.top ?? ''}\n${s.decor.bottom ?? ''}`; const e = n.get(k); if (e) e.n++; else n.set(k, { d: s.decor, n: 1 }); }
+  return [...n.values()].sort((a, b) => b.n - a.n)[0]?.d;
+}
+
+/**
+ * A macro's lines in a collection: its description as comments (between `decor`'s lines, when it has them), its
+ * mimir-macro line when it has a colour or a time of its own, its definition.
+ */
+export function codeLibSubText(sub: { code: string; description: string; color?: string; created?: number }, lang: ScriptLang, decor?: CodeLibSub['decor']): string {
+  const c = langIs(lang) === '64tass' ? ';' : '//';
+  const out: string[] = [];
+  const desc = sub.description.replace(/\r\n/g, '\n').split('\n').map(l => l.trimEnd());
+  while (desc.length && !desc[0].trim()) desc.shift();
+  while (desc.length && !desc[desc.length - 1].trim()) desc.pop();
+  if (desc.length) {
+    if (decor?.top) out.push(decor.top);
+    out.push(...desc.map(l => (l ? `${c} ${l}` : c)));
+    if (decor?.bottom) out.push(decor.bottom);
+  }
+  const j = {
+    ...(sub.created ? { created: new Date(sub.created).toISOString() } : {}),
+    ...(sub.color && isBookmarkColor(sub.color) ? { color: sub.color.toLowerCase() } : {}),
+  };
+  if (Object.keys(j).length) out.push(`${c} mimir-macro ${JSON.stringify(j)}`);
+  out.push(sub.code.replace(/\r\n/g, '\n').replace(/\s+$/, ''));
+  return out.join('\n');
+}
+
+/** a collection's code with a macro's lines (codeLibSubText) put in: in the place of the macro named `replace`, else
+ *  at its end after an empty line */
+export function codeLibPutSub(code: string, lang: ScriptLang, text: string, replace?: string): string {
+  const body = code.replace(/\r\n/g, '\n');
+  const s = replace ? codeLibSubs(body, lang).find(x => x.name === replace) : undefined;
+  if (s) { const lines = body.split('\n'); return [...lines.slice(0, s.top - 1), ...text.split('\n'), ...lines.slice(s.end)].join('\n'); }
+  const head = body.replace(/\s+$/, '');
+  return head ? `${head}\n\n${text}` : text;
+}
+
+/** a collection's code without the macro named `name` and its own lines (the empty lines around it as one run) */
+export function codeLibTakeOutSub(code: string, lang: ScriptLang, name: string): string {
+  const body = code.replace(/\r\n/g, '\n');
+  const s = codeLibSubs(body, lang).find(x => x.name === name);
+  if (!s) return body;
+  const lines = body.split('\n'), before = lines.slice(0, s.top - 1), after = lines.slice(s.end);
+  if (!before.length || !before[before.length - 1].trim()) while (after.length && !after[0].trim()) after.shift();
+  while (!after.length && before.length && !before[before.length - 1].trim()) before.pop();
+  return [...before, ...after].join('\n');
+}
+
+/** a piece of code with the name of its first macro named `from` changed to `to` (its definition only) */
+export function codeLibRenameMacro(code: string, lang: ScriptLang, from: string, to: string): string {
+  const d = codeLibMacros(code, lang).find(x => x.name === from);
+  if (!d || !to || from === to) return code;
+  const lines = code.split('\n'), i = d.line - 1;
+  lines[i] = langIs(lang) === '64tass'
+    ? lines[i].replace(/^(\s*)([A-Za-z_]\w*)/, (_m, sp: string) => `${sp}${to}`)
+    : lines[i].replace(/(\.(?:macro|pseudocommand|function)\s+@?)([A-Za-z_]\w*)/, (_m, h: string) => `${h}${to}`);
+  return lines.join('\n');
+}
+
+/**
+ * The other macros of a collection the macro named `name` uses, and those they use, in the order the collection has
+ * them: its definition put in a source alone would not assemble without them (DoubleIRQ_Entry calls irq_save()).
+ */
+export function codeLibNeeds(subs: readonly Pick<CodeLibSub, 'name' | 'code'>[], name: string, lang: ScriptLang): string[] {
+  const tass = langIs(lang) === '64tass';
+  const names = new Set(subs.map(s => s.name));
+  const uses = (s: Pick<CodeLibSub, 'name' | 'code'>): string[] => {
+    const block = { in: false };
+    // (its definition's line without its own name)
+    const text = s.code.split('\n').map((l, i) => { const t = bare(l.replace(/\r$/, ''), tass, block); return i === 0 ? t.replace(new RegExp(`\\b${s.name}\\b`), '') : t; }).join('\n');
+    return [...names].filter(n => n !== s.name && new RegExp(tass ? `(?:[#.]${n}\\b|(?<![\\w.#])${n}\\s*\\()` : `(?<![\\w.!#$@])${n}\\b(?!\\s*:)`).test(text));
+  };
+  const by = new Map(subs.map(s => [s.name, s]));
+  const seen = new Set<string>([name]), todo = [name];
+  while (todo.length) { const s = by.get(todo.pop()!); if (!s) continue; for (const u of uses(s)) if (!seen.has(u)) { seen.add(u); todo.push(u); } }
+  seen.delete(name);
+  return subs.map(s => s.name).filter(n => seen.has(n));
+}
+
+/** a collection's code without Mimir's own lines (each macro's mimir-macro line): as a file to give away */
+export const codeLibPlain = (code: string): string => code.replace(/\r\n/g, '\n').split('\n').filter(l => !SUB_HEAD.test(l)).join('\n');
+
+/** what the lists show of a library: an item, or one of a collection's macros as one of its own (`macro` its name,
+ *  `in` the collection's name; its code its definition alone, its colour and when it was made its own, else the
+ *  collection's) */
+export interface CodeLibEntry extends CodeLibItem { macro?: string; in?: string }
+/** a collection's macros as entries of the lists */
+export function codeLibSubItems(c: CodeLibItem): CodeLibEntry[] {
+  return (c.macros ?? []).map(s => {
+    const color = s.color ?? c.color;
+    return {
+      kind: c.kind, file: c.file, name: s.name, code: s.code, lang: c.lang, description: s.description, created: s.created ?? c.created, changed: c.changed,
+      ...(color ? { color } : {}), ...(c.from ? { from: c.from } : {}), macro: s.name, in: c.name,
+    };
+  });
+}
+
+/**
+ * Macros as one file to export, as a collection's: each with its description as comments above it and its definition,
+ * an empty line between them; `meta`: with Mimir's lines (the line at the top, each macro's colour and time), so the
+ * file can be put back in a library as it was.
+ */
+export function codeLibExportText(subs: readonly { code: string; description: string; color?: string; created?: number; decor?: CodeLibSub['decor'] }[], lang: ScriptLang, meta?: CodeLibMeta): string {
+  const body = subs.map(s => codeLibSubText(meta ? s : { code: s.code, description: s.description }, lang, s.decor)).join('\n\n');
+  return meta ? codeLibFileText({ ...meta, collection: true }, body) : `${body}\n`;
 }
 
 /** the letters the lists are grouped by: A–Z, then Å, Ä and Ö, then # for a name that starts with neither */

@@ -70,6 +70,8 @@ export const CHANNELS = {
   codelibSave: 'codelib:save',
   codelibRemove: 'codelib:remove',
   codelibReveal: 'codelib:reveal',
+  codelibImport: 'codelib:import',
+  codelibExport: 'codelib:export',
   assemblerStart: 'assembler:start',
   assemblerOpen: 'assembler:open',
   assemblerCreate: 'assembler:create',
@@ -454,14 +456,33 @@ export interface LibraryChangeResult { item: LibraryItem; listing: LibraryListin
 export interface LibraryRevealRequest { kind?: LibraryKind; file?: string }
 
 /** the macro and code libraries (spec 10.8): the library's folder, the two folders, the items in them (code-library.ts) */
-export interface CodeLibListing { dir: string; folders: Record<CodeLibKind, string>; items: CodeLibItem[] }
-/** an item of them, by its kind and its file's plain name in that kind's folder */
-export interface CodeLibFileRequest { kind: CodeLibKind; file: string }
-/** an item written: its kind (its folder), name (its file's, made unique there), code and what it is besides; `was`:
- *  the item it is (missing: a new one, made now) */
-export interface CodeLibSaveRequest { kind: CodeLibKind; name: string; code: string; lang: 'kickass' | '64tass'; description: string; color?: string; from?: string; was?: CodeLibFileRequest }
-/** the item written, and the libraries after it */
-export interface CodeLibChange { item: CodeLibItem; listing: CodeLibListing }
+export interface CodeLibListing {
+  dir: string; folders: Record<CodeLibKind, string>; items: CodeLibItem[];
+  /** where an item was last exported to (or imported from), by `kind/file`: Export again writes there; `lines`:
+   *  with Mimir's lines */
+  exports: Record<string, { path: string; lines: boolean }>;
+}
+/** an item of them, by its kind and its file's plain name in that kind's folder; `macro`: one of a collection's macros */
+export interface CodeLibFileRequest { kind: CodeLibKind; file: string; macro?: string }
+/** an item written: its kind (its folder), name (its file's, made unique there; a collection's macro's its macro's),
+ *  code and what it is besides; `was`: the item it is (missing: a new one, made now), a collection's macro too;
+ *  `into`: a macro put in a collection (its file, or a new one's name; missing: a file of its own); `collection`: the
+ *  file is a collection */
+export interface CodeLibSaveRequest {
+  kind: CodeLibKind; name: string; code: string; lang: 'kickass' | '64tass'; description: string; color?: string; from?: string; was?: CodeLibFileRequest;
+  into?: { file: string } | { name: string }; collection?: boolean;
+}
+/** the item written (`macro`: its macro in the collection `item`), and the libraries after it */
+export interface CodeLibChange { item: CodeLibItem; listing: CodeLibListing; macro?: string }
+/** files put in a library (the dialog's): those put in, and those not (why) */
+export interface CodeLibImportResult { listing: CodeLibListing; imported: CodeLibFileRequest[]; skipped: string[] }
+/** macros exported (whole items, or a collection's macros): to a file (the save dialog), to the file an item was
+ *  exported to before (`again`; `force`: also when it was changed since), or to a collection of the macro library (its
+ *  name: one there, else a new one; `move`: taken out of where they were); `lines`: with Mimir's lines */
+export interface CodeLibExportRequest { macros: CodeLibFileRequest[]; to: 'file' | 'again' | { collection: string }; lines: boolean; move?: boolean; force?: boolean }
+/** what was written (`path`, or the collection), how many macros; `changed`: not written, the file was changed since
+ *  it was last written or read (`path` it); `canceled`: the dialog was */
+export interface CodeLibExportResult { listing: CodeLibListing; count: number; path?: string; collection?: CodeLibFileRequest; changed?: boolean; canceled?: boolean }
 
 /* ---------------------------------------------------------------------
  * The Assembler (spec 10.7): a folder of Kick Assembler or 64tass sources. The renderer names a file by its path inside
@@ -605,6 +626,8 @@ export interface KrApi {
   codelibSave(req: CodeLibSaveRequest): Promise<CodeLibChange>;
   codelibRemove(req: CodeLibFileRequest): Promise<CodeLibListing>;
   codelibReveal(req: { kind: CodeLibKind; file?: string }): Promise<void>;
+  codelibImport(req: { kind: CodeLibKind }): Promise<CodeLibImportResult | null>;
+  codelibExport(req: CodeLibExportRequest): Promise<CodeLibExportResult>;
   /** the Assembler (10.7): the folders opened in it before, and where a new one goes */
   assemblerStart(): Promise<AsmStartInfo>;
   /** a folder opened (a dialog when `path` is not one opened before; null: cancelled): it is watched for changes made

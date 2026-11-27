@@ -242,12 +242,16 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     const or = (): boolean => { let v = and(); while (t[i] === '||') { i++; const r = and(); v = v || r; } return v; };
     return or();
   };
+  // how many times each file was imported: one with #importonce is read the first time only, as Kick Assembler does
+  const loads = new Map<string, number>();
   const loadFile = (path: string, depth: number) => {
     const src = vfs[path];
     if (typeof src !== 'string') { E(`Can't open file "${path}"`); return; }
     if (depth > 16) { E(`#import nested too deep at "${path}"`); return; }
-    let inBlock = false;
+    loads.set(path, (loads.get(path) ?? 0) + 1);
+    let inBlock = false, skip = false;
     src.split(/\r?\n/).forEach((raw, i) => {
+      if (skip) return;
       let s = '', q = false;
       for (let k = 0; k < raw.length; k++) {
         const c = raw[k], c2 = raw[k + 1];
@@ -273,6 +277,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         return;
       }
       if (!on()) return;
+      if (/^#importonce\b/.test(s)) { if ((loads.get(path) ?? 0) > 1) skip = true; return; }
       const imp = s.match(/^(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?#import\s+"([^"]+)"/);
       if (imp) { if (imp[1]) stmts.push({ file: path, line: i + 1, label: imp[1], body: '' }); loadFile(importPath(vfs, path, imp[2]), depth + 1); return; }
       for (let part of braceParts(s)) {

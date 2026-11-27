@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkAsm } from '../src/asm-project';
-import { codeLibCall, codeLibFileText, codeLibIsMacro, codeLibTake, codeLibWrap } from '../src/code-library';
+import { codeLibCall, codeLibFileText, codeLibIsMacro, codeLibSubText, codeLibTake, codeLibWrap } from '../src/code-library';
 import { find64tass, findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
 import type { ScriptLang, Vfs } from '../src/types';
 
@@ -54,6 +54,32 @@ describe('the macro library\'s files in Mimir\'s check', () => {
     expect([...called.asm.mem.slice(0x1000, 0x1000 + inline.bytes)]).toEqual([...inline.asm.mem.slice(0x1000, 0x1000 + inline.bytes)]);
     expect(called.bytes).toBe(inline.bytes);
   });
+});
+
+// a collection as Mimir writes it (its macros' own lines, #importonce at its top), imported twice and its macros called
+const COLLECTION = codeLibFileText({ lang: 'kickass', description: 'Raster things', created: Date.UTC(2026, 10, 27), collection: true }, [
+  '#importonce',
+  codeLibSubText({ code: '.macro SetBorder(c) {\n    lda #c\n    sta $d020\n}', description: 'The border\'s colour', color: 'teal', created: Date.UTC(2026, 10, 27, 9) }, 'kickass', { top: '// =====', bottom: '// =====' }),
+  '',
+  codeLibSubText({ code: '.macro Both(c) {\n    SetBorder(c)\n    sta $d021\n}', description: 'Border and background', created: Date.UTC(2026, 10, 27, 10) }, 'kickass'),
+].join('\n'));
+const COLLECTION_MAIN = '#import "Macros/raster.asm"\n#import "Macros/raster.asm"\n* = $1000\n        Both(2)\n        SetBorder(0)\n        rts\n';
+const COLLECTION_INLINE = '* = $1000\n        lda #2\n        sta $d020\n        sta $d021\n        lda #0\n        sta $d020\n        rts\n';
+
+describe('a collection in Mimir\'s check', () => {
+  it('(#importonce) imported twice, its macros called, gives the bytes the code gave', () => {
+    const a = checkAsm({ 'main.asm': COLLECTION_MAIN, 'Macros/raster.asm': COLLECTION }, 'main.asm', 'kickass'), b = checkAsm({ 'main.asm': COLLECTION_INLINE }, 'main.asm', 'kickass');
+    expect(a.problems).toEqual([]);
+    expect([...a.asm.mem.slice(0x1000, 0x1000 + b.bytes)]).toEqual([...b.asm.mem.slice(0x1000, 0x1000 + b.bytes)]);
+    expect(a.bytes).toBe(b.bytes);
+    // (without #importonce the second import defines the macros again)
+    expect(checkAsm({ 'main.asm': COLLECTION_MAIN, 'Macros/raster.asm': COLLECTION.replace('#importonce\n', '') }, 'main.asm', 'kickass').problems.length).toBeGreaterThan(0);
+  });
+});
+describe.skipIf(!kick)('a collection with the real Kick Assembler', () => {
+  it('(#importonce) imported twice, its macros called, gives the bytes the code gave', async () => {
+    expect([...await build('kickass', { 'main.asm': COLLECTION_MAIN, 'Macros/raster.asm': COLLECTION })]).toEqual([...await build('kickass', { 'main.asm': COLLECTION_INLINE })]);
+  }, 60_000);
 });
 
 for (const c of CASES) {

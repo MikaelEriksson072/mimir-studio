@@ -1169,7 +1169,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
   };
   const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
-  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); }, codeLib: (k: CodeLibKind) => codeLibAdd(k) };
+  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); }, codeLib: (k: CodeLibKind, into?: string) => codeLibAdd(k, into) };
   // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
   // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
   const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
@@ -1190,7 +1190,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (ask.what === 'bmGo') { if (ask.id) goBookmark(ask.id); return; }
     if (ask.what === 'bmJump') { jumpBookmark(ask.dir ?? 1); return; }
     // the macro and code libraries': a new item of the lines selected, an item put in the source
-    if (ask.what === 'codeLib') { codeLibAdd(ask.libKind ?? 'macro'); return; }
+    if (ask.what === 'codeLib') { codeLibAdd(ask.libKind ?? 'macro', ask.libInto); return; }
     if (ask.what === 'insert') { if (ask.insert) insertLib(ask.insert); return; }
     if (ask.what === 'line') {
       if (!ask.at || !ask.line || !paths.has(ask.at)) return;
@@ -1342,18 +1342,20 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /* ---- the macro and code libraries (spec 10.8): lines of a source made an item, an item put in the source ---- */
   /** the dialog for a new item of `kind`'s library: the lines selected (a selection ending at a line's start leaves
    *  that line out), none: the macro (…) the caret is in, else nothing to start with */
-  const codeLibAdd = (kind: CodeLibKind) => {
+  const codeLibAdd = (kind: CodeLibKind, collection?: string) => {
     const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
-    if (!e || !m || !p || !s) { useCodeLib.getState().set({ editing: { kind, lang, code: '' } }); return; }
+    // (`collection`: the macro goes in that collection of the macro library)
+    const into = kind === 'macro' && collection ? { into: { file: collection } } : {};
+    if (!e || !m || !p || !s) { useCodeLib.getState().set({ editing: { kind, lang, code: '', ...into } }); return; }
     const text = m.getValue();
     let from = s.startLineNumber, to = s.endColumn === 1 && s.endLineNumber > from ? s.endLineNumber - 1 : s.endLineNumber;
     if (s.isEmpty()) {
       const d = codeLibMacroAt(text, lang, from);
-      if (!d) { toast('Nothing is selected: select the lines to keep (or click in a macro to take all of it)', 'info'); useCodeLib.getState().set({ editing: { kind, lang, code: '' } }); return; }
+      if (!d) { toast('Nothing is selected: select the lines to keep (or click in a macro to take all of it)', 'info'); useCodeLib.getState().set({ editing: { kind, lang, code: '', ...into } }); return; }
       from = d.line; to = d.end;
     }
     const where = typeof outside[p] === 'string' ? foundOut.current[p] ?? p : p;
-    useCodeLib.getState().set({ editing: { kind, lang, code: codeLibTake(text, from, to), from: `${name} · ${where}:${from}${to > from ? `–${to}` : ''}` } });
+    useCodeLib.getState().set({ editing: { kind, lang, code: codeLibTake(text, from, to), from: `${name} · ${where}:${from}${to > from ? `–${to}` : ''}`, ...into } });
   };
   /** an item put in the source shown: a macro's call where the caret is (its parameters places to type in, Tab goes
    *  on), else its lines at the caret's line (on an empty line in its place, after the line when the caret is at its
@@ -1364,6 +1366,22 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
     if (!p || !e || !monaco || !m || e.getModel() !== m || !(p in textsRef.current) || !ASM_SOURCE.test(p)) { toast(`Open a source of the project to put ${ins.name} in: it goes where the caret is`, 'warn'); return; }
     let text = ins.text.replace(/\r\n/g, '\n'), note = '', warn = '';
+    // a collection's import: at the top of the source, after the imports it has (once)
+    if (ins.top) {
+      const lc = m.getLineCount();
+      for (let n = 1; n <= lc; n++) if (m.getLineContent(n).trim() === text.trim()) { e.focus(); e.setSelection(new monaco.Range(n, 1, n, m.getLineMaxColumn(n))); e.revealLineInCenterIfOutsideViewport(n); toast(`${p} imports ${ins.name} already (line ${n})`, 'info'); return; }
+      let last = 0;
+      for (let n = 1; n <= lc; n++) if (/^\s*(?:#import(?:once)?|\.include|\.import\s+source)\b/.test(m.getLineContent(n))) last = n;
+      const at = last + 1, edit = last || !m.getLineContent(1).trim() ? `${text}\n` : `${text}\n\n`;
+      e.focus();
+      e.pushUndoStop();
+      e.executeEdits('code-library', [{ range: new monaco.Range(at, 1, at, 1), text: edit, forceMoveMarkers: true }]);
+      e.pushUndoStop();
+      e.setSelection(new monaco.Range(at, 1, at, m.getLineMaxColumn(at)));
+      e.revealLineInCenterIfOutsideViewport(at);
+      toast(ins.lang !== lang ? `${ins.name} is written for ${LANG_TITLE[ins.lang]}, the project for ${LANG_TITLE[lang]}: its import (line ${at}) will not assemble` : `Put in the import of ${ins.name} (line ${at}): its macros are the project's now`, ins.lang !== lang ? 'warn' : 'ok');
+      return;
+    }
     if (ins.lang !== lang) {
       const c = !ins.call && !ins.macro && ins.lang === 'kickass' && lang === '64tass' ? kickToTass(text) : null;
       if (c && 'source' in c) { text = c.source.replace(/\n+$/, ''); note = ` (made ${LANG_TITLE[lang]})`; }
