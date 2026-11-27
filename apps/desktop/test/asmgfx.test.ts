@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, asmBlockMarks, asmBlockText, asmProgram, checkAsm, render, type GfxLine, type ProjectInput, type ScriptLang } from '@mimir/core';
 import { asmHiddenRanges, asmPictureHeight, asmPictureLine, asmPictures } from '../src/lib/asmgfx';
-import { gfxListing } from '../src/lib/gfxlines';
+import { gfxListing, gfxPixelAt } from '../src/lib/gfxlines';
 
 /** a program's source with a block in it (as Insert block writes it), checked, and the pictures of its file */
 function pictures(lang: ScriptLang, body: string, o: Parameters<typeof asmPictures>[5] = {}) {
@@ -143,5 +143,25 @@ describe('pictures in the Assembler’s editor', () => {
     expect(asmHiddenRanges(pics, [1])).toEqual([{ startLineNumber: p.from, startColumn: 1, endLineNumber: p.to, endColumn: 1 }]);
     expect(asmHiddenRanges(pics, [1, p.from + 3])).toEqual([]);
     expect(asmHiddenRanges(pics, [p.to + 1])).toHaveLength(1);
+  });
+
+  it('finds the byte and the bits of the pixel under the pointer, to draw in a picture', () => {
+    const row = (o: Partial<GfxLine>): GfxLine => ({ k: 'gfx', a: 0x2000, n: 128, kind: 'sprite', unit: 64, col: 0, cols: 8, rows: 1, blk: 0x2000, mc: false, ...o });
+    const spr = row({});
+    expect(gfxPixelAt(spr, 0, 0)).toEqual({ addr: 0x2000, shift: 7, mask: 1 });
+    expect(gfxPixelAt(spr, 9.5, 2.2)).toEqual({ addr: 0x2007, shift: 6, mask: 1 });
+    // the second sprite, its last row's last pixel; the gap between them; below them
+    expect(gfxPixelAt(spr, 29 + 23, 20)).toEqual({ addr: 0x207e, shift: 0, mask: 1 });
+    expect(gfxPixelAt(spr, 25, 3)).toBeNull();
+    expect(gfxPixelAt(spr, 3, 21)).toBeNull();
+    // multicolour: a pair of bits two pixels wide
+    expect(gfxPixelAt(row({ mc: true }), 3, 0)).toEqual({ addr: 0x2000, shift: 4, mask: 3 });
+    // a byte the line does not hold (a sprite cut short)
+    expect(gfxPixelAt(row({ n: 100 }), 29, 20)).toBeNull();
+    expect(gfxPixelAt(row({ n: 100 }), 29, 11)).toEqual({ addr: 0x2040 + 33, shift: 7, mask: 1 });
+    // characters: 8 bytes a character, a row of them; a bitmap's cells the same
+    const chars = row({ a: 0x3000, n: 64, kind: 'chars', unit: 8, cols: 32, blk: 0x3000 });
+    expect(gfxPixelAt(chars, 8 * 2 + 3, 5)).toEqual({ addr: 0x3000 + 16 + 5, shift: 4, mask: 1 });
+    expect(gfxPixelAt(row({ a: 0x4000, n: 8000, kind: 'bitmap', unit: 8, cols: 40, blk: 0x4000 }), 8 * 39 + 7, 8 * 24 + 7)).toEqual({ addr: 0x4000 + 7999, shift: 0, mask: 1 });
   });
 });

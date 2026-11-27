@@ -1714,6 +1714,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   };
   const hideRef = useRef(hidePictureLines); hideRef.current = hidePictureLines;
   const pickRef = useRef(onPick); pickRef.current = onPick;
+  // (what is drawn in a picture goes to the lines that write it, as what is drawn in the inspector or Graphics does)
+  const writeRef = useRef(writeBytes); writeRef.current = writeBytes;
   useEffect(() => {
     const e = ed.current, monaco = monacoRef.current;
     if (state !== 'ready' || !e || !monaco) return;
@@ -1748,7 +1750,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       return Math.round(col * ch);
     };
     const zone = (p: AsmPicture) => <AsmPictureZone p={p} mem={mem} sprites={sprites} onPick={(c, extend) => pickRef.current(c, extend)}
-      onOpen={line => { e.setPosition({ lineNumber: line, column: m.getLineFirstNonWhitespaceColumn(line) || 1 }); e.focus(); }} />;
+      onOpen={line => { e.setPosition({ lineNumber: line, column: m.getLineFirstNonWhitespaceColumn(line) || 1 }); e.focus(); }}
+      onDraw={changes => void writeRef.current(changes)} />;
     const key = `${shown}\n${pictures.map(p => `${p.after}:${asmPictureHeight(p)}:${indent(p)}`).join(',')}`;
     const z = picZones.current;
     if (key === z.key) { pictures.forEach((p, i) => z.roots[i]?.render(zone(p))); hideRef.current(); return; }

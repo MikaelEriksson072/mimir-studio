@@ -1563,3 +1563,67 @@ test('sprites and a charset in the Assembler drawn as pictures, as the re-assemb
   await expect(sprites).toBeVisible();
   await closeProject(page, 'pics');
 });
+
+test('drawing in a picture in the Assembler\'s editor: Draw beside it, a click and a drag set pixels, the right button clears, a multicolour charset\'s pens; the .byte lines change and stay hidden', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'drawpic');
+  mkdirSync(dir);
+  const rows = Array.from({ length: 21 }, () => '        .byte %00000000, %00000000, %00000000');
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:  rts', '        * = $2000 "sprite"', '// @block sprite hires', 'ship:', ...rows, '        .byte 0', '// @end',
+    '        * = $3000 "font"', '// @block charset multicolor', 'font:', '        .byte $00, $00, $00, $00, $00, $00, $00, $00', '// @end', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const disk = () => readFileSync(join(dir, 'main.asm'), 'utf8').split('\n');
+  const sprite = page.getByRole('group', { name: 'Sprites $2000–$203f, lines 6–27' });
+  const font = page.getByRole('group', { name: 'Characters $3000–$3007, lines 32–32' });
+  await expect(sprite).toBeVisible({ timeout: 15_000 });
+  const canvas = sprite.locator('canvas').first();
+  const pixel = (x: number, y: number) => canvas.evaluate((c: HTMLCanvasElement, [x, y]) => [...c.getContext('2d')!.getImageData(x, y, 1, 1).data].join(','), [x, y]);
+  const bg = await pixel(0, 0);
+
+  // Draw beside the picture, on for every picture (the charset's too)
+  const draw = sprite.getByRole('button', { name: 'Draw in the pictures' });
+  await draw.click();
+  await expect(draw).toHaveAttribute('aria-pressed', 'true');
+  await expect(font.getByRole('button', { name: 'Draw in the pictures' })).toHaveAttribute('aria-pressed', 'true');
+  // (hires: no pens)
+  await expect(sprite.getByRole('button', { name: 'Pen 01' })).toHaveCount(0);
+
+  // a click: row 0's first pixel set (hires: the colour it did not have); the line that writes it changes, and stays hidden
+  await canvas.click({ position: { x: 1, y: 1 } });
+  await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %10000000, %00000000, %00000000');
+  await expect(toast(page, 'Drawn into main.asm line 6')).toBeVisible();
+  expect(await pixel(0, 0)).not.toBe(bg);
+  expect(await editorText(page)).not.toContain('%10000000');
+  // a drag along row 1's middle byte
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 8 * 2 + 1, box.y + 1 * 2 + 1);
+  await page.mouse.down();
+  for (let x = 9; x < 16; x++) await page.mouse.move(box.x + x * 2 + 1, box.y + 1 * 2 + 1);
+  await page.mouse.up();
+  await expect.poll(() => disk()[6], { timeout: 5000 }).toBe('        .byte %00000000, %11111111, %00000000');
+  expect(await pixel(15, 1)).not.toBe(bg);
+  // the right button: the background
+  await canvas.click({ position: { x: 1, y: 1 }, button: 'right' });
+  await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %00000000, %00000000, %00000000');
+  await expect.poll(() => pixel(0, 0)).toBe(bg);
+  await expect(page.locator('.context-menu, .monaco-menu')).toHaveCount(0);
+  await shot(page, '25-asm-picture-draw');
+
+  // the multicolour charset: its pens beside it; 01 in its first pair of pixels (its line in hex, as it was written)
+  await font.getByRole('button', { name: 'Pen 01' }).click();
+  await expect(font.getByRole('button', { name: 'Pen 01' })).toHaveAttribute('aria-pressed', 'true');
+  await font.locator('canvas').first().click({ position: { x: 1, y: 1 } });
+  await expect.poll(() => disk()[31], { timeout: 5000 }).toBe('        .byte $40, $00, $00, $00, $00, $00, $00, $00');
+
+  // Draw off: a click picks the sprite again
+  await draw.click();
+  await expect(draw).toHaveAttribute('aria-pressed', 'false');
+  await expect(async () => {
+    await canvas.click({ position: { x: 10, y: 10 } });
+    await expect(page.locator('.statusbar')).toContainText(/\$2000 · ship · Sprite/, { timeout: 1000 });
+  }).toPass({ timeout: 30_000 });
+  expect(disk()[6]).toBe('        .byte %00000000, %11111111, %00000000');
+  await closeProject(page, 'drawpic');
+});

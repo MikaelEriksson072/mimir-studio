@@ -121,6 +121,20 @@ export function gfxItemAt(l: GfxLine, x: number, y: number): { a: Addr; n: numbe
   return k >= 0 && k < gfxCount(l) ? itemCell(l, k) : null;
 }
 
+/** The byte of a picture line under a point (C64 pixels from the picture's top left) and the bits of its pixel there:
+ *  hires one bit, multicolour the pair two pixels wide (`shift`, `mask`), as lib/gfxview's pixelAt for the Graphics tab.
+ *  Null in a gap, past the last item, or at a byte the line does not hold. */
+export function gfxPixelAt(l: GfxLine, x: number, y: number): { addr: Addr; shift: number; mask: number } | null {
+  const c = gfxItemAt(l, x, y);
+  if (!c) return null;
+  const b = gfxItemBox(l, (c.a - l.a) / l.unit), px = Math.floor(x - b.x), py = Math.floor(y - b.y);
+  if (px < 0 || py < 0 || px >= b.w || py >= b.h) return null;
+  const addr = l.kind === 'sprite' ? c.a + py * 3 + (px >> 3) : c.a + py;
+  if (addr >= l.a + l.n) return null;
+  const xi = px & 7;
+  return l.mc ? { addr, shift: 6 - 2 * (xi >> 1), mask: 3 } : { addr, shift: 7 - xi, mask: 1 };
+}
+
 /** the rectangles (C64 pixels) of the items that `start`..`end` (end excluded) takes in, one per row of items */
 export function gfxRects(l: GfxLine, start: Addr, end: Addr): { x: number; y: number; w: number; h: number }[] {
   const n = gfxCount(l), k0 = Math.max(0, Math.floor((start - l.a) / l.unit)), k1 = Math.min(n - 1, Math.ceil((end - l.a) / l.unit) - 1);

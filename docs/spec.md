@@ -4007,6 +4007,14 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   på kontrollen av det som skrivits (Monaco flyttar det dolda och zonerna med texten under tiden). Test:
   `apps/desktop/test/asmgfx.test.ts` (även att raderna blir desamma som listningens bilder av samma block) och e2e
   *sprites and a charset in the Assembler drawn as pictures …*.
+  **Rita i bilderna** (2026-11-27): pennan direkt efter det en bild ritar (svag tills pekaren är på bilden) slår på
+  *Draw* i alla editorns bilder, som *Draw* i Graphics-fliken: ett klick eller ett drag sätter pixlar (hires: den färg
+  den första pixeln inte hade; flerfärg: pennan, ett av de fyra bitparen, som väljs bredvid pennan i Graphics-flikens
+  färger; höger knapp: bakgrunden, utan någon meny). Det ritade syns genast över bilden (`gfxPixelAt` i
+  `lib/gfxlines.ts` ger byten och bitarna under pekaren), och när knappen släpps skrivs de ändrade byten in i raderna
+  som skriver dem (`asmWriteBytes`, som från inspektorn och Graphics; ett steg att ångra i filen, en toast säger
+  vilka rader). Raderna förblir dolda, och bilden ritas av kontrollen av dem igen. Medan *Draw* är på väljer ett klick
+  inget och ett dubbelklick visar inte raderna. Test: e2e *drawing in a picture in the Assembler's editor …*.
 - **Rita i den förstorade spriten eller tecknet, och i Graphics** (2026-11-25). I ett Assembler-projekt ritar man i
   inspektorns förstorade sprite eller tecken (14.1), och i Graphics-flikens tecken, sprites och bitmappar med *Draw* (en
   ruta under *Draw* bland vyns val; i flerfärg pennorna bredvid; `pixelAt` i `lib/gfxview.ts` ger byten och biten under
