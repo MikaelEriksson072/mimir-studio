@@ -70,10 +70,13 @@ test('the project\'s macro file: built from the library as the code calls its ma
   const used = region.getByRole('list', { name: 'The files in macros.asm' });
   await expect(used.getByRole('listitem')).toHaveText(['raster.asm3 macros · the code calls it']);
   await expect(page.locator('.scr-check')).toContainText('Ready');
-  // the list marks them (every macro A–Ö, its file beside it)
+  // the list marks them: the folder raster (a file of several macros, under R), and its macros opened
   const list = page.getByRole('list', { name: 'The macro library' });
+  const raster = list.getByRole('group', { name: 'R' }).getByRole('button', { name: /^raster/ });
+  await expect(raster).toContainText('macros.asm');
+  await raster.click();
   await expect(list.getByRole('button', { name: /^WaitAndSet/ })).toContainText('macros.asm');
-  await expect(list.getByRole('button', { name: /^WaitAndSet/ })).toContainText('raster');
+  await expect(list.getByRole('group', { name: 'W' })).toHaveCount(0);
 
   // a file used in the project from the list: all its macros go in
   await list.getByRole('button', { name: /^Black/ }).click();
@@ -161,7 +164,7 @@ test('the project\'s macro file when the project imports the same macros from ou
 
   // the file used in the project: its macros are in the project already, through the import from outside
   await page.getByRole('button', { name: /^Macros and code/ }).click();
-  await page.locator('.cl-file-pick select').selectOption({ label: 'raster.asm (2)' });
+  await page.getByRole('list', { name: 'The macro library' }).getByRole('button', { name: /^raster/ }).click();
   await page.getByRole('region', { name: 'The file raster.asm' }).getByRole('button', { name: 'Use in project' }).click();
   const region = page.getByRole('region', { name: 'The project\'s macro file' });
   await expect(region).toContainText('0 macros');

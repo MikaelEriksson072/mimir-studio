@@ -7,10 +7,11 @@
  * an item with right-click → Add to the macro library… (or the code library), or the + here.
  *
  * There are files, and macros in them: a file of the macro library holds one macro or several (irq_lib.asm), any file
- * takes more. The list is always the macros, each on its own line A–Ö, its file beside it when the file is not named
- * after it. The file picker above the list shows one file's macros in their order instead, and what can be done with
- * the file (import it, add to it, export it, …). Files from anywhere are put in a library (the import button), and
- * macros exported to a file or to a file of the library (the export dialog). */
+ * takes more. A file of several macros is a folder in the list, under its name's letter (irq_lib under I): a click
+ * opens it, and in it what can be done with the file (use it in the project, add to it, export it, …) and its macros
+ * A–Ö. A macro alone in its file is a line of its own, its file beside it when the file is not named after it. A search
+ * opens the folders it finds something in. Files from anywhere are put in a library (the import button), and macros
+ * exported to a file or to a file of the library (the export dialog). */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   CODE_LIB_LETTERS, codeLibGroups, codeLibHit, codeLibMacroEntries, codeLibMacros, codeLibMatches, codeLibNeeds, codeLibOrder, codeLibSignature, isBookmarkColor, LANG_TITLE,
@@ -20,7 +21,7 @@ import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
 import { useAsmLink, type AsmMacroDefined } from '../store/asmlink';
-import { codeLibExportKey, sameCodeLib, useCodeLib, type CodeLibRef } from '../store/codelib';
+import { codeLibExportKey, codeLibFolder, sameCodeLib, useCodeLib, type CodeLibRef } from '../store/codelib';
 import { bookmarkCss } from './Bookmarks';
 
 const kr = typeof window !== 'undefined' ? window.kr : undefined;
@@ -68,9 +69,12 @@ export interface CodeLibViewProps {
 /** what the project's macro file does with a macro's file: it is used (`why`: added, a macro of it called, used by
  *  another file), the macro is in it, or the project defines the macro itself */
 interface FileMark { file: string; lib: string; count: number; added: boolean; why: CodeLibWhy | null; inIt: boolean; own: boolean; onUse: () => void; onStop: () => void }
+/** a line of the list: a macro alone in its file (or a piece of code), or a file of several macros as a folder (its
+ *  macros A–Ö: those the search finds) */
+interface ListRow { name: string; file: string; entry?: CodeLibEntry; folder?: { item: CodeLibItem; macros: CodeLibEntry[] } }
 
 export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, toast, project }: CodeLibViewProps) {
-  const { listing, loading, error, kind, q, color, open, file, set, load, remove, importFiles, exportMacros } = useCodeLib();
+  const { listing, loading, error, kind, q, color, open, unfolded, set, load, remove, importFiles, exportMacros } = useCodeLib();
   const defined = useAsmLink(s => s.macroDefined);
   // (read when the view is shown: the folders may have changed outside Mimir)
   useEffect(() => { void load(); }, [load]);
@@ -78,16 +82,33 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
   const ofKind = useMemo(() => all.filter(i => i.kind === kind), [all, kind]);
   // every macro on a line of its own (each file's, one or several), a piece of code its file
   const entries = useMemo(() => [...codeLibMacroEntries(all), ...all.filter(i => i.kind === 'code')], [all]);
-  // the macro library's files (the file picker's), and the one picked (none: all of them)
-  const files = useMemo(() => codeLibOrder(all.filter(i => i.kind === 'macro')), [all]);
-  const picked = kind === 'macro' && file ? files.find(f => f.file === file) ?? null : null;
+  // the macro library's files of several macros: a folder each in the list
+  const folders = useMemo(() => all.filter(codeLibFolder), [all]);
   const filtering = !!q.trim() || !!color;
   const colorOk = (c?: string) => !color || (c ?? '') === color;
   const entryOk = (e: CodeLibEntry) => codeLibMatches(e, q) && colorOk(e.color);
   const count = (k: CodeLibKind) => entries.filter(e => e.kind === k && (!filtering || entryOk(e))).length;
-  // what the list shows: in a file picked its macros in its order (as they were written there), else every one A–Ö
-  const shown = useMemo(() => entries.filter(e => e.kind === kind && (!picked || e.file === picked.file) && (!filtering || entryOk(e))), [entries, kind, picked, q, color]); // eslint-disable-line react-hooks/exhaustive-deps
-  const groups = useMemo(() => (picked ? [{ letter: '', items: shown }] : codeLibGroups(shown)), [picked, shown]);
+  // what the list shows, A–Ö: the macros alone in their files and the folders (under their names' letters), each
+  // folder with its macros A–Ö; a search shows the folders it finds a macro in (or its name: all its macros)
+  const rows = useMemo(() => {
+    const out: ListRow[] = [], inFolder = new Map<string, CodeLibEntry[]>(folders.map(f => [f.file, []]));
+    for (const e of entries) {
+      if (e.kind !== kind) continue;
+      const of = e.kind === 'macro' ? inFolder.get(e.file) : undefined;
+      if (of) of.push(e); else if (!filtering || entryOk(e)) out.push({ name: e.name, file: e.file, entry: e });
+    }
+    if (kind === 'macro') for (const f of folders) {
+      const ms = inFolder.get(f.file)!;
+      const named = !!q.trim() && codeLibMatches({ name: f.name, description: f.description, code: '', lang: f.lang }, q);
+      const hits = filtering ? ms.filter(e => (named || codeLibMatches(e, q)) && colorOk(e.color)) : ms;
+      if (!filtering || hits.length) out.push({ name: f.name, file: f.file, folder: { item: f, macros: codeLibOrder(hits) } });
+    }
+    return out;
+  }, [entries, folders, kind, q, color]); // eslint-disable-line react-hooks/exhaustive-deps
+  const groups = useMemo(() => codeLibGroups(rows), [rows]);
+  /** a folder open: unfolded by a click, or while a search shows what it finds in it */
+  const isUnfolded = (f: CodeLibItem) => filtering || unfolded.includes(f.file);
+  const fold = (f: CodeLibItem) => set({ unfolded: unfolded.includes(f.file) ? unfolded.filter(u => u !== f.file) : [...unfolded, f.file] });
   // the colours the library's items have, in the order the picker has them
   const colors = useMemo(() => [...new Set(entries.filter(e => e.kind === kind).map(i => i.color ?? ''))].sort((a, b) => (a ? 1 : 0) - (b ? 1 : 0) || a.localeCompare(b)), [entries, kind]);
   const letters = new Set(groups.map(g => g.letter));
@@ -125,7 +146,9 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
       () => toast(last ? `${i.file} is in the Recycle Bin (${listing?.folders[i.kind] ?? CODE_LIB_TITLE[i.kind].lib})` : `${i.name} is out of ${i.file} (and in the Recycle Bin as ${i.name}.asm)`, 'ok'),
       e => toast(`Could not move it to the Recycle Bin: ${errorText(e)}`, 'err'));
   };
-  const trashFile = (f: CodeLibItem) => remove({ kind: f.kind, file: f.file }).then(() => { set({ file: '' }); toast(`${f.file} is in the Recycle Bin`, 'ok'); }, e => toast(`Could not move it to the Recycle Bin: ${errorText(e)}`, 'err'));
+  const trashFile = (f: CodeLibItem) => remove({ kind: f.kind, file: f.file }).then(() => toast(`${f.file} is in the Recycle Bin`, 'ok'), e => toast(`Could not move it to the Recycle Bin: ${errorText(e)}`, 'err'));
+  /** its library file imported by the source as it is, in place of the project's macro file */
+  const importDirectly = (f: CodeLibItem): MenuItem[] => (lang === f.lang ? [{ label: `Import ${f.file} directly (${lang === '64tass' ? '.include' : '#import'} its library file)`, icon: 'play' as const, run: () => onInsert(f, 'import') }] : []);
   const exportAgain = (c: CodeLibItem, force = false) => {
     setOverwrite(null);
     exportMacros({ macros: [{ kind: c.kind, file: c.file }], to: 'again', lines: false, force }).then(r => {
@@ -147,22 +170,23 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
       { sep: true },
       { label: 'Edit…', icon: 'pencil', run: () => edit(i) },
       ...(i.kind === 'macro' ? [{ label: 'Export…', icon: 'upload' as const, run: () => set({ exporting: [refOf(i)] }) }] : []),
-      ...(f && !picked ? [{ label: `Show its file: ${f.file}`, icon: 'doc' as const, run: () => set({ file: f.file, open: refOf(i) }) }] : []),
+      ...(f ? importDirectly(f) : []),
       { label: 'Show it in the folder', icon: 'folder', run: () => reveal({ kind: i.kind, file: i.file }) },
       { sep: true },
       { label: many ? `Take it out of ${i.file} (to the Recycle Bin)` : 'Move to the Recycle Bin', icon: 'trash', run: () => void trash(i) },
     ]);
   };
-  const fileMenu = (f: CodeLibItem, x: number, y: number) => onMenu(x, y, [
+  const fileMenu = (f: CodeLibItem, x: number, y: number) => { const was = listing?.exports[codeLibExportKey(f)]; onMenu(x, y, [
     { header: `${f.file} · ${nMacros(f.macros?.length ?? 0)}` },
-    // (its library file imported by the source as it is, in place of the project's macro file)
-    ...(lang === f.lang ? [{ label: `Import it directly (${lang === '64tass' ? '.include' : '#import'} its library file)`, icon: 'play' as const, run: () => onInsert(f, 'import') }] : []),
+    ...importDirectly(f),
+    { label: 'Add a macro… (the lines selected in the Assembler)', icon: 'plus', run: () => onNew('macro', f.file) },
+    { label: 'Export… (the file, or some of its macros)', icon: 'upload', run: () => set({ exporting: [{ kind: 'macro', file: f.file }] }) },
+    ...(was ? [{ label: `Export it again (to ${shortPath(was.path)}, where it was exported to or read from)`, icon: 'refresh' as const, run: () => exportAgain(f) }] : []),
     { label: 'Edit the file… (its name, description, colour, code)', icon: 'pencil', run: () => editFile(f) },
     { label: 'Show it in the folder', icon: 'folder', run: () => reveal({ kind: f.kind, file: f.file }) },
-    { label: 'All files', icon: 'list', run: () => set({ file: '' }) },
     { sep: true },
     { label: 'Move the file to the Recycle Bin', icon: 'trash', run: () => void trashFile(f) },
-  ]);
+  ]); };
   const doImport = () => {
     importFiles(kind).then(r => {
       if (!r) return;
@@ -203,26 +227,62 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
   };
 
   const T = CODE_LIB_TITLE[kind];
-  const row = (e: CodeLibEntry) => {
+  const row = (e: CodeLibEntry, inFolder = false) => {
     const ref = refOf(e), on = sameCodeLib(open, ref);
     const f = fileOf(e), m = itemMacro(e);
     const needs = f && e.macro ? codeLibNeeds(f.macros ?? [], e.macro, e.lang) : [];
-    // (its file beside it when the file is not named after it: a file of several, or one named otherwise)
-    const showIn = !picked && !!e.macro && e.in !== e.name;
+    // (its file beside it when the file is not named after it; in its folder not)
+    const showIn = !inFolder && !!e.macro && e.in !== e.name;
     return <EntryRow key={`${e.file}/${e.macro ?? ''}`} entry={e} showIn={showIn} on={on} q={q} lang={lang} macro={m} needs={needs} primary={primary(e)}
       mark={pm ? markOf(e) : undefined} body={markOf(e)}
       rowRef={on ? openRef : undefined} onToggle={() => set({ open: on ? null : ref })} onInsert={how => onInsert(e, how)} onCopy={() => onCopy(e.code, `Copied ${e.name}`)}
       onEdit={() => edit(e)} onMenu={(x, y) => menu(e, x, y)} />;
   };
-  const was = picked ? listing?.exports[codeLibExportKey(picked)] : undefined;
-  const pn = picked?.macros?.length ?? 0;
+  /** a file of several macros opened: what can be done with it, and its macros */
+  const fileBar = (f: CodeLibItem) => {
+    const u = fileUse(f);
+    return (
+      <div className="cl-file-bar" role="region" aria-label={`The file ${f.file}`}>
+        <div className="cl-file-btns">
+          {project && lang === f.lang && (u.added
+            ? <button className="btn small on" title={`${f.file} is used in the project: all its macros are in ${fileName}. A click takes it out (it stays while the code calls one of its macros)`} onClick={() => useFile(f, false)}><Icon name="check" size={12} />Used in project</button>
+            : u.used
+              ? <button className="btn small on" title={`In ${fileName} because ${u.why === 'called' ? 'the code calls one of its macros' : 'a file in it uses one of its macros'}; a click keeps it there for good`} onClick={() => useFile(f, true)}><Icon name="check" size={12} />In project ({u.why})</button>
+              : <button className="btn small primary" title={`Use ${f.file} in the project: all its macros go in ${fileName}, which the main source imports once`} onClick={() => useFile(f, true)}><Icon name="plus" size={12} />Use in project</button>)}
+          <button className="btn small" title={`Add a macro to ${f.file}, of the lines selected in the Assembler`} onClick={() => onNew('macro', f.file)}><Icon name="plus" size={12} />Add</button>
+          <span className="grow" />
+          <button className="icon-btn" aria-label={`More for ${f.file}`} title="More: import it directly, export it, edit the file, show it in the folder, to the Recycle Bin" onClick={e => { const b = e.currentTarget.getBoundingClientRect(); fileMenu(f, b.left, b.bottom + 2); }}><Icon name="more" size={14} /></button>
+        </div>
+        {overwrite?.file === f.file && <div className="cl-confirm small" role="alert">
+          <span><span className="mono">{overwrite.path}</span> was changed since Mimir wrote or read it.</span>
+          <button className="btn small danger" onClick={() => exportAgain(f, true)}>Overwrite it</button>
+          <button className="btn small" onClick={() => setOverwrite(null)}>Keep it</button>
+        </div>}
+      </div>);
+  };
+  const folderRow = (r: ListRow) => {
+    const f = r.folder!.item, ms = r.folder!.macros, n = f.macros?.length ?? 0, on = isUnfolded(f), first = f.description.split('\n')[0];
+    const u = project && lang === f.lang ? fileUse(f) : null;
+    return (
+      <div key={`folder/${f.file}`} role="listitem" className={cx('cl-item cl-folder', on && 'unfolded', f.color && 'tinted')} style={clVar(f.color)}>
+        <button className="cl-row" aria-expanded={on} title={`${f.file}: ${nMacros(n)} that belong together (a project that uses it gets them all)${first ? ` · ${first}` : ''}\nMade ${codeLibTime(f.created)}${f.changed > f.created + 60_000 ? `, changed ${codeLibTime(f.changed)}` : ''}${f.from ? ` · from ${f.from}` : ''}\n${filtering ? 'The search shows what it finds in it' : on ? 'Click to fold it' : 'Click to see its macros'}`}
+          onClick={() => fold(f)} onContextMenu={e => { e.preventDefault(); fileMenu(f, e.clientX, e.clientY); }}>
+          <span className="cl-name-row"><Icon name="chevron" size={10} className={cx('cl-chev', on && 'on')} /><Icon name="folder" size={13} className="cl-folder-ic" />
+            <span className="cl-name">{f.name}</span><span className="lib-n" title={filtering && ms.length < n ? `${ms.length} of its ${n} macros found` : nMacros(n)}>{filtering && ms.length < n ? `${ms.length}/${n}` : n}</span>
+            {u?.used && <span className={cx('cl-infile', u.added && 'added')} title={`In ${fileName}, all its macros: ${u.added ? 'the file is used in the project' : u.why === 'called' ? 'the code calls one of its macros' : 'a file in it uses one of its macros'}`}><Icon name="check" size={10} />{fileName}</span>}</span>
+          {first && <span className="cl-desc">{first}</span>}
+        </button>
+        {on && <>{fileBar(f)}
+          <div className="cl-folder-list" role="list" aria-label={`The macros of ${f.file}`}>{ms.map(e => row(e, true))}</div></>}
+      </div>);
+  };
   return (
     <div className="side-inner cl-side">
       <div className="side-title lib-title">Macros and code
         <span className="grow" />
-        <button className="icon-btn" title={`A new ${T.one} for the ${T.lib}, of the lines selected in the Assembler`} aria-label={`New ${T.one}`} disabled={!desktop} onClick={() => onNew(kind, picked?.file)}><Icon name="plus" size={14} /></button>
+        <button className="icon-btn" title={`A new ${T.one} for the ${T.lib}, of the lines selected in the Assembler`} aria-label={`New ${T.one}`} disabled={!desktop} onClick={() => onNew(kind)}><Icon name="plus" size={14} /></button>
         <button className="icon-btn" title={kind === 'macro' ? 'Put files of macros in the library, from anywhere (irq_lib.asm: a file and its macros)' : 'Put files in the code library, from anywhere'} aria-label={`Put files in the ${T.lib}`} disabled={!desktop} onClick={doImport}><Icon name="download" size={14} /></button>
-        {kind === 'macro' && <button className="icon-btn" title="Export macros: to a file a source imports, or to a file of the library" aria-label="Export macros" disabled={!desktop || !ofKind.length} onClick={() => set({ exporting: picked ? [{ kind: 'macro', file: picked.file }] : open && open.kind === 'macro' ? [open] : [] })}><Icon name="upload" size={14} /></button>}
+        {kind === 'macro' && <button className="icon-btn" title="Export macros: to a file a source imports, or to a file of the library" aria-label="Export macros" disabled={!desktop || !ofKind.length} onClick={() => set({ exporting: open && open.kind === 'macro' ? [open] : [] })}><Icon name="upload" size={14} /></button>}
         <button className="icon-btn" title="Read the folders again" aria-label="Read the libraries again" disabled={!desktop || loading} onClick={() => void load()}><Icon name="refresh" size={14} /></button>
         <button className="icon-btn" title={listing ? `Open the folder: ${listing.folders[kind]}` : 'Open the folder'} aria-label={`Open the ${T.lib}'s folder`} disabled={!desktop} onClick={() => reveal()}><Icon name="folder" size={14} /></button>
       </div>
@@ -237,54 +297,25 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
           onKeyDown={e => { if (e.key === 'Escape' && q) { e.stopPropagation(); set({ q: '' }); } }} />
         {q && <button className="icon-btn cl-clear" aria-label="Clear the search" title="Clear the search (Esc)" onClick={() => set({ q: '' })}><Icon name="x" size={12} /></button>}
       </div>
-      {((kind === 'macro' && files.length > 0) || colors.length > 1) && <div className="cl-tools">
-        {kind === 'macro' && files.length > 0 && <label className="cl-file-pick" title="Every macro A–Ö, or one file's macros in its order (and what to do with the file)">
-          <Icon name="doc" size={12} />
-          <select aria-label="File" value={picked?.file ?? ''} onChange={e => set({ file: e.target.value, open: null })}>
-            <option value="">All files</option>
-            {files.map(f => <option key={f.file} value={f.file}>{f.file} ({f.macros?.length ?? 0})</option>)}
-          </select></label>}
-        {colors.length > 1 && <div className="cl-colors" role="group" aria-label="Show the colour">
+      {colors.length > 1 && <div className="cl-tools">
+        <div className="cl-colors" role="group" aria-label="Show the colour">
           {colors.map(c => <button key={c || 'none'} type="button" className={cx('bm-sw', !c && 'none', color === c && 'on')} style={c ? ({ '--sw': bookmarkCss(c) }) as CSSProperties : undefined}
             aria-pressed={color === c} aria-label={c ? `Only the ${c} ones` : 'Only those without a colour'} title={`${c ? `Only the ${T.many} in this colour` : `Only the ${T.many} without a colour`}${color === c ? ' (a click shows them all again)' : ''}`}
             onClick={() => set({ color: color === c ? '' : c })} />)}
           {color && <button type="button" className="linkish small" onClick={() => set({ color: '' })}>All colours</button>}
-        </div>}
-      </div>}
-      {picked && <div className={cx('cl-file-bar', picked.color && 'tinted')} style={clVar(picked.color)} role="region" aria-label={`The file ${picked.file}`}>
-        <div className="cl-file-head small"><Icon name="doc" size={12} /><b className="mono">{picked.file}</b><span className="muted">· {nMacros(pn)}{picked.from ? ` · from ${shortPath(picked.from)}` : ''}</span>
-          <span className="grow" />
-          <button className="icon-btn" aria-label="All files" title="Back to all files (every macro A–Ö)" onClick={() => set({ file: '' })}><Icon name="x" size={12} /></button></div>
-        {pn > 1 && picked.description && <div className="small cl-file-desc">{picked.description.split('\n')[0]}</div>}
-        <div className="cl-file-btns">
-          {project && lang === picked.lang && (fileUse(picked).added
-            ? <button className="btn small on" title={`${picked.file} is used in the project: all its macros are in ${fileName}. A click takes it out (it stays while the code calls one of its macros)`} onClick={() => useFile(picked, false)}><Icon name="check" size={12} />Used in project</button>
-            : fileUse(picked).used
-              ? <button className="btn small on" title={`In ${fileName} because ${fileUse(picked).why === 'called' ? 'the code calls one of its macros' : 'a file in it uses one of its macros'}; a click keeps it there for good`} onClick={() => useFile(picked, true)}><Icon name="check" size={12} />In project ({fileUse(picked).why})</button>
-              : <button className="btn small primary" title={`Use ${picked.file} in the project: all its macros go in ${fileName}, which the main source imports once`} onClick={() => useFile(picked, true)}><Icon name="plus" size={12} />Use in project</button>)}
-          <button className="btn small" title={`Add a macro to ${picked.file}, of the lines selected in the Assembler`} onClick={() => onNew('macro', picked.file)}><Icon name="plus" size={12} />Add</button>
-          <button className="btn small" title="Export the file, or some of its macros, to a file or another file of the library" onClick={() => set({ exporting: [{ kind: 'macro', file: picked.file }] })}><Icon name="upload" size={12} />Export…</button>
-          {was && <button className="btn small" title={`Write it to ${was.path} again (where it was exported to or read from)`} aria-label={`Export ${picked.file} again`} onClick={() => exportAgain(picked)}><Icon name="refresh" size={12} />Again</button>}
-          <span className="grow" />
-          <button className="icon-btn" aria-label={`More for ${picked.file}`} title="More: edit the file, show it in the folder, to the Recycle Bin" onClick={e => { const b = e.currentTarget.getBoundingClientRect(); fileMenu(picked, b.left, b.bottom + 2); }}><Icon name="more" size={14} /></button>
         </div>
-        {overwrite?.file === picked.file && <div className="cl-confirm small" role="alert">
-          <span><span className="mono">{overwrite.path}</span> was changed since Mimir wrote or read it.</span>
-          <button className="btn small danger" onClick={() => exportAgain(picked, true)}>Overwrite it</button>
-          <button className="btn small" onClick={() => setOverwrite(null)}>Keep it</button>
-        </div>}
       </div>}
-      {!picked && shown.length > 0 && <div className="cl-letters" role="navigation" aria-label="Letters">
+      {rows.length > 0 && <div className="cl-letters" role="navigation" aria-label="Letters">
         {CODE_LIB_LETTERS.filter(l => letters.has(l) || !'ÅÄÖ'.includes(l)).map(l => (
           <button key={l} type="button" disabled={!letters.has(l)} aria-label={`Go to ${l === '#' ? 'the names that start with no letter' : l}`} onClick={() => jump(l)}>{l}</button>))}
       </div>}
       {error && <p className="side-hint err-text" role="alert">{error}</p>}
       {project && kind === 'macro' && lang && <ProjectMacros project={project} built={built} lang={lang} fileName={fileName} onTakeOut={(names, colls) => fileChange(names, colls, false)} />}
-      <div className="cl-list" ref={listRef} role="list" aria-label={picked ? `The macros of ${picked.file}` : kind === 'macro' ? 'The macro library' : 'The code library'}>
+      <div className="cl-list" ref={listRef} role="list" aria-label={kind === 'macro' ? 'The macro library' : 'The code library'}>
         {groups.map(g => (
-          <div key={g.letter || 'file'} className="cl-group" role="group" aria-label={g.letter || picked?.file} ref={el => { groupRef.current[g.letter] = el; }}>
-            {g.letter && <div className="cl-letter" aria-hidden>{g.letter}<span className="lib-n">{g.items.length}</span></div>}
-            {g.items.map(e => row(e))}
+          <div key={g.letter} className="cl-group" role="group" aria-label={g.letter} ref={el => { groupRef.current[g.letter] = el; }}>
+            <div className="cl-letter" aria-hidden>{g.letter}<span className="lib-n">{g.items.length}</span></div>
+            {g.items.map(r => (r.folder ? folderRow(r) : row(r.entry!)))}
           </div>
         ))}
         {!desktop ? <p className="side-hint">The libraries are folders on your computer: they need the desktop app.</p>
@@ -294,7 +325,7 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
             {kind === 'macro' && <p>Files of macros you have (irq_lib.asm) go in with <button type="button" className="linkish" onClick={doImport}>Put files in…</button>: each file and all its macros.</p>}
             <p>Each is a file in <button type="button" className="linkish" onClick={() => reveal()}>{listing.folders[kind]}</button>, which a source can import too.</p>
           </div>
-            : ofKind.length > 0 && !shown.length ? <p className="side-hint">{picked && !filtering ? `No macros in ${picked.file} yet: Add puts in the lines selected in the Assembler.` : <>No {T.one === 'macro' ? 'macro' : 'code'} matches{q.trim() ? ` “${q.trim()}”` : ''}{color ? ' in that colour' : ''}{picked ? ` in ${picked.file}` : ''}.{count(kind === 'macro' ? 'code' : 'macro') ? ` ${count(kind === 'macro' ? 'code' : 'macro')} in ${kind === 'macro' ? 'Code' : 'Macros'}.` : ''}</>}</p> : null}
+            : ofKind.length > 0 && !rows.length ? <p className="side-hint">No {T.one === 'macro' ? 'macro' : 'code'} matches{q.trim() ? ` “${q.trim()}”` : ''}{color ? ' in that colour' : ''}.{count(kind === 'macro' ? 'code' : 'macro') ? ` ${count(kind === 'macro' ? 'code' : 'macro')} in ${kind === 'macro' ? 'Code' : 'Macros'}.` : ''}</p> : null}
       </div>
       {listing && <button type="button" className="linkish small lib-dir mono" title="Open the folder (Settings → General → Library folder moves it)" onClick={() => reveal()}>{listing.folders[kind]}</button>}
     </div>

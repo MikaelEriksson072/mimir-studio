@@ -2106,19 +2106,23 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .cl-notes { display: flex; flex-direction: column; gap: 3px; margin: -4px 0 8px; }
 .cl-notes:empty { display: none; }
 .cl-made { margin: 4px 0 0; overflow-wrap: anywhere; }
-/* the files: the picker (all files, or one file's macros) and the picked file's bar; a macro's file beside it */
+/* the colours above the list; a macro's file beside it */
 .cl-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0 14px 6px; }
 .cl-tools .cl-colors { padding: 0; }
-.cl-file-pick { display: inline-flex; align-items: center; gap: 5px; flex: 1 1 140px; min-width: 0; color: var(--fg-3); }
-.cl-file-pick select { flex: 1; min-width: 0; height: 24px; font-size: 12px; }
-.cl-file-bar { --cl: transparent; align-self: stretch; margin: 0 10px 6px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); box-shadow: inset 3px 0 0 var(--cl); display: flex; flex-direction: column; gap: 3px; }
-.cl-file-head { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
-.cl-file-head b { flex: none; color: var(--fg); }
-.cl-file-head .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.cl-file-head .icon-btn { width: 20px; height: 20px; }
+/* a file of several macros: a folder in the list under its name's letter; open, its bar and its macros A–Ö */
+.cl-folder > .cl-row .cl-name-row { align-items: center; }
+.cl-folder > .cl-row .cl-desc { padding-left: 35px; }
+.cl-folder-ic { flex: none; color: var(--accent-hi); }
+.cl-folder > .cl-row .lib-n { flex: none; }
+.cl-folder.unfolded { background: color-mix(in srgb, var(--panel-2) 70%, transparent); box-shadow: inset 3px 0 0 var(--cl), inset 0 0 0 1px var(--line); }
+.cl-file-bar { align-self: stretch; margin: 0 4px 4px 18px; padding: 3px 5px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel-2); display: flex; flex-direction: column; gap: 3px; }
 .cl-file-desc { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-folder-list { display: flex; flex-direction: column; gap: 1px; margin: 0 4px 4px 16px; padding-left: 4px; border-left: 1px solid var(--line-2); }
 .cl-file-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .cl-file-btns .btn.small { height: 22px; padding: 0 6px; gap: 4px; font-size: 11px; }
+.cl-folder .cl-file-btns { flex-wrap: nowrap; }
+.cl-folder .cl-file-btns .btn.small { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cl-folder .cl-file-btns .icon-btn { flex: none; }
 .cl-chev { flex: none; align-self: center; color: var(--fg-3); transition: transform 0.12s; }
 .cl-chev.on { transform: rotate(90deg); }
 .cl-in { flex: none; max-width: 40%; padding: 0 4px; border-radius: 3px; font-size: 10px; color: var(--accent-hi); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

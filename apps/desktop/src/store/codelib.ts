@@ -38,12 +38,12 @@ interface CodeLibState {
   q: string;
   color: string;
   open: CodeLibRef | null;
-  /** the macro library's file the list shows the macros of ('' every macro A–Ö) */
-  file: string;
+  /** the macro library's files of several macros whose folders are open in the list (their macros shown) */
+  unfolded: string[];
   editing: CodeLibEditing | null;
   /** the export dialog, open on these (the macros checked at first) */
   exporting: CodeLibRef[] | null;
-  set: (s: Partial<Pick<CodeLibState, 'kind' | 'q' | 'color' | 'open' | 'editing' | 'exporting' | 'file'>>) => void;
+  set: (s: Partial<Pick<CodeLibState, 'kind' | 'q' | 'color' | 'open' | 'editing' | 'exporting' | 'unfolded'>>) => void;
   /** the folders read again */
   load: () => Promise<void>;
   save: (req: CodeLibSaveRequest) => Promise<{ item: CodeLibItem; macro?: string }>;
@@ -53,8 +53,13 @@ interface CodeLibState {
   exportMacros: (req: CodeLibExportRequest) => Promise<CodeLibExportResult>;
 }
 
+/** a file of the macro library the list shows as a folder: one of several macros */
+export const codeLibFolder = (i: Pick<CodeLibItem, 'kind' | 'macros'> | undefined | null): boolean => !!i && i.kind === 'macro' && (i.macros?.length ?? 0) > 1;
+const many = codeLibFolder;
+const unfold = (open: string[], file: string) => (open.includes(file) ? open : [...open, file]);
+
 export const useCodeLib = create<CodeLibState>((set, get) => ({
-  listing: null, loading: false, error: null, kind: 'macro', q: '', color: '', open: null, file: '', editing: null, exporting: null,
+  listing: null, loading: false, error: null, kind: 'macro', q: '', color: '', open: null, unfolded: [], editing: null, exporting: null,
   set: s => set(s),
   load: async () => {
     if (!kr) return;
@@ -64,27 +69,27 @@ export const useCodeLib = create<CodeLibState>((set, get) => ({
   save: async req => {
     if (!kr) throw new Error('The libraries need the desktop app');
     const r = await kr.codelibSave(req);
-    // the item open in its library, which the view shows (its search kept unless it hides it; a file picked that is not
-    // its: its own file picked)
+    // the item open in its library, which the view shows (its search kept unless it hides it; in a file of several
+    // macros: its folder open)
     const ref = { kind: r.item.kind, file: r.item.file, ...(r.macro ? { macro: r.macro } : {}) };
     const shown = r.macro ? r.item.macros?.find(m => m.name === r.macro)?.color ?? r.item.color : r.item.color;
-    set({ listing: r.listing, error: null, open: ref, kind: r.item.kind, ...(get().color && get().color !== (shown ?? '') ? { color: '' } : {}), ...(get().file && get().file !== r.item.file ? { file: r.item.kind === 'macro' ? r.item.file : '' } : {}) });
+    set({ listing: r.listing, error: null, open: ref, kind: r.item.kind, ...(get().color && get().color !== (shown ?? '') ? { color: '' } : {}), ...(many(r.item) ? { unfolded: unfold(get().unfolded, r.item.file) } : {}) });
     return { item: r.item, ...(r.macro ? { macro: r.macro } : {}) };
   },
   remove: async ref => {
     if (!kr) throw new Error('The libraries need the desktop app');
     const listing = await kr.codelibRemove(ref);
-    // (a file picked that is gone: all files)
-    set({ listing, error: null, ...(sameCodeLib(get().open, ref) ? { open: null } : {}), ...(get().file && !listing.items.some(i => i.kind === 'macro' && i.file === get().file) ? { file: '' } : {}) });
+    // (the folder of a file gone, or of one macro now, closed)
+    set({ listing, error: null, ...(sameCodeLib(get().open, ref) ? { open: null } : {}), unfolded: get().unfolded.filter(u => listing.items.some(i => i.file === u && many(i))) });
   },
   importFiles: async kind => {
     if (!kr) throw new Error('The libraries need the desktop app');
     const r = await kr.codelibImport({ kind });
     if (r) {
       const one = r.imported.length === 1 ? r.imported[0] : null;
-      // (one file of several macros: it picked, its macros shown)
-      const many = one && kind === 'macro' && (r.listing.items.find(x => x.kind === 'macro' && x.file === one.file)?.macros?.length ?? 0) > 1;
-      set({ listing: r.listing, error: null, kind, ...(one ? { open: many ? null : one } : {}), ...(many ? { file: one!.file } : {}) });
+      // (one file of several macros: its folder open, its macros shown)
+      const folder = one && many(r.listing.items.find(x => x.kind === one.kind && x.file === one.file));
+      set({ listing: r.listing, error: null, kind, ...(one ? { open: folder ? null : one } : {}), ...(folder ? { unfolded: unfold(get().unfolded, one!.file) } : {}) });
     }
     return r;
   },
@@ -92,7 +97,7 @@ export const useCodeLib = create<CodeLibState>((set, get) => ({
     if (!kr) throw new Error('The libraries need the desktop app');
     const r = await kr.codelibExport(req);
     set({ listing: r.listing, error: null });
-    if (r.collection) set({ kind: 'macro', open: null, file: r.collection.file });
+    if (r.collection) set({ kind: 'macro', open: null, unfolded: unfold(get().unfolded, r.collection.file) });
     return r;
   },
 }));

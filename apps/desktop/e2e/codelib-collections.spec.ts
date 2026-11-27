@@ -64,21 +64,26 @@ test('files of several macros in the macro library: a file of macros put in, its
   const menu = async (name: string) => { const i = page.getByRole('menuitem', { name }); await i.hover(); await page.keyboard.press('Enter'); await expect(i).toHaveCount(0); };
   const macros = join(userData, 'library', 'Macros');
 
-  // the file put in the library (the view's button, the open dialog's file): a file of three macros, picked in the list
+  // the file put in the library (the view's button, the open dialog's file): a file of three macros, a folder in the
+  // list under R, open
   await page.getByRole('button', { name: /^Macros and code/ }).click();
   await stubDialogs(app, { open: [join(outside, 'raster.asm')] });
   await page.getByRole('button', { name: 'Put files in the macro library' }).click();
   await expect(toast(page, 'raster.asm put in the macro library')).toBeVisible();
   expect(readFileSync(join(macros, 'raster.asm'), 'utf8')).toMatch(/^\/\/ mimir-library \{"lang":"kickass","created":"[^"]+","from":"[^"]+raster\.asm","collection":true\}\n#importonce\n/);
   await expect(page.getByRole('tab', { name: /Macros\s*3/ })).toBeVisible();
-  const picker = page.locator('.cl-file-pick select');
-  await expect(picker).toHaveValue('raster.asm');
+  const list = page.getByRole('list', { name: 'The macro library' });
+  const folder = list.getByRole('group', { name: 'R' }).getByRole('button', { name: /^raster/ });
+  await expect(folder).toHaveAttribute('aria-expanded', 'true');
+  await expect(folder).toContainText('raster3');
+  // (its macros only in it, not under their own letters)
+  await expect(list.getByRole('group')).toHaveCount(1);
   const bar = page.getByRole('region', { name: 'The file raster.asm' });
-  await expect(bar).toContainText('raster.asm· 3 macros');
-  // its macros in its order, each described by the comments above it
+  await expect(bar).toBeVisible();
+  // its macros A–Ö, each described by the comments above it
   const subs = page.getByRole('list', { name: 'The macros of raster.asm' });
   await expect(subs.getByRole('listitem')).toHaveCount(3);
-  await expect(subs.locator('.cl-name')).toHaveText(['SetBorder', 'WaitAndSet', 'save']);
+  await expect(subs.locator('.cl-name')).toHaveText(['save', 'SetBorder', 'WaitAndSet']);
   await expect(subs.getByRole('button', { name: /^SetBorder/ })).toContainText('Sets the border colour');
   await expect(subs.getByRole('button', { name: /^WaitAndSet/ })).toContainText('Waits for a line, then the border');
   await shot(page, '42-codelib-collection');
@@ -97,7 +102,7 @@ test('files of several macros in the macro library: a file of macros put in, its
 
   // the file's import at the top of the source (its menu: Import it directly): its macros are the project's, a call
   // assembles
-  const importIt = async () => { await bar.getByRole('button', { name: 'More for raster.asm' }).click(); await page.getByRole('menuitem', { name: /^Import it directly/ }).click(); };
+  const importIt = async () => { await bar.getByRole('button', { name: 'More for raster.asm' }).click(); await page.getByRole('menuitem', { name: /^Import raster\.asm directly/ }).click(); };
   await importIt();
   await expect(toast(page, /Put in the import of raster \(line 1\)/)).toBeVisible();
   await expect.poll(() => editorText(page)).toMatch(/^#import ".*\/Macros\/raster\.asm"\n\nBasicUpstart2\(start\)/);
@@ -144,24 +149,25 @@ test('files of several macros in the macro library: a file of macros put in, its
   await expect(toast(page, 'SetBorder is saved (raster.asm)')).toBeVisible();
   expect(file()).toContain('#importonce\n\n// ==========================\n// The border\'s colour\n// ==========================\n// mimir-macro {"color":"pink"}\n.macro SetBorder(c) {');
 
-  // all files: every macro A–Ö, its file beside it; a search finds it in the code
-  await picker.selectOption({ label: 'All files' });
-  const list = page.getByRole('list', { name: 'The macro library' });
-  await expect(list.getByRole('group', { name: 'W' }).getByRole('button', { name: /^WaitAndSet/ })).toContainText('raster');
-  await expect(list.getByRole('group', { name: 'B' })).toBeVisible();
+  // folded: the folder alone in the list (Black in it, not under B); a search opens it on what it finds in the code
+  await folder.click();
+  await expect(folder).toHaveAttribute('aria-expanded', 'false');
   await expect(bar).toHaveCount(0);
+  await expect(list.getByRole('group')).toHaveCount(1);
   await page.getByLabel('Search the libraries').fill('d012');
-  await expect(list.getByRole('listitem')).toHaveCount(1);
-  await expect(list).toContainText('found in the code');
+  await expect(subs.getByRole('listitem')).toHaveCount(1);
+  await expect(subs).toContainText('found in the code');
+  await expect(folder).toContainText('1/4');
   await page.getByLabel('Search the libraries').fill('');
-  // a macro's file shown from its menu: picked
-  await list.getByRole('button', { name: /^save/ }).click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Show its file: raster.asm' }).click();
-  await expect(picker).toHaveValue('raster.asm');
+  await expect(bar).toHaveCount(0);
+  // opened again: all four
+  await folder.click();
+  await expect(subs.locator('.cl-name')).toHaveText(['Black', 'save', 'SetBorder', 'WaitAndSet']);
   await shot(page, '43-codelib-collection-edited');
 
   // exported again to where it came from: as written by hand (no Mimir lines), its macros as they are now
-  await bar.getByRole('button', { name: 'Export raster.asm again' }).click();
+  await bar.getByRole('button', { name: 'More for raster.asm' }).click();
+  await page.getByRole('menuitem', { name: /^Export it again/ }).click();
   await expect(toast(page, /Exported raster\.asm to .*raster\.asm \(4 macros\)/)).toBeVisible();
   const back = readFileSync(join(outside, 'raster.asm'), 'utf8');
   expect(back).not.toContain('mimir-');
@@ -169,13 +175,15 @@ test('files of several macros in the macro library: a file of macros put in, its
   expect(back).toContain('// Border and background\n// black\n// ==========================\n.macro Black() {');
   // changed there since: asked first, kept
   writeFileSync(join(outside, 'raster.asm'), `${back}// mine\n`);
-  await bar.getByRole('button', { name: 'Export raster.asm again' }).click();
+  await bar.getByRole('button', { name: 'More for raster.asm' }).click();
+  await page.getByRole('menuitem', { name: /^Export it again/ }).click();
   await expect(bar.getByRole('alert')).toContainText('was changed since Mimir wrote or read it');
   await bar.getByRole('button', { name: 'Keep it' }).click();
   expect(readFileSync(join(outside, 'raster.asm'), 'utf8').endsWith('// mine\n')).toBe(true);
 
   // two of its macros to a file of the dialog's
-  await bar.getByRole('button', { name: 'Export…' }).click();
+  await bar.getByRole('button', { name: 'More for raster.asm' }).click();
+  await page.getByRole('menuitem', { name: /^Export…/ }).click();
   const ex = page.getByRole('dialog', { name: 'Export macros' });
   await expect(ex.getByLabel('Export raster', { exact: true })).toBeChecked();
   await ex.getByLabel('Export raster', { exact: true }).uncheck();
@@ -202,7 +210,6 @@ test('files of several macros in the macro library: a file of macros put in, its
   writeFileSync(join(macros, 'Solo.asm'), '// mimir-library {"lang":"kickass","created":"2026-11-27T08:00:00.000Z","description":"Does nothing","color":"teal"}\n.macro Solo() {\n    nop\n}\n');
   writeFileSync(join(macros, 'Duo.asm'), '// mimir-library {"lang":"kickass","created":"2026-11-27T08:00:00.000Z","description":"Nothing either"}\n.macro Duo() {\n    nop\n}\n');
   await page.getByRole('button', { name: 'Read the libraries again' }).click();
-  await picker.selectOption({ label: 'All files' });
   await list.getByRole('button', { name: /^Duo/ }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Edit…' }).click();
   const moveIt = page.getByRole('dialog', { name: 'Edit Duo' });
@@ -212,9 +219,10 @@ test('files of several macros in the macro library: a file of macros put in, its
   // Duo.asm to the Recycle Bin, Solo.asm has both, each with its description above it
   expect(readdirSync(macros).sort()).toEqual(['Solo.asm', 'raster.asm']);
   expect(readFileSync(join(macros, 'Solo.asm'), 'utf8')).toMatch(/^\/\/ mimir-library \{"lang":"kickass","created":"2026-11-27T08:00:00\.000Z"\}\n\/\/ Does nothing\n\/\/ mimir-macro \{"color":"teal"\}\n\.macro Solo\(\) \{\n    nop\n\}\n\n\/\/ Nothing either\n\/\/ mimir-macro \{"created":"[^"]+"\}\n\.macro Duo\(\) \{/);
-  // (all files still: Duo with its file beside it now, Solo named after its file as it was)
-  await expect(list.getByRole('button', { name: /^Duo/ }).locator('.cl-in')).toHaveText('Solo');
-  await expect(list.getByRole('button', { name: /^Solo/ }).locator('.cl-in')).toHaveCount(0);
-  await picker.selectOption({ label: 'Solo.asm (2)' });
-  await expect(page.getByRole('list', { name: 'The macros of Solo.asm' }).locator('.cl-name')).toHaveText(['Solo', 'Duo']);
+  // (Solo.asm a folder now, under S, open on Duo just saved: both in it A–Ö, no file beside them; none under D)
+  const solo = page.getByRole('list', { name: 'The macros of Solo.asm' });
+  await expect(solo.locator('.cl-name')).toHaveText(['Duo', 'Solo']);
+  await expect(solo.locator('.cl-in')).toHaveCount(0);
+  await expect(list.getByRole('group', { name: 'S' }).locator('.cl-folder')).toHaveCount(1);
+  await expect(list.getByRole('group', { name: 'D' })).toHaveCount(0);
 });

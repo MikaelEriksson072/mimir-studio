@@ -4113,19 +4113,23 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   ändras för sig med *Edit the file…* (namnet, beskrivningen, färgen, hela koden). Mimirs egen kontroll gör `#importonce`
   som Kick Assembler (en fil med den läses bara första gången den importeras). Mätt (`code-library.integration.test.ts`):
   en fil med flera makron som Mimir skriver, importerad två gånger av riktiga KickAss.jar, ger samma bytes som koden.
-- **I listan** står alltid makrona, vart och ett på sin rad A–Ö (en kods bit i kodbiblioteket), med filen bredvid när
-  filen inte heter som makrot. Filväljaren ovanför listan (*All files*, eller en fil och hur många makron den har) visar
-  i stället en fils makron i dess ordning, och filens rad: *Import it* (raden `#import "…/Macros/irq_lib.asm"`, i 64tass
-  `.include`, överst i källan efter de importer den har, en gång; i ⋯), *Add* (raderna som är markerade i Assemblern, till
-  den), *Export…*, *Again* och ⋯ (*Import it directly*: raden som importerar bibliotekets fil som den är, *Edit the
-  file…*, visa i mappen, papperskorgen); först på raden *Use in project* (filen i projektets makrofil, alla dess makron). Ett makros meny har *Show its file*. En fil som läggs i biblioteket med flera makron visas så. Ett
-  makros *Insert definition* tar med de makron i filen det använder (och de de använder, i filens ordning,
-  `codeLibNeeds`) som projektet inte definierar.
+- **I listan** A–Ö är en fil med flera makron en **mapp** under sitt namns första bokstav (`irq_lib` under I, med hur
+  många makron den har; en kods bit i kodbiblioteket och ett makro ensamt i sin fil står på en egen rad, med filen
+  bredvid när filen inte heter som makrot). Makrona i en mapp står bara i den, inte under sina egna bokstäver. Ett klick
+  öppnar mappen (fler kan vara öppna, `useCodeLib.unfolded`): först filens rad, *Use in project* (filen i projektets
+  makrofil, alla dess makron), *Add* (raderna som är markerade i Assemblern, till den) och ⋯ (*Import … directly*:
+  raden `#import "…/Macros/irq_lib.asm"`, i 64tass `.include`, överst i källan efter de importer den har, en gång;
+  *Add a macro…*, *Export…*, *Export it again*, *Edit the file…*, visa i mappen, papperskorgen; samma meny med
+  högerklick på mappen), sedan dess makron A–Ö. En sökning (eller en färg) öppnar mapparna den hittar något i, med bara
+  det den hittar (hur många av alla: `1/4`); söks mappens namn visas alla dess makron. En fil som läggs i biblioteket
+  med flera makron, ett makro som sparas i en sådan fil och en fil som makron exporteras till öppnas. Ett makros meny
+  har *Import … directly* (dess fil). Ett makros *Insert definition* tar med de makron i filen det använder (och de de
+  använder, i filens ordning, `codeLibNeeds`) som projektet inte definierar.
 - **Import** (vyns knapp, paletten): filer var som helst läggs i biblioteket som de är, med raden överst (assemblern
   gissad, gjord när filen gjordes, varifrån), med alla sina makron. Varifrån den kom kommer
   huvudprocessen ihåg (`codelib-files.json` i användarmappen: vägen och en hash av det som stod där), aldrig
   biblioteksfilen eller renderaren.
-- **Export** (vyns knapp, en fils *Export…*, paletten): makrona som bockas för (en fil hel, några av dess makron)
+- **Export** (vyns knapp, en mapps *Export…*, paletten): makrona som bockas för (en fil hel, några av dess makron)
   skrivs till en fil som sparadialogen väljer, eller läggs i en fil i biblioteket (*A file of the library*: en som finns,
   annars en ny; *Move them*: ut ur där de var). En hel fil skrivs som den är; resten var och en med sin
   beskrivning som kommentarer ovanför. Utan *Mimir's lines* blir filen som man skriver den för hand (inga
@@ -4136,7 +4140,7 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   Assembler-projektet, `macros.asm` bredvid huvudkällan, som Mimir bygger ur makrobiblioteket i realtid
   (`codeLibProjectFile`), och som huvudkällan importerar en gång (`#import "macros.asm"`, `.include` i 64tass; raden
   läggs överst efter de importer den har när filen görs). **En fil i biblioteket är makron som hör ihop**: det som
-  kommer in är hela filer, alla deras makron. Filerna som används i projektet (*Use in project* på filens rad, eller på
+  kommer in är hela filer, alla deras makron. Filerna som används i projektet (*Use in project* i filens mapp, eller på
   ett makro: dess fil); filerna till makron som koden anropar och inte definierar själv (`codeLibCalled`: Kick
   Assemblers `Namn(…)` eller ett pseudokommando först i en sats, 64tass `#Namn`/`.Namn` eller `Namn(…)`; inte en
   etikett, en kommentar eller en sträng; *Calls* av: bara de använda); och filerna till makron som de använder, och så
