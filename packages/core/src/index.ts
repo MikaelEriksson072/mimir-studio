@@ -109,6 +109,7 @@ export { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgCpu, asmArgDefines, asmArgLibdir
 export { asmWriteBytes, type AsmByteChange, type AsmWriteBack } from './asm-write';
 export { asmCode, asmLineCycles, asmLinesRange } from './asm-cycles';
 export { asmNameRefs, asmNames, asmRenameProblem, type AsmNameAt } from './asm-names';
+export { ASM_EXPORT_FORMATS, asmDataAt, asmExport, asmExportData, asmExportFile, asmExportKinds, asmExportProgram, asmExportRange, asmOneSource, asmOneSourceSame, BASIC_AREA, exportName, joinedParts, type AsmExportFormat, type AsmExportKind, type AsmExportPart, type AsmExportSource } from './asm-export';
 export { asmC64Notes, type AsmC64Note } from './asm-c64check';
 export { ASM_BLOCK_INFO, ASM_BLOCK_KINDS, ASM_MARK_WORDS, asmBlockBytes, asmBlockMarks, asmBlockText, asmLabel, asmMarkAt, assemblerSources, libraryLabel, type AssemblerSources, type AsmBlockInfo, type AsmBlockKind, type AsmBlockMark, type AsmBlockRequest, type AsmBlockText } from './asm-blocks';
 export { releaseImage, releaseStarts, type ReleaseKind } from './asm-release';

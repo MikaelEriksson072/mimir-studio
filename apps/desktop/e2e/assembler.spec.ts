@@ -1627,3 +1627,67 @@ test('drawing in a picture in the Assembler\'s editor: Draw beside it, a click a
   expect(disk()[6]).toBe('        .byte %00000000, %11111111, %00000000');
   await closeProject(page, 'drawpic');
 });
+
+test('Export in an Assembler project: the program as one source with its imports put in (the same bytes), an address range as a C array, a data file as .byte lines where the program has it, VICE labels', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'exp'), out = join(work, 'exp-out');
+  mkdirSync(join(dir, 'lib'), { recursive: true });
+  mkdirSync(join(dir, 'data'));
+  mkdirSync(out);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', '#import "lib/macros.asm"', 'start:  Border(2)', '        rts', '* = $2000 "sprite"', 'sprite: .import binary "data/sprite.bin"', ''].join('\n'));
+  writeFileSync(join(dir, 'lib', 'macros.asm'), ['#importonce', '.macro Border(c) {', '        lda #c', '        sta $d020', '}', ''].join('\n'));
+  const sprite = Buffer.from(Array.from({ length: 63 }, (_, i) => (i * 5) & 0xff));
+  writeFileSync(join(dir, 'data', 'sprite.bin'), sprite);
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const dialog = page.getByRole('dialog', { name: 'Export' });
+  const as = (label: string) => dialog.getByRole('radiogroup', { name: 'As' }).getByLabel(label);
+  const save = async (file: string) => {
+    await stubDialogs(app, { save: join(out, file) });
+    await dialog.getByRole('button', { name: 'Export…' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(toast(page, `Exported ${join(out, file)}`)).toBeVisible();
+    return readFileSync(join(out, file));
+  };
+
+  // the program as one source: the macros put in, and Mimir's check of it alone gives the same program
+  await page.getByRole('button', { name: 'Export…' }).click();
+  await expect(dialog.getByRole('radio', { name: /^The program/ })).toBeChecked();
+  await expect(dialog).toContainText('main.prg: $0801');
+  await as('One source file (.asm)').check();
+  await expect(dialog.getByRole('status')).toContainText('1 source put in (lib/macros.asm): Mimir\'s check of the one file alone gives the same');
+  await expect(dialog.getByLabel('Preview')).toContainText('main.asm with the sources it imports put in');
+  await shot(page, '37-asm-export');
+  const one = (await save('main-one-file.asm')).toString();
+  expect(one).toContain('.macro Border(c) {');
+  expect(one).not.toMatch(/^#import/m);
+  expect(one).toContain('.import binary "data/sprite.bin"');
+
+  // VICE labels of the program
+  await page.getByRole('button', { name: 'Export…' }).click();
+  await as('VICE labels (.vs)').check();
+  expect((await save('main.vs')).toString()).toContain('al C:2000 .sprite');
+
+  // an address range as a C array
+  await page.getByRole('button', { name: 'Export…' }).click();
+  await dialog.getByRole('radio', { name: /^Addresses/ }).check();
+  await dialog.getByLabel('From address').fill('$2000');
+  await dialog.getByLabel('To address').fill('$2003');
+  await as('C array (.h)').check();
+  await expect(dialog.getByLabel('Preview')).toContainText('#define MAIN_2000_2003_ADDR 0x2000');
+  const h = (await save('part.h')).toString();
+  expect(h).toContain(`const unsigned char main_2000_2003[4] = {\n    ${[...sprite.subarray(0, 4)].map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}\n};`);
+
+  // a data file of the list (right-click → Export…): its bytes where the program has them, as .byte lines
+  await tree(page).getByRole('treeitem', { name: 'data' }).click();
+  await tree(page).getByRole('treeitem', { name: 'sprite.bin' }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Export…' }).click();
+  await expect(dialog.getByRole('radio', { name: /^The file/ })).toBeChecked();
+  await expect(dialog.getByLabel('Its address')).toHaveValue('$2000');
+  await expect(dialog).toContainText('where the program has it');
+  await as('Source, .byte lines (.asm)').check();
+  const lines = (await save('sprite.asm')).toString();
+  expect(lines).toContain('* = $2000\nsprite:\n    .byte $00, $05, $0a');
+  await closeProject(page, 'exp');
+});

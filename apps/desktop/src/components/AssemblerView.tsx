@@ -28,6 +28,7 @@ import { ScriptScreenPanel } from './ScriptScreen';
 import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, isOutsidePath, parentOf, type TreeEdit } from './AsmTree';
 import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type AsmRunKept } from './AsmOutput';
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
+import { AsmExportModal, type AsmExportWhat } from './AsmExport';
 import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
 import { codeLibAllMacros, codeLibCall, codeLibMacroAt, codeLibMacros, codeLibProjectFile, codeLibSignature, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
@@ -861,6 +862,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       ...(e ? [{ sep: true } as const] : []),
       { label: 'New file…', icon: 'plus', run: () => newIn(folderOf(e), 'file') },
       { label: 'New folder…', icon: 'folder', run: () => newIn(folderOf(e), 'folder') },
+      ...(e && !e.dir ? [{ label: 'Export…', icon: 'download' as const, run: () => openExport(e.path, 'file') }] : []),
       ...(e ? [{ sep: true } as const, { label: 'Rename…', key: 'F2', icon: 'pencil' as const, run: () => setEdit({ kind: 'rename', path: e.path }) },
         { label: 'Delete', key: 'Del', icon: 'trash' as const, run: () => void remove(e) }] : []),
       { sep: true },
@@ -1363,6 +1365,26 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     openFile(src ?? made[0], { keep: !!src });
     const data = made.some(p => !ASM_TEXT.test(p));
     toast(`Copied ${made.length === 1 ? made[0] : `${made.length} files (${made.join(', ')})`} into the project's folder${data ? `: a source loads ${made.length === 1 ? 'it' : 'them'} from there (Insert block… writes the lines)` : ''}`, 'ok');
+  };
+
+  /* ---- Export: the program, an address range or a file of the list, as .bin, .prg, .asm, VICE labels … ---- */
+  const [exporting, setExporting] = useState<{ file: string | null; start: AsmExportWhat; bytes?: Uint8Array | null } | null>(null);
+  const exportVfs = useMemo(() => ({ ...quiet, ...bins, ...outside }), [quiet, bins, outside]);
+  /** the dialog, with `file` the one chosen (a data file's bytes read when the check has not) */
+  const openExport = (file: string | null, start: AsmExportWhat) => {
+    const data = !!file && !ASM_SOURCE.test(file) && !(file in textsRef.current);
+    const have = file ? exportVfs[file] : undefined;
+    setExporting({ file, start, ...(data ? { bytes: have instanceof Uint8Array ? have : undefined } : {}) });
+    if (data && !(have instanceof Uint8Array)) {
+      void kr!.assemblerRead({ dir, path: file!, as: 'bytes' }).then(r => r.bytes ?? null, () => null)
+        .then(bytes => setExporting(x => (x && x.file === file ? { ...x, bytes } : x)));
+    }
+  };
+  const saveExport = async (name: string, bytes: Uint8Array) => {
+    try {
+      const r = await kr!.saveFile({ name, bytes, title: 'Export' });
+      if (r) { setExporting(null); toast(`Exported ${r.path} (${fmtBytes(bytes.length)})`, 'ok'); }
+    } catch (e) { toast(`The export was not saved: ${errorText(e)}`, 'err'); }
   };
 
   /* ---- Insert block: sprites, a charset, a bitmap, a screen, music or data, in the source where the caret is ---- */
@@ -1896,6 +1918,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           <div className="scr-list-head"><span>Files</span><span className="grow" />
             <button className="icon-btn" onClick={() => newIn(shown && entryOf.get(shown)?.dir ? shown : shown ? parentOf(shown) : '', 'file')} aria-label="New file" title="New file (a name without an extension is a .asm source)"><Icon name="plus" size={15} /></button>
             <button className="icon-btn" onClick={() => newIn(shown ? parentOf(shown) : '', 'folder')} aria-label="New folder" title="New folder"><Icon name="folder" size={14} /></button>
+            <button className="icon-btn" onClick={() => openExport(shown, 'program')} aria-label="Export…"
+              title="Export the program, an address range or the chosen file: raw bytes (.bin), a PRG, .byte lines or one source (.asm), VICE labels, symbols, a C array, BASIC DATA lines, a hex dump or a listing"><Icon name="download" size={14} /></button>
             <button className="icon-btn" onClick={() => ui.set({ listFolded: true })} aria-label="Fold the file list" title="Fold the list in to a strip: the editor gets its room"><Icon name="side-hide" size={15} /></button>
           </div>
           {!loaded ? <p className="muted small asm-tree-empty">Reading the files…</p>
@@ -2002,6 +2026,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
             onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f) || f === '<command line>' || f in outside || isOutsidePath(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} cycles={cycles} notes={notes} />
         </div>
       </div>
+      {exporting && main && <AsmExportModal check={check} main={main} lang={lang} file={exporting.file} fileBytes={exporting.bytes} vfs={exportVfs} args={args} start={exporting.start}
+        onSave={(n, b) => void saveExport(n, b)} onClose={() => setExporting(null)} />}
       {blockAsk && shown && <AsmBlockDialog lang={lang} dir={dir} source={shown} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}
         onInsert={b => void insertBlock(b)} onClose={() => { setBlockAsk(null); requestAnimationFrame(() => ed.current?.focus()); }} />}
     </div>

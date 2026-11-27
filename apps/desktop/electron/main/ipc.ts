@@ -72,7 +72,9 @@ const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undef
 /** what the save dialog calls a file, by its extension */
 const SAVE_KINDS: Record<string, string> = {
   prg: 'C64 program', bin: 'Binary data', '64c': 'Charset with load address', kla: 'Koala Painter picture', art: 'Art Studio picture',
-  png: 'PNG image', asm: 'Kick Assembler source',
+  png: 'PNG image', asm: 'Assembler source',
+  // (the Assembler's Export, spec 10.7)
+  vs: 'VICE labels', sym: 'Symbols', h: 'C header', bas: 'BASIC program as text', txt: 'Text', lst: 'Listing',
 };
 
 /** the open dialog of Insert block (the Assembler, spec 10.7) for each kind of block: what it is, its files */

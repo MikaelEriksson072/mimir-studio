@@ -167,6 +167,7 @@ mimir-studio/
 │     ├─ components/{AssemblerView, AsmTree, AsmOutput}.tsx   Assemblern: filerna bredvid koden, Run, Debug (10.7)
 │     ├─ components/AsmBlockDialog.tsx   Insert block: sprites, charset, bitmap, skärm, musik, data i källan (10.7)
 │     ├─ components/AsmRelease.tsx       Release: bygget som D64, TAP, CRT eller PRG, packat eller inte (10.7)
+│     ├─ components/AsmExport.tsx        Export: programmet, ett adressområde eller en fil som .bin, .prg, .asm, VICE-etiketter, C, BASIC … (10.7)
 │     ├─ store/asmlink.ts          Assembler-projektet i projektfönstret: programmet till vyerna, visa en rad, Run (10.7)
 │     ├─ components/{CodeLibView, CodeLibDialog, CodeLibExportDialog}.tsx, store/codelib.ts   makro- och kodbiblioteken: vyn, dialogen och exporten (10.8)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
@@ -181,6 +182,7 @@ mimir-studio/
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
 │  ├─ src/asm-release.ts           Assemblern: Release-avbilderna (disk, band, cartridge, PRG) och när LOAD och RUN inte startar programmet (10.7)
+│  ├─ src/asm-export.ts            Assemblern: Export-formaten och en källfil med importerna inlagda (10.7)
 │  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
 │  ├─ src/asm-blocks.ts            Assemblerns block: markeringarna i källan, ett nytt blocks rader (Insert block) (10.7)
 │  ├─ src/asm-write.ts             Assemblern: ändrade bytes tillbaka i raderna som skriver dem (det man ritar) (10.7)
@@ -4055,6 +4057,24 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   Assemblern stoppar Retro Debugger 1.0.0 och C64 Debugger 0.64.58.6 på radens adress (`PC = $0810`), och stegning
   går. Retro Debuggers *Source code*-fönster står tomt (bara segmentnamnet), lika tomt med KickAss egen `-debugdump`-fil:
   det är debuggerns sätt när programmet kommer från kommandoraden, inte Mimirs fil.
+- **Export** (2026-11-27). Knappen med nedåtpilen i FILES-raden (och *Export…* i en fils högerklicksmeny) öppnar
+  rutan *Export*: **vad** — *programmet* (PRG:n bygget skriver: laddadress och bytes, `asmExportProgram`), *adresser*
+  (programmets minne från en adress till en annan, det inget skriver är 0) eller *filen* som är vald i listan (en källas:
+  de bytes dess rader skriver, makrons är anropets, i sträckor; en datafils: dess bytes, en `.prg`:s efter
+  laddadressen, vid adressen programmet har dem på när källorna laddar dem där en gång, `asmDataAt`, annars en som
+  skrivs in) — och **som vad** (`ASM_EXPORT_FORMATS`, de som passar): råa bytes (`.bin`, glapp mellan sträckor som 0),
+  med laddadress (`.prg`), `.byte`-rader i projektets språk (`* =` före varje sträcka, en etikett vid den första),
+  **en källfil** (bara programmet: huvudfilen med varje källa den importerar inlagd där den importeras — Kicks
+  `#import`/`.import source` och `#importonce` en gång, 64tass `.include` och `.binclude` som ett eget `.block`;
+  datafiler en källa i en annan mapp laddar namnges från huvudfilens mapp, `asmOneSource`; rutan säger om Mimirs
+  kontroll av den ensam, utan de andra källorna, ger samma program, `asmOneSourceSame`), VICE-etiketter (`.vs`,
+  `al C:0801 .start`), symboler (`.sym`, `.label namn=$0801` eller 64tass `namn = $0801`, namn utan punkt), en C-array
+  (`.h` med `#define`s för adress och storlek), BASIC-rader (`.bas` som text för petcat/VICE: en loop som POKEar
+  DATA-radernas bytes dit de ska, rader högst 80 tecken; rutan varnar när de hamnar i BASIC:s område), en hexdump
+  (`.txt`) eller en listning (`.lst`: varje rad som skriver bytes med adress, bytes, fil och rad). Rutan visar början
+  av texten; *Export…* sparar där spardialogen säger (`file:save`). **Prövat** med riktiga KickAss.jar och 64tass
+  (`asm-export.integration.test.ts`): en källfil ger samma program som projektet, `.byte`-raderna samma bytes, och
+  `.sym`-filen tas av en källa som importerar den.
 - **Debug** (F8) kör programmet i Mimirs 6510 en instruktion i taget (`asmMachine`: skriptens maskin med programmet som
   koden och ett enda minne, så att kod som programmet kopierar någon annanstans och hoppar till ser programmets bytes),
   startat på samma sätt som SYS. Step, Over (F6), Out (Shift+F6), Continue (Ctrl+Enter), Pause och Stop som i
