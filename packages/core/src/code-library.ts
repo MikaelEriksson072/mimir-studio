@@ -104,14 +104,15 @@ export function readCodeLibFile(kind: CodeLibKind, file: string, text: string, t
   const color = typeof o.color === 'string' && isBookmarkColor(o.color) ? o.color.toLowerCase() : undefined;
   let description = typeof o.description === 'string' ? o.description.slice(0, CODE_LIB_DESCRIPTION_MAX) : '';
   const from = typeof o.from === 'string' && o.from.length <= 500 ? o.from : undefined;
-  // a macro's file: several macros (or one said to be a collection) a collection of them, each with what its own
-  // lines say; one macro with no description of its own described by the comments above it
+  // a macro file: its macros, each with what its own lines say (one or several: any file takes more); several (or a
+  // file said to be one) a collection, whose description is the file's; one macro with no description of its own
+  // described by the comments above it
   const subs = kind === 'macro' ? codeLibSubs(code, lang) : [];
   const collection = kind === 'macro' && (o.collection === true || subs.length > 1);
   if (!description && subs.length === 1 && !collection) description = subs[0].description;
   return {
     kind, file, name: codeLibNameOf(file), code, lang, description, created, changed: times.changed, ...(color ? { color } : {}), ...(from ? { from } : {}), ...(m ? {} : { own: true }),
-    ...(collection ? { collection: true, macros: subs } : {}),
+    ...(kind === 'macro' ? { macros: subs } : {}), ...(collection ? { collection: true } : {}),
   };
 }
 
@@ -453,20 +454,24 @@ export function codeLibNeeds(subs: readonly Pick<CodeLibSub, 'name' | 'code'>[],
 /** a collection's code without Mimir's own lines (each macro's mimir-macro line): as a file to give away */
 export const codeLibPlain = (code: string): string => code.replace(/\r\n/g, '\n').split('\n').filter(l => !SUB_HEAD.test(l)).join('\n');
 
-/** what the lists show of a library: an item, or one of a collection's macros as one of its own (`macro` its name,
- *  `in` the collection's name; its code its definition alone, its colour and when it was made its own, else the
- *  collection's) */
+/** what the lists show of a library: an item, or one of a file's macros as one of its own (`macro` its name, `in` the
+ *  file's name; its code its definition alone, its colour and when it was made its own, else the file's) */
 export interface CodeLibEntry extends CodeLibItem { macro?: string; in?: string }
-/** a collection's macros as entries of the lists */
+/** a macro file's macros as entries of the lists (a file of one macro: its description the file's when the comments
+ *  above it have none) */
 export function codeLibSubItems(c: CodeLibItem): CodeLibEntry[] {
-  return (c.macros ?? []).map(s => {
+  const subs = c.macros ?? [], one = subs.length === 1 && !c.collection;
+  return subs.map(s => {
     const color = s.color ?? c.color;
     return {
-      kind: c.kind, file: c.file, name: s.name, code: s.code, lang: c.lang, description: s.description, created: s.created ?? c.created, changed: c.changed,
-      ...(color ? { color } : {}), ...(c.from ? { from: c.from } : {}), macro: s.name, in: c.name,
+      kind: c.kind, file: c.file, name: s.name, code: s.code, lang: c.lang, description: one ? c.description || s.description : s.description, created: s.created ?? c.created, changed: c.changed,
+      ...(color ? { color } : {}), ...(c.from ? { from: c.from } : {}), ...(c.own ? { own: true } : {}), macro: s.name, in: c.name,
     };
   });
 }
+/** what the macro library lists: every macro of every file (a file with none, its code: the file itself) */
+export const codeLibMacroEntries = (items: readonly CodeLibItem[]): CodeLibEntry[] =>
+  items.filter(i => i.kind === 'macro').flatMap(i => (i.macros?.length ? codeLibSubItems(i) : [i]));
 
 /**
  * Macros as one file to export, as a collection's: each with its description as comments above it and its definition,
@@ -507,36 +512,42 @@ export function codeLibRest(code: string, lang: ScriptLang): string {
   return keep.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** a macro of a project's macro file as the editor shows it: its name, its collection (`in`), why it is there (added,
- *  called by the code, or used by another of them), its call as the list shows it (`sig`), its description and its
- *  definition */
-export interface CodeLibBuiltMacro { name: string; in: string | null; why: 'added' | 'called' | 'used'; sig: string; description: string; code: string }
-/** what a project's macro file was built of: its text, each macro, the groups it has (a collection's, with its own lines,
- *  or the macros of their own: `in` null) in its order, the names added that the library has not, and those the project
- *  defines itself (left out: they would be defined twice) */
+/** why a file of the library is in a project's macro file: added to it, a macro of it called by the code, or a macro of
+ *  it used by a macro of another file in it */
+export type CodeLibWhy = 'added' | 'called' | 'used';
+/** a macro of a project's macro file as the editor shows it: its name, its file (`in`), why its file is there, its call
+ *  as the list shows it (`sig`), its description and its definition */
+export interface CodeLibBuiltMacro { name: string; in: string | null; why: CodeLibWhy; sig: string; description: string; code: string }
+/** what a project's macro file was built of: its text; each macro; the files of the library in it (their macros, all of
+ *  them: macros that belong together), each with why and with the macros of it the project defines itself (`own`: left
+ *  out, they would be defined twice); the groups it has (a file's own lines and its macros) in its order; the names
+ *  added that the library has not; all the macros the project defines itself */
 export interface CodeLibBuilt {
   text: string;
   macros: CodeLibBuiltMacro[];
+  files: { file: string; name: string; why: CodeLibWhy; count: number; own: string[] }[];
   groups: { in: string | null; rest: string; macros: string[] }[];
   missing: string[];
   own: string[];
 }
 
 /** a macro of the macro library as a source can use it: its name, parameters and kind, its definition alone, its
- *  description, its collection (null: a file of its own), and where it is in the library's order */
-export interface CodeLibLibMacro { name: string; params: string[]; how: CodeLibMacro['how']; code: string; description: string; decor?: CodeLibSub['decor']; coll: CodeLibItem | null; order: number }
-/** Every macro of the macro library written for `lang`, once by name (the first of a name in the library's order): a
- *  collection's each, a file of one macro its macro. */
+ *  description, its file (`item`), the file whose own lines go with it (`coll`: one of several macros, or one with
+ *  lines of its own, .const …; null: a macro alone in its file), and where it is in the library's order */
+export interface CodeLibLibMacro { name: string; params: string[]; how: CodeLibMacro['how']; code: string; description: string; decor?: CodeLibSub['decor']; item: CodeLibItem; coll: CodeLibItem | null; order: number }
+/** Every macro of the macro library written for `lang`, once by name (the first of a name in the library's order),
+ *  each file's macros. */
 export function codeLibAllMacros(items: readonly CodeLibItem[], lang: ScriptLang): CodeLibLibMacro[] {
   const out: CodeLibLibMacro[] = [], seen = new Set<string>();
   let order = 0;
   for (const i of codeLibOrder(items.filter(x => x.kind === 'macro' && langIs(x.lang) === langIs(lang)))) {
-    const subs = i.collection ? i.macros ?? codeLibSubs(i.code, i.lang) : codeLibIsMacro(i.code, i.lang) ? codeLibSubs(i.code, i.lang).slice(0, 1) : [];
+    const subs = i.macros ?? codeLibSubs(i.code, i.lang), one = subs.length === 1 && !i.collection;
+    const coll = !one || codeLibRest(i.code, i.lang) ? i : null;
     for (const s of subs) {
       const o = order++;
       if (seen.has(s.name)) continue;
       seen.add(s.name);
-      out.push({ name: s.name, params: s.params, how: s.how, code: s.code, description: i.collection ? s.description : i.description || s.description, ...(s.decor ? { decor: s.decor } : {}), coll: i.collection ? i : null, order: o });
+      out.push({ name: s.name, params: s.params, how: s.how, code: s.code, description: one ? i.description || s.description : s.description, ...(s.decor ? { decor: s.decor } : {}), item: i, coll, order: o });
     }
   }
   return out;
@@ -544,60 +555,68 @@ export function codeLibAllMacros(items: readonly CodeLibItem[], lang: ScriptLang
 
 /**
  * The project's macro file built from the macro library (`items`, the library's; those of the project's assembler
- * only): the macros `want` adds and the collections it adds whole, those `sources` (the project's own sources, the
- * file itself not among them) call unless `want.called` is false, and the macros they use; none the sources define. In
- * the library's order, a collection's together in its order under a line with its name (its own lines first), each
- * with its description as comments above it. `file`: its name, for the lines at its top.
+ * only). A file of the library is macros that belong together: what goes in is whole files, all their macros. The
+ * files `want.collections` names; the files of the macros `want.macros` names; unless `want.called` is false the files
+ * of the macros `sources` (the project's own sources, the file itself not among them, and what they import from
+ * outside) call; and the files of the macros those use, and so on. A macro the sources define themselves is left out
+ * (it would be defined twice: said, by file). In the library's order, each file under a line with its name, its own
+ * lines first, each macro with its description as comments above it. `file`: its name, for the lines at its top.
  */
 export function codeLibProjectFile(items: readonly CodeLibItem[], want: { macros: readonly string[]; collections: readonly string[]; called?: boolean }, sources: readonly string[], lang: ScriptLang, file: string): CodeLibBuilt {
   const tass = langIs(lang) === '64tass';
   // the library's macros by name (the first of a name in the library's order)
-  const byName = new Map(codeLibAllMacros(items, lang).map(e => [e.name, e]));
+  const lib = codeLibAllMacros(items, lang);
+  const byName = new Map(lib.map(e => [e.name, e]));
   const own = new Set<string>();
   for (const s of sources) for (const d of codeLibMacros(s, lang)) own.add(d.name);
-  const why = new Map<string, CodeLibBuilt['macros'][number]['why']>();
-  const missing: string[] = [], skipped = new Set<string>();
-  const take = (n: string, w: 'added' | 'called' | 'used') => {
-    if (why.has(n)) return;
-    if (own.has(n)) { skipped.add(n); return; }
-    if (!byName.has(n)) { if (w === 'added') missing.push(n); return; }
-    why.set(n, w);
-  };
-  for (const n of want.macros) take(n, 'added');
+  // the files in it, and why
+  const used = new Map<CodeLibItem, CodeLibWhy>(), missing: string[] = [];
+  const use = (f: CodeLibItem, w: CodeLibWhy) => { if (!used.has(f)) used.set(f, w); };
   for (const c of want.collections) {
-    const coll = items.find(i => i.kind === 'macro' && i.collection && i.name.toLowerCase() === c.toLowerCase());
-    if (!coll) { missing.push(c); continue; }
-    for (const s of coll.macros ?? []) if (byName.get(s.name)?.coll === coll) take(s.name, 'added');
+    const f = items.find(i => i.kind === 'macro' && langIs(i.lang) === langIs(lang) && i.name.toLowerCase() === c.toLowerCase());
+    if (f) use(f, 'added'); else missing.push(c);
   }
-  if (want.called !== false) for (const n of codeLibCalled(sources, [...byName.keys()].filter(n => !own.has(n)), lang)) take(n, 'called');
-  // and the macros those use, and those they use
-  const lib = [...byName.values()];
-  for (const n of [...why.keys()]) for (const u of codeLibNeeds(lib, n, lang)) take(u, 'used');
+  for (const n of want.macros) { const e = byName.get(n); if (e) use(e.item, 'added'); else if (!own.has(n)) missing.push(n); }
+  if (want.called !== false) for (const n of codeLibCalled(sources, [...byName.keys()].filter(n => !own.has(n)), lang)) use(byName.get(n)!.item, 'called');
+  // the files of the macros theirs use, and so on (each macro looked at once)
+  const looked = new Set<string>();
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const e of lib) {
+      if (!used.has(e.item) || looked.has(e.name)) continue;
+      looked.add(e.name);
+      for (const u of codeLibNeeds(lib, e.name, lang)) { const f = byName.get(u)!.item; if (!used.has(f)) { used.set(f, 'used'); grew = true; } }
+    }
+  }
 
-  const chosen = lib.filter(e => why.has(e.name)).sort((a, b) => a.order - b.order);
+  const inFile = lib.filter(e => used.has(e.item)).sort((a, b) => a.order - b.order);
+  const chosen = inFile.filter(e => !own.has(e.name));
   const c = tass ? ';' : '//';
   const out: string[] = [
-    `${c} ${file}: built by Mimir from the macro library (Macros and code) as this project's code calls its macros and as`,
-    `${c} macros are added to it, with the macros they use. Mimir writes it again as they change: change them in the library.`,
+    `${c} ${file}: built by Mimir from the macro library (Macros and code): the files of macros this project uses, all of`,
+    `${c} each file's macros (they belong together). Mimir writes it again as they change: change them in the library.`,
     ...(tass ? [] : ['#importonce']),
   ];
-  let group: CodeLibItem | null | undefined;
+  let group: CodeLibItem | undefined;
   const groups: CodeLibBuilt['groups'] = [];
   for (const e of chosen) {
-    if (e.coll !== group || !groups.length) {
-      group = e.coll;
-      out.push('', `${c} ---- ${group ? group.name : 'macros of their own'} ----`);
-      const rest = group ? codeLibRest(group.code, lang) : '';
+    if (e.item !== group) {
+      group = e.item;
+      out.push('', `${c} ---- ${group.name} ----`);
+      const rest = codeLibRest(group.code, lang);
       if (rest) out.push(rest);
-      groups.push({ in: group ? group.name : null, rest, macros: [] });
+      groups.push({ in: group.name, rest, macros: [] });
     }
     groups[groups.length - 1].macros.push(e.name);
     out.push('', codeLibSubText({ code: e.code, description: e.description }, lang, e.decor));
   }
+  const files = codeLibOrder([...used.keys()]).map(f => ({
+    file: f.file, name: f.name, why: used.get(f)!, count: chosen.filter(e => e.item === f).length, own: inFile.filter(e => e.item === f && own.has(e.name)).map(e => e.name),
+  }));
   return {
     text: `${out.join('\n')}\n`,
-    macros: chosen.map(e => ({ name: e.name, in: e.coll ? e.coll.name : null, why: why.get(e.name)!, sig: codeLibSignature(e, lang), description: e.description, code: e.code })),
-    groups, missing, own: [...skipped],
+    macros: chosen.map(e => ({ name: e.name, in: e.item.name, why: used.get(e.item)!, sig: codeLibSignature(e, lang), description: e.description, code: e.code })),
+    files, groups, missing, own: inFile.filter(e => own.has(e.name)).map(e => e.name),
   };
 }
 

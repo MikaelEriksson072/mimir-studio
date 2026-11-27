@@ -155,7 +155,7 @@ mimir-studio/
 │  │  ├─ main/vice-monitor.ts     binary monitor-protokoll (TCP 6502)
 │  │  ├─ main/project-fs.ts       öppna/spara .mimir, exportera projektmapp
 │  │  ├─ main/assembler.ts        Assemblerns mapp: listan, filerna bara med sin väg i mappen, mapparna som öppnats (10.7)
-│  │  ├─ main/code-library.ts     makro- och kodbiblioteken: mapparna Macros och Code i bibliotekets mapp, samlingarna, import och export (10.8)
+│  │  ├─ main/code-library.ts     makro- och kodbiblioteken: mapparna Macros och Code i bibliotekets mapp, filerna och deras makron, import och export (10.8)
 │  │  └─ preload/index.ts         contextBridge → window.kr
 │  └─ src/                        renderer
 │     ├─ App.tsx
@@ -4098,68 +4098,78 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   layout, ett makros definition med en tom rad före och efter; raderna markeras. Ett dubbelklick gör anropet när
   projektets källor definierar makrot, annars definitionen. Kod för Kick Assembler i ett 64tass-projekt görs om
   (`kickToTass`) där det går; annars sägs det. Högerklick: sätt in, kopiera, *Edit…*, visa filen, till papperskorgen.
-- **Samlingar** (ett grundbibliotek med makron i): en fil i `Macros` med flera makron (`irq_lib.asm`, ett bibliotek
-  en källa importerar), eller en som raden säger är en (`"collection":true`), är en samling. Varje makro i den är ett
-  eget i listan (`codeLibSubs`, `codeLibSubItems`): kommentarerna precis ovanför definitionen är dess beskrivning
-  (raderna som bara pyntar, `// =====`, räknas inte men står kvar), och en rad
-  `// mimir-macro {"created":"…","color":"teal"}` (`;` i 64tass) säger dess färg och när det gjordes (ingen: samlingens).
-  Resten av filen (`#importonce`, `.const`, kod mellan makrona) står kvar som den är. Ett makro läggs i en samling
-  (dialogens *Put it in*: en fil för sig, en samling som finns, en ny samling; namnet är då makrots, definitionen döps
-  om till det) sist i den, i samlingens stil (dess pyntrader, `codeLibDecor`); ändras på sin plats (pyntet kvar); flyttas
-  till en annan samling eller ut till en egen fil (när det gjordes står kvar); tas ut till papperskorgen som en egen fil.
-  Två makron med samma namn i en samling, eller makron för olika assemblers, går inte. Mimirs egen kontroll gör
-  `#importonce` som Kick Assembler (en fil med den läses bara första gången den importeras). Mätt
-  (`code-library.integration.test.ts`): en samling som Mimir skriver, importerad två gånger av riktiga KickAss.jar,
-  ger samma bytes som koden.
-- **I listan** är en samling en rad som öppnas på sina makron (antalet; en sökning öppnar den på det den hittar);
-  *A–Ö* listar i stället varje makro under sin egen bokstav med samlingens namn bredvid. En öppen samling har *Import
-  it* (raden `#import "…/Macros/irq_lib.asm"`, i 64tass `.include`, överst i källan efter de importer den har, en gång),
-  *Add* (raderna som är markerade i Assemblern, till den), *Export…* och *Again*. Ett makros *Insert definition* tar med
-  de makron i samlingen det använder (och de de använder, i samlingens ordning, `codeLibNeeds`) som projektet inte
-  definierar.
+- **Filer och makron** (inga samlingar att hålla reda på): makrobiblioteket är filer, och en fil har ett eller flera
+  makron (`irq_lib.asm`, ett bibliotek en källa importerar). Vilken fil som helst tar fler: ett makro läggs i en fil med
+  ett makro, och filen har två. Varje makro i en fil (`CodeLibItem.macros`, `codeLibSubs`; `codeLibMacroEntries` ger
+  alla) har kommentarerna precis ovanför definitionen som beskrivning (raderna som bara pyntar, `// =====`, räknas inte
+  men står kvar), och en rad `// mimir-macro {"created":"…","color":"teal"}` (`;` i 64tass) säger dess färg och när
+  det gjordes (ingen: filens). En fil med ett makro har dess beskrivning och färg i raden överst (som förut); får den ett
+  makro till flyttas de till makrots egna rader ovanför det. Resten av filen (`#importonce`, `.const`, kod mellan
+  makrona) står kvar som den är. Ett makro har sitt namn (makrots, definitionen döps om till det; en fil med ett makro som
+  heter som makrot döps om med det) och sin fil (dialogens *File*: en egen fil, vilken fil som helst i biblioteket, en ny
+  fil): det läggs sist i en annan fil i dess stil (pyntraderna, `codeLibDecor`), ändras på sin plats (pyntet kvar),
+  flyttas (när det gjordes står kvar; en fil med bara det går till papperskorgen), tas ut till papperskorgen som en egen
+  fil (det sista i en fil: filen). Två makron med samma namn i en fil, eller makron för olika assemblers, går inte. En fil
+  ändras för sig med *Edit the file…* (namnet, beskrivningen, färgen, hela koden). Mimirs egen kontroll gör `#importonce`
+  som Kick Assembler (en fil med den läses bara första gången den importeras). Mätt (`code-library.integration.test.ts`):
+  en fil med flera makron som Mimir skriver, importerad två gånger av riktiga KickAss.jar, ger samma bytes som koden.
+- **I listan** står alltid makrona, vart och ett på sin rad A–Ö (en kods bit i kodbiblioteket), med filen bredvid när
+  filen inte heter som makrot. Filväljaren ovanför listan (*All files*, eller en fil och hur många makron den har) visar
+  i stället en fils makron i dess ordning, och filens rad: *Import it* (raden `#import "…/Macros/irq_lib.asm"`, i 64tass
+  `.include`, överst i källan efter de importer den har, en gång; i ⋯), *Add* (raderna som är markerade i Assemblern, till
+  den), *Export…*, *Again* och ⋯ (*Import it directly*: raden som importerar bibliotekets fil som den är, *Edit the
+  file…*, visa i mappen, papperskorgen); först på raden *Use in project* (filen i projektets makrofil, alla dess makron). Ett makros meny har *Show its file*. En fil som läggs i biblioteket med flera makron visas så. Ett
+  makros *Insert definition* tar med de makron i filen det använder (och de de använder, i filens ordning,
+  `codeLibNeeds`) som projektet inte definierar.
 - **Import** (vyns knapp, paletten): filer var som helst läggs i biblioteket som de är, med raden överst (assemblern
-  gissad, gjord när filen gjordes, varifrån); en fil med flera makron blir en samling. Varifrån den kom kommer
+  gissad, gjord när filen gjordes, varifrån), med alla sina makron. Varifrån den kom kommer
   huvudprocessen ihåg (`codelib-files.json` i användarmappen: vägen och en hash av det som stod där), aldrig
   biblioteksfilen eller renderaren.
-- **Export** (vyns knapp, en samlings *Export…*, paletten): makrona som bockas för (en samling hel, några av dess
-  makron, egna makron) skrivs till en fil som sparadialogen väljer, eller läggs i en samling i biblioteket (en som
-  finns, annars en ny; *Move them*: ut ur där de var). En hel samling skrivs som filen är; resten var och en med sin
+- **Export** (vyns knapp, en fils *Export…*, paletten): makrona som bockas för (en fil hel, några av dess makron)
+  skrivs till en fil som sparadialogen väljer, eller läggs i en fil i biblioteket (*A file of the library*: en som finns,
+  annars en ny; *Move them*: ut ur där de var). En hel fil skrivs som den är; resten var och en med sin
   beskrivning som kommentarer ovanför. Utan *Mimir's lines* blir filen som man skriver den för hand (inga
-  `mimir-`-rader). *Again* skriver samlingen till filen den senast exporterades till eller importerades från (CRLF
+  `mimir-`-rader). *Again* skriver filen dit den senast exporterades till eller importerades från (CRLF
   behålls), men inte över en fil som ändrats sedan Mimir skrev eller läste den utan att fråga (*Overwrite it* / *Keep
   it*). En assemblers makron i en fil.
 - **Projektets makrofil** (`AsmProjectInfo.macros`, `AsmMacroFile`; i stället för många importer): en fil i
   Assembler-projektet, `macros.asm` bredvid huvudkällan, som Mimir bygger ur makrobiblioteket i realtid
   (`codeLibProjectFile`), och som huvudkällan importerar en gång (`#import "macros.asm"`, `.include` i 64tass; raden
-  läggs överst efter de importer den har när filen görs). I den: makrona som lagts till den (*To macros.asm* på ett
-  makro, *All to macros.asm* på en samling: dess alla), makrona som koden anropar och inte definierar själv
-  (`codeLibCalled`: Kick Assemblers `Namn(…)` eller ett pseudokommando först i en sats, 64tass `#Namn`/`.Namn` eller
-  `Namn(…)`; inte en etikett, en kommentar eller en sträng; *Calls* av: bara de tillagda), och de makron de använder
-  (`codeLibNeeds` över hela biblioteket); en samlings egna rader (`.const`, `.var` …, `codeLibRest`) med dess makron;
-  inget som projektets källor definierar själva (det sägs). Den byggs om när koden, biblioteket (ett makro ändrat,
-  mappen läst igen) eller listan ändras, skrivs bara när den blir en annan, och är skrivskyddad i editorn (Mimir skriver
-  den: ändra makrot i biblioteket). Vyn visar den överst i makrobiblioteket (hur många, varför: tillagda, anropade,
-  använda; vad som saknas i biblioteket; *Stop*: filen och importen står kvar), och listan märker makrona som är i den.
-  Sparas i projektfilen (ångra tar tillbaka en ändring). Mätt: filen som Mimir bygger, importerad av riktiga
-  KickAss.jar, ger samma bytes som koden utskriven.
+  läggs överst efter de importer den har när filen görs). **En fil i biblioteket är makron som hör ihop**: det som
+  kommer in är hela filer, alla deras makron. Filerna som används i projektet (*Use in project* på filens rad, eller på
+  ett makro: dess fil); filerna till makron som koden anropar och inte definierar själv (`codeLibCalled`: Kick
+  Assemblers `Namn(…)` eller ett pseudokommando först i en sats, 64tass `#Namn`/`.Namn` eller `Namn(…)`; inte en
+  etikett, en kommentar eller en sträng; *Calls* av: bara de använda); och filerna till makron som de använder, och så
+  vidare (`codeLibNeeds` över hela biblioteket). Varje fil med sina egna rader (`.const`, `.var` …, `codeLibRest`)
+  under en rad med sitt namn. Ett makro som projektet definierar själv lämnas ute (det skulle definieras två gånger), och
+  rutan säger var det finns: i en egen källa, eller i en fil som en källa importerar utifrån (`C:\_c64_lib\…`, läst
+  när den importeras; en som ingen källa importerar längre räknas inte) – då med *Use macros.asm instead*, som tar
+  bort den importraden ur källorna, och makrona kommer från biblioteket i stället. Filen byggs om när koden,
+  biblioteket (ett makro ändrat, mappen läst igen) eller listan ändras, skrivs bara när den blir en annan, och är
+  skrivskyddad i editorn (Mimir skriver den: ändra makrot i biblioteket). Vyn visar den överst i makrobiblioteket
+  (hur många makron; filerna i den, var och en med hur många och varför: använd, anropad, använd av en annan fil, × för
+  en använd; vad som saknas i biblioteket; *Stop*: filen och importen står kvar), och listan märker makrona som är i
+  den. Sparas i projektfilen (`collections`: filerna; `macros`: makron lagda en och en förr, deras filer används nu;
+  ångra tar tillbaka en ändring). Mätt: filen som Mimir bygger, importerad av riktiga KickAss.jar, ger samma bytes som
+  koden utskriven.
 - **Hur makrofilen syns** (`AsmMacroList.tsx`; det användaren ser är inte det assemblern läser): i en källa som
   importerar den står under importraden en hopfälld lista, en rad (filen, hur många, deras anrop) som fälls ut till
-  makrona under sina samlingar, vart och ett med namn och parametrar (`codeLibSignature`) och varför det är där; att peka
+  makrona under sina filer, vart och ett med namn och parametrar (`codeLibSignature`) och varför det är där; att peka
   på ett visar dess beskrivning på listans första rad (och hela i tipset). Raderna är en view zone i Monaco som håller
   plats och en overlay-widget över den som tar pekaren (editorns rader ligger annars över zonens egna noder). Källans
-  text är som den är: bara importraden. Filen själv öppnad är samma lista som en sida (samlingarnas egna rader med; ett
+  text är som den är: bara importraden. Filen själv öppnad är samma lista som en sida (filernas egna rader med; ett
   klick fäller ut ett makros kod, att peka visar beskrivningen nedanför), och *Show the code* visar koden Mimir skriver
   (skrivskyddad), *Show the list* listan igen.
 - **I editorns förslag** (`asmMacroSuggestions`, `asmContext.macros`): där en instruktion står föreslås
   makrobibliotekets makron för projektets assembler (`codeLibAllMacros`, ett per namn; Kick Assemblers pseudokommandon
   med) vars namn börjar med det som skrivs (från två bokstäver också en del efter `_`: `sav` hittar `irq_save`), bland
-  mnemonics; i ett operandfält funktionerna. Förslaget säger anropet och samlingen, och dess detaljer beskrivningen och
+  mnemonics; i ett operandfält funktionerna. Förslaget säger anropet och filen, och dess detaljer beskrivningen och
   vad valet gör; detaljerna är öppna från början, utan Ctrl+Mellanslag (Monaco håller det i sin lagring, en för alla
   dess editorer: det sätts en gång, av den första editorns förslagsruta; Ctrl+Mellanslag stänger dem, och då förblir de
   stängda). Valt (Tab) sätts anropet in med parametrarna som platser att skriva i (i 64tass `#Namn`; efter ett `#`
   som skrivits där anropet utan det: `#` öppnar förslagen, aldrig efter ett omedelbart värdes `#`). Projektet får
-  makrot: utan makrofil görs `macros.asm` med det (och importen i huvudkällan), med *Calls* av läggs det till, annars
-  kommer det in som anropat. Makron som projektets källor (eller filer de importerar utifrån) definierar själva
+  makrots fil, alla dess makron: utan makrofil görs `macros.asm` med den (och importen i huvudkällan), med *Calls* av
+  läggs den till, annars kommer den in som anropad. Makron som projektets källor (eller filer de importerar utifrån) definierar själva
   föreslås inte. Mimirs ändringar i en öppen fil (importraden, makrofilen) läggs in som bara det som ändrats, så
   markören och platserna man skriver i står kvar.
 
@@ -4837,10 +4847,10 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `scripts:reveal` | renderer → main | mappen `Scripts` visas i filhanteraren (görs om den inte finns) |
 | `codelib:list` | renderer → main | → `{ dir, folders, items, exports }`: makrona och koden i bibliotekets mappar `Macros` och `Code`, en fil var (10.8) |
 | `codelib:save` | renderer → main | `{ kind, name, code, lang, description, color?, from?, was?, into?, collection? }` → `{ item, listing, macro? }`: en ny fil (unikt namn, gjord nu) eller `was` på sin plats (omdöpt, flyttad till det andra biblioteket; när den gjordes står kvar) |
-| `codelib:remove` | renderer → main | `{ kind, file, macro? }` → listan: filen till papperskorgen; ett makro i en samling ut ur den (till papperskorgen som en egen fil) |
+| `codelib:remove` | renderer → main | `{ kind, file, macro? }` → listan: filen till papperskorgen; ett makro i en fil ut ur den (till papperskorgen som en egen fil; det sista: filen) |
 | `codelib:reveal` | renderer → main | `{ kind, file? }`: filhanteraren vid filen, eller vid sortens mapp (görs om den inte finns) |
 | `codelib:import` | renderer → main | `{ kind }` → `{ listing, imported, skipped }` eller null: filerna som väljs i öppna-dialogen läggs i biblioteket (10.8) |
-| `codelib:export` | renderer → main | `{ macros, to: 'file' \| 'again' \| { collection }, lines, move?, force? }` → `{ listing, count, path?, collection?, changed?, canceled? }`: till en fil som sparadialogen väljer, dit den exporterades förut (vägen har huvudprocessen), eller till en samling |
+| `codelib:export` | renderer → main | `{ macros, to: 'file' \| 'again' \| { collection }, lines, move?, force? }` → `{ listing, count, path?, collection?, changed?, canceled? }`: till en fil som sparadialogen väljer, dit den exporterades förut (vägen har huvudprocessen), eller till en fil i biblioteket |
 | `assembler:start` | renderer → main | → `{ recent, parent }`: mapparna som öppnats i Assemblern (10.7) och var en ny hamnar |
 | `assembler:open` | renderer → main | `{ path? }` → `{ dir, name, entries, more }` eller `null`: en mapp som öppnats förut (ingen dialog) eller en mappdialog; mappen bevakas (`fs:changed`) |
 | `assembler:create` | renderer → main | `{ name, parent, files }` → mappens innehåll: en ny mapp `<parent>/<name>` med `files` (den första källfilen) |

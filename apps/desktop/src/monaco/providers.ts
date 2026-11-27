@@ -19,7 +19,7 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
   padStore: ((line: number, pad: number) => void) | null } = { names: new Map(), pads: [], links: new Set(), kinds: new Map(), padStore: null };
 
 /** a macro of the macro library as the Assembler's editor suggests it (spec 10.8): its name and kind, its call as the
- *  list shows it and as a snippet (its parameters places to type in), its description, its collection, and what
+ *  list shows it and as a snippet (its parameters places to type in), its description, its file, and what
  *  choosing it does to the project (it goes in macros.asm) */
 export interface AsmLibMacro { name: string; how: 'macro' | 'pseudocommand' | 'function' | 'segment' | 'sfunction'; sig: string; snippet: string; description: string; in: string | null; note: string }
 
@@ -195,8 +195,12 @@ export function registerProviders(monaco: typeof Monaco): void {
   let detailsOpen = false;
   monaco.editor.onDidCreateEditor(ed => {
     if (detailsOpen) return;
+    // (an editor closed before then is not touched: its contributions cannot be made any more)
+    let gone = false;
+    const sub = ed.onDidDispose(() => { gone = true; });
     setTimeout(() => {
-      if (detailsOpen) return;
+      sub.dispose();
+      if (detailsOpen || gone) return;
       try {
         const c = ed.getContribution('editor.contrib.suggestController') as unknown as { widget?: { value?: { _isDetailsVisible?: () => boolean; _setDetailsVisible?: (on: boolean) => void } } } | null;
         const w = c?.widget?.value;

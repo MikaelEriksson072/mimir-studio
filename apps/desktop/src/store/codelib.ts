@@ -7,7 +7,6 @@ import { codeLibSubItems, type CodeLibEntry, type CodeLibItem, type CodeLibKind,
 import type { CodeLibExportRequest, CodeLibExportResult, CodeLibImportResult, CodeLibListing, CodeLibSaveRequest } from '../../shared/ipc';
 
 const kr = typeof window !== 'undefined' ? window.kr : undefined;
-const FLAT_KEY = 'kr.codeLibFlat';
 
 /** an item by its kind and file; `macro`: one of a collection's macros */
 export interface CodeLibRef { kind: CodeLibKind; file: string; macro?: string }
@@ -39,17 +38,12 @@ interface CodeLibState {
   q: string;
   color: string;
   open: CodeLibRef | null;
-  /** the collections open in the list (their files) */
-  expanded: string[];
-  /** every macro listed under its own letter (a collection's too), not the collections with their macros in them */
-  flat: boolean;
+  /** the macro library's file the list shows the macros of ('' every macro A–Ö) */
+  file: string;
   editing: CodeLibEditing | null;
   /** the export dialog, open on these (the macros checked at first) */
   exporting: CodeLibRef[] | null;
-  set: (s: Partial<Pick<CodeLibState, 'kind' | 'q' | 'color' | 'open' | 'editing' | 'exporting' | 'expanded'>>) => void;
-  setFlat: (on: boolean) => void;
-  /** a collection opened or closed in the list */
-  toggle: (file: string, on?: boolean) => void;
+  set: (s: Partial<Pick<CodeLibState, 'kind' | 'q' | 'color' | 'open' | 'editing' | 'exporting' | 'file'>>) => void;
   /** the folders read again */
   load: () => Promise<void>;
   save: (req: CodeLibSaveRequest) => Promise<{ item: CodeLibItem; macro?: string }>;
@@ -59,13 +53,9 @@ interface CodeLibState {
   exportMacros: (req: CodeLibExportRequest) => Promise<CodeLibExportResult>;
 }
 
-const flatAtFirst = () => { try { return localStorage.getItem(FLAT_KEY) === '1'; } catch { return false; } };
-
 export const useCodeLib = create<CodeLibState>((set, get) => ({
-  listing: null, loading: false, error: null, kind: 'macro', q: '', color: '', open: null, expanded: [], flat: flatAtFirst(), editing: null, exporting: null,
+  listing: null, loading: false, error: null, kind: 'macro', q: '', color: '', open: null, file: '', editing: null, exporting: null,
   set: s => set(s),
-  setFlat: on => { try { localStorage.setItem(FLAT_KEY, on ? '1' : '0'); } catch { /* not kept */ } set({ flat: on }); },
-  toggle: (file, on) => { const ex = get().expanded, is = ex.includes(file), want = on ?? !is; if (want !== is) set({ expanded: want ? [...ex, file] : ex.filter(f => f !== file) }); },
   load: async () => {
     if (!kr) return;
     set({ loading: true });
@@ -74,26 +64,27 @@ export const useCodeLib = create<CodeLibState>((set, get) => ({
   save: async req => {
     if (!kr) throw new Error('The libraries need the desktop app');
     const r = await kr.codelibSave(req);
-    // the item open in its library, which the view shows (its search kept unless it hides it); a collection's macro
-    // in its collection, opened
+    // the item open in its library, which the view shows (its search kept unless it hides it; a file picked that is not
+    // its: its own file picked)
     const ref = { kind: r.item.kind, file: r.item.file, ...(r.macro ? { macro: r.macro } : {}) };
     const shown = r.macro ? r.item.macros?.find(m => m.name === r.macro)?.color ?? r.item.color : r.item.color;
-    set({ listing: r.listing, error: null, open: ref, kind: r.item.kind, ...(get().color && get().color !== (shown ?? '') ? { color: '' } : {}) });
-    if (r.macro) get().toggle(r.item.file, true);
+    set({ listing: r.listing, error: null, open: ref, kind: r.item.kind, ...(get().color && get().color !== (shown ?? '') ? { color: '' } : {}), ...(get().file && get().file !== r.item.file ? { file: r.item.kind === 'macro' ? r.item.file : '' } : {}) });
     return { item: r.item, ...(r.macro ? { macro: r.macro } : {}) };
   },
   remove: async ref => {
     if (!kr) throw new Error('The libraries need the desktop app');
     const listing = await kr.codelibRemove(ref);
-    set({ listing, error: null, ...(sameCodeLib(get().open, ref) ? { open: null } : {}) });
+    // (a file picked that is gone: all files)
+    set({ listing, error: null, ...(sameCodeLib(get().open, ref) ? { open: null } : {}), ...(get().file && !listing.items.some(i => i.kind === 'macro' && i.file === get().file) ? { file: '' } : {}) });
   },
   importFiles: async kind => {
     if (!kr) throw new Error('The libraries need the desktop app');
     const r = await kr.codelibImport({ kind });
     if (r) {
       const one = r.imported.length === 1 ? r.imported[0] : null;
-      set({ listing: r.listing, error: null, kind, ...(one ? { open: one } : {}) });
-      for (const i of r.imported) if (r.listing.items.find(x => x.kind === i.kind && x.file === i.file)?.collection) get().toggle(i.file, true);
+      // (one file of several macros: it picked, its macros shown)
+      const many = one && kind === 'macro' && (r.listing.items.find(x => x.kind === 'macro' && x.file === one.file)?.macros?.length ?? 0) > 1;
+      set({ listing: r.listing, error: null, kind, ...(one ? { open: many ? null : one } : {}), ...(many ? { file: one!.file } : {}) });
     }
     return r;
   },
@@ -101,7 +92,7 @@ export const useCodeLib = create<CodeLibState>((set, get) => ({
     if (!kr) throw new Error('The libraries need the desktop app');
     const r = await kr.codelibExport(req);
     set({ listing: r.listing, error: null });
-    if (r.collection) { set({ kind: 'macro', open: r.collection }); get().toggle(r.collection.file, true); }
+    if (r.collection) set({ kind: 'macro', open: null, file: r.collection.file });
     return r;
   },
 }));

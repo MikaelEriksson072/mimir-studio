@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
 import {
-  CODE_LIB_FILE_MAX, CODE_LIB_FOLDERS, CODE_LIB_KINDS, codeLibDecor, codeLibFileName, codeLibFileText, codeLibIsMacro, codeLibNameOf, codeLibPlain, codeLibPutSub, codeLibRenameMacro, codeLibStem,
+  CODE_LIB_FILE_MAX, CODE_LIB_FOLDERS, CODE_LIB_KINDS, codeLibDecor, codeLibFileName, codeLibFileText, codeLibIsMacro, codeLibNameOf, codeLibPlain, codeLibPutSub, codeLibRenameMacro, codeLibRest, codeLibStem,
   codeLibSubs, codeLibSubText, codeLibTakeOutSub, isCodeLibFileName, macroName, readCodeLibFile, type CodeLibItem, type CodeLibKind, type CodeLibMeta, type CodeLibSub, type ScriptLang,
 } from '@mimir/core';
 import type { CodeLibChange, CodeLibExportRequest, CodeLibExportResult, CodeLibFileRequest, CodeLibImportResult, CodeLibListing, CodeLibSaveRequest } from '../../shared/ipc';
@@ -129,18 +129,34 @@ export class CodeLibStore {
       await this.trash(p);
     } finally { await rm(dir, { recursive: true, force: true }).catch(() => undefined); }
   }
-  /** the collection a macro is put in: one of the macro library, by its file or its name (any case) */
-  private async collection(into: { file: string } | { name: string }): Promise<CodeLibItem | null> {
+  /** the file of the macro library a macro is put in, by its file or its name (any case): any of its files (one with one
+   *  macro takes a second); null: none of that name (a new one) */
+  private async macroFile(into: { file: string } | { name: string }): Promise<CodeLibItem | null> {
     if ('file' in into) {
       const c = await this.readItem('macro', into.file);
       if (!c) throw new Error(`${into.file} is not in the macro library any more`);
-      if (!c.collection) throw new Error(`${c.name} is a macro of its own, not a collection`);
       return c;
     }
     const stem = codeLibStem(into.name).toLowerCase();
-    const c = (await this.items('macro')).find(i => i.name.toLowerCase() === stem) ?? null;
-    if (c && !c.collection) throw new Error(`${c.name} is a macro of its own, not a collection: give the collection another name`);
-    return c;
+    return (await this.items('macro')).find(i => i.name.toLowerCase() === stem) ?? null;
+  }
+  /** a file of one macro, whose line at the top holds that macro's description and colour */
+  private static single(f: CodeLibItem): boolean { return !f.collection && (f.macros?.length ?? 0) <= 1; }
+  /** a file of one macro made ready for a second: its macro's description and colour from the line at the top to its
+   *  own lines above it (the file's line keeps when it was made and where it came from) */
+  private static opened(f: CodeLibItem): CodeLibItem {
+    const s = f.macros?.[0];
+    if (!s || !CodeLibStore.single(f)) return f;
+    const color = s.color ?? f.color;
+    const text = codeLibSubText({ code: s.code, description: s.description || f.description, ...(color ? { color } : {}), ...(s.created ? { created: s.created } : {}) }, f.lang, s.decor);
+    const { color: _c, ...rest } = f; void _c;
+    return { ...rest, description: '', code: codeLibPutSub(f.code, f.lang, text, s.name) };
+  }
+  /** a file's code with a macro taken out: written, or the file to the Recycle Bin when nothing is left in it */
+  private async takeOut(f: CodeLibItem, name: string): Promise<void> {
+    const code = codeLibTakeOutSub(f.code, f.lang, name);
+    if (!codeLibSubs(code, f.lang).length && !codeLibRest(code, f.lang)) await this.drop(f.kind, f.file);
+    else await this.rewrite(f, code);
   }
 
   /**
@@ -179,15 +195,16 @@ export class CodeLibStore {
   }
 
   /**
-   * A macro put in a collection (`into`), changed in its place in one (`was.macro`, into the same), moved from one to
-   * another or out to a file of its own (no `into`), or a macro of its own moved into one (its file to the Recycle Bin).
-   * Its name is its macro's (its definition renamed to it); when it was made stays.
+   * A macro put in a file of the macro library (`into`: any of them, or a new one), changed in its place (`was.macro`,
+   * into the same file), moved to another file or out to a file of its own (no `into`), or a file of one macro moved
+   * into another (that file to the Recycle Bin). Its name is its macro's (its definition renamed to it); a file of one
+   * macro named after it is renamed with it; when it was made stays.
    */
   private async saveMacro(req: CodeLibSaveRequest): Promise<CodeLibChange> {
     const lang = req.lang;
     let code = req.code.replace(/\r\n/g, '\n').replace(/\s+$/, '');
     const def = codeLibIsMacro(code, lang);
-    if (!def) throw new Error('A collection takes one macro at a time: its definition (comments around it too)');
+    if (!def) throw new Error('A file takes one macro at a time here: its definition (comments around it too)');
     const name = macroName(req.name) || def.name;
     if (def.name !== name) code = codeLibRenameMacro(code, lang, def.name, name);
     // (the comments above its definition are its lines' in the collection: its description, when none was given)
@@ -205,43 +222,60 @@ export class CodeLibStore {
     }
     const made = fromSub ? fromSub.created ?? from!.created : from ? from.created : this.now();
     const content = { code, description, ...(req.color ? { color: req.color } : {}) };
+    // (a file of one macro: its macro is the file, its description and colour in the file's line)
+    const alone = !!from && CodeLibStore.single(from);
 
-    // out of its collection into a file of its own
-    if (!req.into) {
+    // a file of its own: the one it is alone in already, else a new one named after it
+    if (!req.into || (alone && 'file' in req.into && req.into.file === from!.file)) {
+      if (alone && from && (!req.into || ('file' in req.into && req.into.file === from.file))) {
+        const meta: CodeLibMeta = { ...metaOf(from), description, ...(req.color ? { color: req.color } : { color: undefined }) };
+        await this.rewrite({ ...from, ...meta, code } as CodeLibItem, code);
+        // (named after its macro: named after it still)
+        let file = from.file;
+        if (from.macros?.[0] && codeLibNameOf(from.file) === from.macros[0].name && name !== from.macros[0].name) {
+          file = codeLibFileName(name, (await readdir(this.folder('macro'))).filter(f => f.toLowerCase() !== from.file.toLowerCase()));
+          await rename(this.path('macro', from.file), this.path('macro', file));
+          await this.remember(keyOf('macro', from.file), null, keyOf('macro', file));
+        }
+        return this.change({ kind: 'macro', file }, name);
+      }
       const file = await this.create('macro', req.name, { lang, description, created: made, ...(req.color ? { color: req.color } : {}), ...(req.from ?? from?.from ? { from: req.from ?? from?.from } : {}) }, code);
-      if (from && fromSub) await this.rewrite(from, codeLibTakeOutSub(from.code, from.lang, fromSub.name));
-      return this.change({ kind: 'macro', file });
+      if (from && fromSub) await this.takeOut(from, fromSub.name);
+      return this.change({ kind: 'macro', file }, name);
     }
-    const target = await this.collection(req.into);
+    let target = await this.macroFile(req.into);
     if (target && target.lang !== lang) throw new Error(`${target.name} is written for ${target.lang === '64tass' ? '64tass' : 'Kick Assembler'}`);
     const same = !!target && !!fromSub && target.file === from!.file;
     const clash = target?.macros?.find(s => s.name === name && !(same && s.name === fromSub!.name));
     if (clash) throw new Error(`${target!.name} has a macro named ${name} already`);
 
-    // in its place in the same collection (its own time only when it had one)
+    // in its place in its file (its own time only when it had one)
     if (same) {
       const text = codeLibSubText({ ...content, ...(fromSub!.created ? { created: fromSub!.created } : {}) }, lang, fromSub!.decor ?? codeLibDecor(target!.macros ?? []));
       await this.rewrite(target!, codeLibPutSub(target!.code, lang, text, fromSub!.name));
       return this.change(target!, name);
     }
-    // in another collection, or a new one
+    // in another file (a file of one macro takes a second: its macro's description goes above it), or a new one
+    if (target) target = CodeLibStore.opened(target);
     const text = codeLibSubText({ ...content, created: made }, lang, target ? codeLibDecor(target.macros ?? []) : undefined);
     let file: string;
     if (target) { await this.rewrite(target, codeLibPutSub(target.code, lang, text)); file = target.file; }
-    else file = await this.create('macro', (req.into as { name: string }).name, { lang, description: '', created: this.now(), collection: true }, text);
+    else file = await this.create('macro', (req.into as { name: string }).name, { lang, description: '', created: this.now() }, text);
     // and no more where it was
-    if (from && fromSub) await this.rewrite(from, codeLibTakeOutSub(from.code, from.lang, fromSub.name));
+    if (from && fromSub && !alone) await this.takeOut(from, fromSub.name);
     else if (from && was) await this.drop(was.kind, was.file);
     return this.change({ kind: 'macro', file }, name);
   }
 
-  /** an item's file to the Recycle Bin; a collection's macro (`macro`) taken out of it, to the Recycle Bin as a file */
+  /** an item's file to the Recycle Bin; a file's macro (`macro`) taken out of it, to the Recycle Bin as a file of its
+   *  own (the file itself when it was its only macro) */
   remove(req: CodeLibFileRequest): Promise<CodeLibListing> {
     return this.run(async () => {
       if (req.macro) {
         const c = await this.readItem(req.kind, req.file);
         const s = c?.macros?.find(m => m.name === req.macro);
-        if (c && s) { await this.trashMacro(c, s); await this.rewrite(c, codeLibTakeOutSub(c.code, c.lang, s.name)); }
+        if (c && s && CodeLibStore.single(c)) await this.drop(c.kind, c.file);
+        else if (c && s) { await this.trashMacro(c, s); await this.takeOut(c, s.name); }
         return this.read();
       }
       await this.drop(req.kind, req.file);
@@ -345,24 +379,23 @@ export class CodeLibStore {
     });
   }
 
-  /** macros put in a collection of the macro library (one of that name, else a new one), taken out of where they were
-   *  when they are moved */
+  /** macros put in a file of the macro library (any of that name, else a new one), taken out of where they were when
+   *  they are moved */
   private async intoCollection(parts: { it: CodeLibItem; sub?: CodeLibSub }[], name: string, lang: ScriptLang, move: boolean): Promise<CodeLibExportResult> {
-    const target = await this.collection({ name });
+    let target = await this.macroFile({ name });
     if (target && target.lang !== lang) throw new Error(`${target.name} is written for ${target.lang === '64tass' ? '64tass' : 'Kick Assembler'}`);
+    // (a file of one macro takes more: its macro's description goes above it)
+    if (target) target = CodeLibStore.opened(target);
     const decor = target ? codeLibDecor(target.macros ?? []) : undefined;
     const subs: { name: string; text: string }[] = [];
     const taken: { it: CodeLibItem; sub?: CodeLibSub }[] = [];
     for (const p of parts) {
       // (its own macros stay where they are)
       if (target && p.it.file === target.file && p.it.kind === 'macro') continue;
-      const list = p.sub ? [p.sub] : p.it.collection ? p.it.macros ?? [] : null;
-      if (list) for (const s of list) subs.push({ name: s.name, text: codeLibSubText({ code: s.code, description: s.description, ...(s.color ? { color: s.color } : {}), created: s.created ?? p.it.created }, lang, s.decor ?? decor) });
-      else {
-        const d = codeLibIsMacro(p.it.code, lang), s = d ? codeLibSubs(p.it.code, lang)[0] : null;
-        if (!d || !s) throw new Error(`${p.it.name} is not one macro: it does not go in a collection`);
-        subs.push({ name: s.name, text: codeLibSubText({ code: s.code, description: p.it.description, ...(p.it.color ? { color: p.it.color } : {}), created: p.it.created }, lang, s.decor ?? decor) });
-      }
+      // a file of one macro: its macro with the file's description and colour
+      const alone = CodeLibStore.single(p.it), list = p.sub ? [p.sub] : p.it.macros ?? [];
+      if (!list.length) throw new Error(`${p.it.name} has no macro in it`);
+      for (const s of list) subs.push({ name: s.name, text: codeLibSubText({ code: s.code, description: s.description || (alone ? p.it.description : ''), ...(s.color ?? (alone ? p.it.color : undefined) ? { color: s.color ?? p.it.color } : {}), created: s.created ?? p.it.created }, lang, s.decor ?? decor) });
       taken.push(p);
     }
     const names = new Set(target?.macros?.map(s => s.name) ?? []), twice: string[] = [];
@@ -371,13 +404,14 @@ export class CodeLibStore {
     const code = subs.reduce((c, s) => codeLibPutSub(c, lang, s.text), target?.code ?? '');
     let file: string;
     if (target) { await this.rewrite(target, code); file = target.file; }
-    else file = await this.create('macro', name, { lang, description: '', created: this.now(), collection: true }, code);
+    else file = await this.create('macro', name, { lang, description: '', created: this.now() }, code);
     if (move) {
-      // a collection's macros out of it (read again: one changed before is as it is now), the rest to the Recycle Bin
+      // a file's macros out of it (read again: one changed before is as it is now; a file left with none to the Recycle
+      // Bin), a whole file to the Recycle Bin
       for (const p of taken) {
-        if (!p.sub) { await this.drop(p.it.kind, p.it.file); continue; }
+        if (!p.sub || CodeLibStore.single(p.it)) { await this.drop(p.it.kind, p.it.file); continue; }
         const now = await this.readItem(p.it.kind, p.it.file);
-        if (now) await this.rewrite(now, codeLibTakeOutSub(now.code, now.lang, p.sub.name));
+        if (now) await this.takeOut(now, p.sub.name);
       }
     }
     return { listing: await this.read(), count: subs.length, collection: { kind: 'macro', file } };

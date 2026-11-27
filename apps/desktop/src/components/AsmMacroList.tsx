@@ -1,5 +1,5 @@
 /* The project's macro file as the editor shows it (spec 10.8): not the code Mimir writes in it (what the assembler reads)
- * but a folded list of its macros, each by its name and its parameters, under the collection it is from; pointing at one
+ * but a folded list of its macros, each by its name and its parameters, under the file it is from; pointing at one
  * shows its description. In the source, under the line that imports the file, the list is one line that unfolds
  * (`zone`: Monaco's view zone, a line high each row); the file itself opened is the list as a page (`panel`), a click
  * on a macro unfolding its code. */
@@ -8,7 +8,7 @@ import type { CodeLibBuilt, CodeLibBuiltMacro } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
 
-const WHY: Record<CodeLibBuiltMacro['why'], string> = { added: 'added', called: 'the code calls it', used: 'a macro in it uses it' };
+const WHY: Record<CodeLibBuiltMacro['why'], string> = { added: 'its file is used in the project', called: 'the code calls a macro of its file', used: 'another file in it uses its file' };
 /** a macro's hover text: its call, its description, where it is from and why it is there */
 const tipOf = (m: CodeLibBuiltMacro) => `${m.sig}${m.description ? `\n${m.description}` : ''}\n(${m.in ? `from ${m.in}, ` : ''}${WHY[m.why]})`;
 const groupName = (g: CodeLibBuilt['groups'][number]) => g.in ?? 'macros of their own';
@@ -47,7 +47,7 @@ export function AsmMacroZone({ built, file, open, lineHeight, onToggle, onOpenFi
 }
 
 /** The macro file opened: its macros as a folded list under their collections (a click unfolds a macro's code; a
- *  collection's own lines with it), pointing at one shows its description below; what is added, called or used. */
+ *  file's own lines with it), pointing at one shows its description below; what is added, called or used. */
 export function AsmMacroPanel({ built, file }: { built: CodeLibBuilt; file: string }) {
   const [hover, setHover] = useState<CodeLibBuiltMacro | null>(null);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());

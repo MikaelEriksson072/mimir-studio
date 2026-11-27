@@ -14,7 +14,7 @@ import type { LibraryRef } from './library';
  *  `codeLib` the dialog for a new item of the lines selected (`libKind` its library, `libInto` a collection it goes in),
  *  `insert` an item put in the source */
 export interface AsmAsk {
-  what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop' | 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib' | 'insert'; n: number;
+  what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write' | 'drop' | 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib' | 'insert' | 'dropImport'; n: number;
   kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[]; files?: AsmDropped[]; at?: string | null;
   id?: string; dir?: 1 | -1; line?: number; end?: number | null; libKind?: CodeLibKind; libInto?: string; insert?: AsmInsert;
 }
@@ -22,6 +22,10 @@ export interface AsmAsk {
  *  snippet: its parameters places to type in), else its lines at the caret's line (`block`: a macro's definition, an
  *  empty line before and after it where the lines beside it have text); `lang` the assembler it is written for,
  *  `macro` the name of the macro it calls or defines */
+/** where macros of the project's macro file's files are defined in the project itself (left out of it): a source of
+ *  its own, or a file it imports from outside the folder (`key` as the check names it, `where` where it was found,
+ *  `importers` the sources that import it) */
+export interface AsmMacroDefined { key: string; where: string; outside: boolean; names: string[]; importers: string[] }
 export interface AsmInsert { text: string; call: boolean; block: boolean; lang: ScriptLang; name: string; macro: string | null; library: string; top?: boolean }
 /** a file dropped on the window: copied into the project's folder (`drop`; `at`: the folder or file it was dropped on in the file list) */
 export interface AsmDropped { name: string; bytes: Uint8Array }
@@ -56,8 +60,9 @@ interface AsmLinkState {
   /** the source that defines a macro (a pseudo command, a function, a segment) of that name (null: none does), for
    *  the macro library (spec 10.8) */
   macroDefined: (name: string) => string | null;
-  /** the project's macro file as Mimir built it last (what is in it and why; null: the project has none) */
-  macroFile: (CodeLibBuilt & { file: string }) | null;
+  /** the project's macro file as Mimir built it last (what is in it and why; where the macros of its files the project
+   *  defines itself are; null: the project has none) */
+  macroFile: (CodeLibBuilt & { file: string; defined: AsmMacroDefined[] }) | null;
   /** the caret's line in the Assembler, and the lines selected (`to` > `from`: more than one) */
   caret: { file: string; line: number } | null;
   selection: { file: string; from: number; to: number } | null;

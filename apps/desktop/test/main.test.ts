@@ -1346,19 +1346,43 @@ describe('collections of the macro library (spec 10.8)', () => {
     // (to the millisecond: the file's line keeps it so)
     expect(Math.abs(own.item.created - made)).toBeLessThan(1);
     expect(own.listing.items.find(i => i.file === 'raster.asm')!.macros!.map(m => m.name)).toEqual(['save']);
-    // a macro of its own into a new collection: its file to the Recycle Bin, when it was made kept
-    const coll = await lib.save({ kind: 'macro', name: 'Border', code: own.item.code, lang: 'kickass', description: own.item.description, color: 'pink', was: { kind: 'macro', file: 'Border.asm' }, into: { name: 'Colours' } });
-    expect(coll.item).toMatchObject({ file: 'Colours.asm', collection: true, created: clock });
+    // a file of one macro moved into a new file: its file to the Recycle Bin, when it was made kept
+    const coll = await lib.save({ kind: 'macro', name: 'Border', code: own.item.code, lang: 'kickass', description: own.item.description, color: 'pink', was: { kind: 'macro', file: 'Border.asm', macro: 'Border' }, into: { name: 'Colours' } });
+    expect(coll.item).toMatchObject({ file: 'Colours.asm', created: clock });
     expect(coll.item.macros![0]).toMatchObject({ name: 'Border', created: own.item.created, color: 'pink', description: 'The border\'s colour' });
     expect(existsSync(join(dir, 'Macros', 'Border.asm'))).toBe(false);
     expect(trashed).toHaveLength(1);
-    // a name of a macro of its own is no collection
-    await lib.save({ kind: 'macro', name: 'Solo', code: '.macro Solo() {\n nop\n}', lang: 'kickass', description: '' });
-    await expect(lib.save({ kind: 'macro', name: 'X', code: '.macro X() {\n nop\n}', lang: 'kickass', description: '', into: { name: 'solo' } })).rejects.toThrow(/not a collection/);
-    // taken out: to the Recycle Bin as a file of its own
+    // any file takes another macro: a file of one macro too (its description and colour go above its macro)
+    await lib.save({ kind: 'macro', name: 'Solo', code: '.macro Solo() {\n nop\n}', lang: 'kickass', description: 'Does nothing', color: 'teal' });
+    const two = await lib.save({ kind: 'macro', name: 'X', code: '.macro X() {\n nop\n}', lang: 'kickass', description: 'Nothing either', into: { name: 'solo' } });
+    expect(two.item).toMatchObject({ file: 'Solo.asm', collection: true, description: '' });
+    expect(two.item.color).toBeUndefined();
+    expect(two.item.macros!.map(m => [m.name, m.description, m.color ?? null])).toEqual([['Solo', 'Does nothing', 'teal'], ['X', 'Nothing either', null]]);
+    // taken out: to the Recycle Bin as a file of its own; the last of a file: the file to the Recycle Bin
     const after = await lib.remove({ kind: 'macro', file: 'raster.asm', macro: 'save' });
-    expect(after.items.find(i => i.file === 'raster.asm')!.macros ?? []).toEqual([]);
+    expect(after.items.find(i => i.file === 'raster.asm')).toBeUndefined();
     expect(trashed[1]).toMatch(/^\/\/ mimir-library \{"lang":"kickass".*"from":"raster"\}\n\.macro save\(\) \{pha;txa;pha\}\n$/);
+    expect(trashed[2]).toContain('#importonce');
+    // a file's only macro taken out: the file itself to the Recycle Bin
+    await lib.save({ kind: 'macro', name: 'Lone', code: '.macro Lone() {\n nop\n}', lang: 'kickass', description: '' });
+    expect((await lib.remove({ kind: 'macro', file: 'Lone.asm', macro: 'Lone' })).items.find(i => i.file === 'Lone.asm')).toBeUndefined();
+    expect(trashed[3]).toContain('.macro Lone()');
+  });
+
+  it('a file of one macro: its macro changed in place (named after it: renamed with it), any file of the library a place to put one', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    await lib.save({ kind: 'macro', name: 'Black', code: '.macro Black() {\n    lda #0\n}', lang: 'kickass', description: 'Black', color: 'teal' });
+    // edited as a macro: in place, its description and colour in the file's line; renamed: the file with it
+    const r = await lib.save({ kind: 'macro', name: 'Dark', code: '.macro Black() {\n    lda #0\n    sta $d020\n}', lang: 'kickass', description: 'Dark now', color: 'pink', was: { kind: 'macro', file: 'Black.asm', macro: 'Black' }, into: { file: 'Black.asm' } });
+    expect(r.macro).toBe('Dark');
+    expect(r.item).toMatchObject({ file: 'Dark.asm', description: 'Dark now', color: 'pink', code: '.macro Dark() {\n    lda #0\n    sta $d020\n}' });
+    expect(r.item.collection).toBeUndefined();
+    expect(existsSync(join(dir, 'Macros', 'Black.asm'))).toBe(false);
+    // a file named for itself keeps its name
+    await lib.save({ kind: 'macro', name: 'Border helpers', code: '.macro B() {\n    nop\n}', lang: 'kickass', description: '' });
+    const b = await lib.save({ kind: 'macro', name: 'C', code: '.macro B() {\n    nop\n}', lang: 'kickass', description: '', was: { kind: 'macro', file: 'Border helpers.asm', macro: 'B' } });
+    expect(b.item.file).toBe('Border helpers.asm');
+    expect(b.macro).toBe('C');
   });
 
   it('imports files as they are (the line added, a collection said), remembers where from, exports back there; not over a file changed since', async () => {

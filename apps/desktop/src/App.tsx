@@ -2393,20 +2393,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the bookmark whose note the list shows, and the one the editor is open on (`id` null: a new one) */
   const [asmBmSel, setAsmBmSel] = useState<string | null>(null);
   const [asmBmEdit, setAsmBmEdit] = useState<{ id: string | null; file: string; line: number; end: number | null } | null>(null);
-  const asmAsk2 = (what: 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib', o?: { id?: string; dir?: 1 | -1; at?: string; line?: number; end?: number | null; libKind?: CodeLibKind; libInto?: string }) => { setUi({ tab: 'asm' }); useAsmLink.getState().request(what, o); };
+  const asmAsk2 = (what: 'bmAdd' | 'bmGo' | 'bmJump' | 'line' | 'codeLib' | 'dropImport', o?: { id?: string; dir?: 1 | -1; at?: string; line?: number; end?: number | null; libKind?: CodeLibKind; libInto?: string }) => { setUi({ tab: 'asm' }); useAsmLink.getState().request(what, o); };
   /* ---- the macro and code libraries (spec 10.8): the view, the dialog, an item put in the source ---- */
   const codeLibEditing = useCodeLib(s => s.editing);
   const codeLibExporting = useCodeLib(s => s.exporting);
-  // (every macro counts: a collection's each)
-  const codeLibCount = useCodeLib(s => s.listing?.items.reduce((n, i) => n + (i.collection ? i.macros?.length ?? 0 : 1), 0) ?? 0);
+  // (every macro counts: each of a file's)
+  const codeLibCount = useCodeLib(s => s.listing?.items.reduce((n, i) => n + (i.kind === 'macro' ? i.macros?.length || 1 : 1), 0) ?? 0);
   // (a dialog of its own each time one opens)
   const codeLibKey = useMemo(() => uid(), [codeLibEditing]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (asmMode) void useCodeLib.getState().load(); }, [asmMode]);
   /** the libraries' view in the side panel (`search`: its search field focused) */
   const showCodeLib = (search = false) => { setUi({ activity: 'codelib', sidePanel: true }); if (narrow) setDrawer('side'); if (search) focusCodeLibSearch(); };
   /** an item put in the source where the Assembler's caret is (`call`: a macro's call, its parameters to type in; a
-   *  collection's macro's definition with those of the collection it uses that the project does not define; `import`:
-   *  a collection's import line at the top of the source) */
+   *  macro's definition with those of its file it uses that the project does not define; `import`: a file's import
+   *  line at the top of the source) */
   const insertCodeLib = (item: CodeLibEntry, how: CodeLibInsert) => {
     const lib = useCodeLib.getState().listing;
     setUi({ tab: 'asm' });
@@ -4541,8 +4541,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'codelib-search', label: 'Search the macro and code libraries', key: 'Ctrl+Shift+M', run: () => showCodeLib(true) },
     { id: 'codelib-macro', label: 'Add the lines selected in the Assembler to the macro library… (none selected: the macro the caret is in)', run: () => asmAsk2('codeLib', { libKind: 'macro' }) },
     { id: 'codelib-code', label: 'Add the lines selected in the Assembler to the code library…', run: () => asmAsk2('codeLib', { libKind: 'code' }) },
-    { id: 'codelib-import', label: 'Put macro files in the macro library… (a file with several macros: a collection of them)', run: () => { showCodeLib(); void useCodeLib.getState().importFiles('macro').then(r => { if (r) toast(r.imported.length ? `${r.imported.length === 1 ? r.imported[0].file : `${r.imported.length} files`} put in the macro library${r.skipped.length ? `; not: ${r.skipped.join('; ')}` : ''}` : `Nothing was put in: ${r.skipped.join('; ')}`, r.skipped.length ? 'warn' : 'ok'); }, e => toast(`The files were not put in: ${errorText(e)}`, 'err')); } },
-    { id: 'codelib-export', label: 'Export macros of the macro library… (to a file, or a collection)', run: () => { showCodeLib(); useCodeLib.getState().set({ exporting: [] }); } },
+    { id: 'codelib-import', label: 'Put macro files in the macro library… (each file with all its macros)', run: () => { showCodeLib(); void useCodeLib.getState().importFiles('macro').then(r => { if (r) toast(r.imported.length ? `${r.imported.length === 1 ? r.imported[0].file : `${r.imported.length} files`} put in the macro library${r.skipped.length ? `; not: ${r.skipped.join('; ')}` : ''}` : `Nothing was put in: ${r.skipped.join('; ')}`, r.skipped.length ? 'warn' : 'ok'); }, e => toast(`The files were not put in: ${errorText(e)}`, 'err')); } },
+    { id: 'codelib-export', label: 'Export macros of the macro library… (to a file, or to a file of the library)', run: () => { showCodeLib(); useCodeLib.getState().set({ exporting: [] }); } },
     { id: 'asm-settings', label: `Assembler project settings: the language, the main file, more ${asmTool2} arguments (defines for the check too), where Debug runs`, run: asmSettings },
     { id: 'asm-debugger', label: `Run in ${debuggerName}: build the main file with ${asmTool2} and start it there with the sources and the breakpoints`, key: 'Shift+F5', run: () => asmAsk('debugger') },
     { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
@@ -5189,7 +5189,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           codelib={asmMode ? { desktop: !!kr, lang: stored.asm?.lang ?? 'kickass', onInsert: insertCodeLib, onNew: (kind, into) => asmAsk2('codeLib', { libKind: kind, ...(into ? { libInto: into } : {}) }), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast,
             // the project's macro file (spec 10.8): kept in the project (undo takes a change back), a new one beside the main source
             project: { macros: stored.asm?.macros ?? null, defaultFile: `${asmMain?.includes('/') ? asmMain.slice(0, asmMain.lastIndexOf('/') + 1) : ''}macros.asm`,
-              onChange: (label, m) => update(label, d => { if (d.asm) d.asm.macros = m; }), onOpen: file => asmAsk2('line', { at: file, line: 1 }) } } : undefined}
+              onChange: (label, m) => update(label, d => { if (d.asm) d.asm.macros = m; }), onOpen: file => asmAsk2('line', { at: file, line: 1 }), onDropImport: key => asmAsk2('dropImport', { at: key }) } } : undefined}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),

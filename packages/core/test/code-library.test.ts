@@ -28,6 +28,8 @@ describe('an item of the libraries as a file', () => {
     expect(code.join('\n')).toBe(`${KICK_MACRO}\n`);
     expect(readCodeLibFile('macro', 'WaitRaster.asm', text, { changed: created + 1000 })).toEqual({
       kind: 'macro', file: 'WaitRaster.asm', name: 'WaitRaster', code: KICK_MACRO, lang: 'kickass', description: 'Waits for a raster line.\nA second line.', color: 'teal', created, changed: created + 1000, from: 'dfml · main.asm:12–16',
+      // (a macro file has its macros, one or several)
+      macros: [expect.objectContaining({ name: 'WaitRaster', params: ['line'], line: 1, end: 5 })],
     });
     // 64tass's comment; no colour, no description: not in the line
     const t = codeLibFileText({ lang: '64tass', description: '  ', created }, TASS_MACRO);

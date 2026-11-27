@@ -152,21 +152,24 @@ test('the macro and code libraries: lines of the Assembler made a macro with a d
   await expect(page.locator('.scr-check')).toContainText('Ready');
   await expect.poll(() => readFileSync(join(dir, 'main.asm'), 'utf8')).toContain('.macro Black() {');
 
-  // edited: renamed, another colour; when it was made stays
+  // edited as a macro: renamed (its definition, and its file named after it), another colour; when it was made stays
   const made = /"created":"([^"]+)"/.exec(text[0])![1];
   await list.getByRole('button', { name: 'Edit' }).click();
   const ed = page.getByRole('dialog', { name: 'Edit Black' });
-  await ed.getByLabel('Name', { exact: true }).fill('Black screen');
+  await expect(ed.getByLabel('File')).toHaveValue('');
+  await expect(ed.getByLabel('File')).toContainText('Its own file (Black.asm)');
+  await ed.getByLabel('Name', { exact: true }).fill('Dark');
   await ed.getByRole('button', { name: 'Pink' }).click();
   await ed.getByRole('button', { name: 'Save' }).click();
-  await expect(toast(page, 'Black screen is saved')).toBeVisible();
-  await expect.poll(() => readdirSync(macros).sort()).toEqual(['Black screen.asm', 'SetBorder.asm']);
-  expect(readFileSync(join(macros, 'Black screen.asm'), 'utf8')).toContain(`"created":"${made}","color":"pink"`);
-  // moved to the Recycle Bin
-  await list.getByRole('button', { name: /^Black screen/ }).click({ button: 'right' });
+  await expect(toast(page, 'Dark is saved (Dark.asm)')).toBeVisible();
+  await expect.poll(() => readdirSync(macros).sort()).toEqual(['Dark.asm', 'SetBorder.asm']);
+  expect(readFileSync(join(macros, 'Dark.asm'), 'utf8')).toContain(`"created":"${made}","color":"pink"`);
+  expect(readFileSync(join(macros, 'Dark.asm'), 'utf8')).toContain('.macro Dark() {');
+  // moved to the Recycle Bin: a macro alone in its file, the file
+  await list.getByRole('button', { name: /^Dark/ }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Move to the Recycle Bin' }).click();
-  await expect(toast(page, /Black screen\.asm is in the Recycle Bin/)).toBeVisible();
+  await expect(toast(page, /Dark\.asm is in the Recycle Bin/)).toBeVisible();
   expect(readdirSync(macros)).toEqual(['SetBorder.asm']);
-  expect(readdirSync(trash)).toEqual(['Black screen.asm']);
+  expect(readdirSync(trash)).toEqual(['Dark.asm']);
   await expect(list.getByRole('listitem')).toHaveCount(1);
 });

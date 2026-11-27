@@ -34,6 +34,7 @@ import { codeLibAllMacros, codeLibCall, codeLibMacroAt, codeLibMacros, codeLibPr
 import { useCodeLib } from '../store/codelib';
 import { AsmMacroPanel, AsmMacroZone, macroZoneRows } from './AsmMacroList';
 import type { AsmLibMacro } from '../monaco/providers';
+import type { AsmMacroDefined } from '../store/asmlink';
 import { asmBookmarkSpan } from './AsmBookmarks';
 
 const kr = window.kr;
@@ -1195,6 +1196,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     // the macro and code libraries': a new item of the lines selected, an item put in the source
     if (ask.what === 'codeLib') { codeLibAdd(ask.libKind ?? 'macro', ask.libInto); return; }
     if (ask.what === 'insert') { if (ask.insert) insertLib(ask.insert); return; }
+    // (the project's macro file in place of a file imported from outside)
+    if (ask.what === 'dropImport') { if (ask.at) dropImportRef.current(ask.at); return; }
     if (ask.what === 'line') {
       if (!ask.at || !ask.line || !paths.has(ask.at)) return;
       openFile(ask.at, { line: ask.line, soft: true });
@@ -1347,7 +1350,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
    *  that line out), none: the macro (…) the caret is in, else nothing to start with */
   const codeLibAdd = (kind: CodeLibKind, collection?: string) => {
     const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
-    // (`collection`: the macro goes in that collection of the macro library)
+    // (`collection`: the macro goes in that file of the macro library)
     const into = kind === 'macro' && collection ? { into: { file: collection } } : {};
     if (!e || !m || !p || !s) { useCodeLib.getState().set({ editing: { kind, lang, code: '', ...into } }); return; }
     const text = m.getValue();
@@ -1369,7 +1372,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
     if (!p || !e || !monaco || !m || e.getModel() !== m || !(p in textsRef.current) || !ASM_SOURCE.test(p)) { toast(`Open a source of the project to put ${ins.name} in: it goes where the caret is`, 'warn'); return; }
     let text = ins.text.replace(/\r\n/g, '\n'), note = '', warn = '';
-    // a collection's import: at the top of the source, after the imports it has (once)
+    // a file's import: at the top of the source, after the imports it has (once)
     if (ins.top) {
       const lc = m.getLineCount();
       for (let n = 1; n <= lc; n++) if (m.getLineContent(n).trim() === text.trim()) { e.focus(); e.setSelection(new monaco.Range(n, 1, n, m.getLineMaxColumn(n))); e.revealLineInCenterIfOutsideViewport(n); toast(`${p} imports ${ins.name} already (line ${n})`, 'info'); return; }
@@ -1479,6 +1482,45 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     putText(at, lines.join('\n'));
     toast(`${at} imports ${rel} (line ${last + 1}): the macros Mimir puts in it are the project's`, 'ok');
   };
+  /** the lines of a source (`src`, its path in the folder) that import the file `key` (as the check names it: as written,
+   *  or from the source's folder) */
+  const importsOf = (src: string, text: string, key: string): number[] => {
+    const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+/g, '/').toLowerCase();
+    const from = src.includes('/') ? src.slice(0, src.lastIndexOf('/') + 1) : '';
+    const fromSrc = (p: string) => { const parts: string[] = []; for (const s of `${from}${p.replace(/\\/g, '/')}`.split('/')) { if (s === '..') parts.pop(); else if (s && s !== '.') parts.push(s); } return parts.join('/').toLowerCase(); };
+    const k = norm(key), out: number[] = [];
+    text.split('\n').forEach((l, i) => { const m = /^\s*(?:#import(?:once)?|\.include)\s+"([^"]+)"/.exec(l); if (m && (norm(m[1]) === k || fromSrc(m[1]) === k)) out.push(i + 1); });
+    return out;
+  };
+  /** a file imported from outside the folder whose macros the macro file has too: its import lines taken out of the
+   *  sources, the macro file imported in their place (the macros come from the library then) */
+  const dropImport = (key: string) => {
+    if (!mf) return;
+    if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
+    const gone: string[] = [];
+    for (const p of Object.keys(textsRef.current)) {
+      if (p === mf.file || !ASM_SOURCE.test(p)) continue;
+      const text = textNow(p) ?? '', at = importsOf(p, text, key);
+      if (!at.length) continue;
+      putText(p, text.split('\n').filter((_, i) => !at.includes(i + 1)).join('\n'));
+      gone.push(p);
+    }
+    if (!gone.length) { toast(`No source imports ${foundOut.current[key] ?? key} itself: it comes in through another file`, 'warn'); return; }
+    importMacros(mf.file);
+    toast(`${gone.join(', ')} import${gone.length === 1 ? 's' : ''} ${mf.file} in place of ${foundOut.current[key] ?? key}: its macros come from the library now`, 'ok');
+  };
+  const dropImportRef = useRef(dropImport); dropImportRef.current = dropImport;
+  /** the files from outside the folder the sources (`own`: path and text) import now, or one of those imports (read once
+   *  are kept: one no source imports any more does not count) */
+  const importedOutside = (own: [string, string][]): [string, string][] => {
+    const out = Object.entries(outside).filter((e): e is [string, string] => typeof e[1] === 'string');
+    const live = out.filter(([k]) => own.some(([q, s]) => importsOf(q, s, k).length));
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const e of out) if (!live.includes(e) && live.some(([k2, s2]) => importsOf(k2.replace(/\\/g, '/'), s2, e[0]).length)) { live.push(e); grew = true; }
+    }
+    return live;
+  };
   const macrosImported = useRef(new Set<string>());
   useEffect(() => {
     if (!mf || !loaded || !main || dbg) return;
@@ -1490,10 +1532,19 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => {
     if (!mf || !loaded || !codeLib) { if (!mf) useAsmLink.getState().set({ macroFile: null }); return; }
     // (what the project's sources are, the file itself not among them, and what they import from outside the folder)
-    const sources = Object.entries(quiet).filter(([p]) => p !== mf.file && ASM_SOURCE.test(p)).map(([, t]) => t)
-      .concat(Object.values(outside).filter((v): v is string => typeof v === 'string'));
-    const built = codeLibProjectFile(codeLib.items, mf, sources, lang, mf.file.split('/').pop()!);
-    useAsmLink.getState().set({ macroFile: { ...built, file: mf.file } });
+    const own = Object.entries(quiet).filter(([p]) => p !== mf.file && ASM_SOURCE.test(p));
+    const out = importedOutside(own);
+    const built = codeLibProjectFile(codeLib.items, mf, [...own, ...out].map(([, t]) => t), lang, mf.file.split('/').pop()!);
+    // where the macros the project defines itself are: a source of its own, or a file it imports from outside the folder
+    // (the sources that import it: that import can give way to the macro file)
+    const defined: AsmMacroDefined[] = [];
+    if (built.own.length) for (const [p, t] of [...own, ...out]) {
+      const names = codeLibMacros(t, lang).map(d => d.name).filter(n => built.own.includes(n));
+      if (!names.length) continue;
+      const outsider = !own.some(([q]) => q === p);
+      defined.push({ key: p, where: outsider ? foundOut.current[p] ?? p : p, outside: outsider, names, importers: outsider ? own.filter(([q, s]) => importsOf(q, s, p).length).map(([q]) => q) : [] });
+    }
+    useAsmLink.getState().set({ macroFile: { ...built, file: mf.file, defined } });
     if (dbg || makingMacros.current || textNow(mf.file) === built.text) return;
     if (paths.has(mf.file) || mf.file in textsRef.current) { putText(mf.file, built.text); return; }
     makingMacros.current = true;
@@ -1566,24 +1617,27 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   // one chosen goes in the macro file: it is made with it when the project has none, added when the calls are off
   const macroFileOf = () => `${main?.includes('/') ? main.slice(0, main.lastIndexOf('/') + 1) : ''}macros.asm`;
   const useMacroRef = useRef<(name: string) => void>(() => { });
+  // (a macro's file is what goes in: its macros belong together)
   useMacroRef.current = (name: string) => {
+    const f = codeLib ? codeLibAllMacros(codeLib.items, lang).find(e => e.name === name)?.item : undefined;
+    if (!f) return;
     if (!mf) {
       const file = macroFileOf();
-      onInfo(`Build ${file}`, { macros: { file, macros: [name], collections: [] } });
-      toast(`${name} goes in ${file}: Mimir builds it from the macro library, and ${main ?? 'the main source'} imports it`, 'ok');
-    } else if (mf.called === false && !mf.macros.includes(name)) {
-      onInfo(`Add ${name} to ${mf.file}`, { macros: { ...mf, macros: [...mf.macros, name] } });
-      toast(`${name} goes in ${mf.file}`, 'ok');
+      onInfo(`Build ${file}`, { macros: { file, macros: [], collections: [f.name] } });
+      toast(`${f.file} goes in ${file}, all its macros: Mimir builds it from the macro library, and ${main ?? 'the main source'} imports it`, 'ok');
+    } else if (mf.called === false && !mf.collections.includes(f.name)) {
+      onInfo(`Use ${f.file} in ${mf.file}`, { macros: { ...mf, collections: [...mf.collections, f.name] } });
+      toast(`${f.file} goes in ${mf.file}, all its macros`, 'ok');
     }
   };
   useEffect(() => {
     const own = new Set<string>();
-    for (const [p, t] of Object.entries(quiet)) if (p !== mf?.file && ASM_SOURCE.test(p)) for (const d of codeLibMacros(t, lang)) own.add(d.name);
-    for (const t of Object.values(outside)) if (typeof t === 'string') for (const d of codeLibMacros(t, lang)) own.add(d.name);
+    const mine = Object.entries(quiet).filter(([p]) => p !== mf?.file && ASM_SOURCE.test(p));
+    for (const [, t] of [...mine, ...importedOutside(mine)]) for (const d of codeLibMacros(t, lang)) own.add(d.name);
     const inFile = new Set(macroBuilt?.macros.map(m => m.name) ?? []), file = mf?.file ?? macroFileOf();
     const macros: AsmLibMacro[] = (codeLib ? codeLibAllMacros(codeLib.items, lang) : []).filter(e => !own.has(e.name)).map(e => ({
-      name: e.name, how: e.how, sig: codeLibSignature(e, lang), snippet: codeLibCall(e, lang, true), description: e.description, in: e.coll?.name ?? null,
-      note: inFile.has(e.name) ? `In ${file} already.` : mf ? (mf.called !== false ? `It goes in ${file} as the code calls it.` : `Chosen, it is added to ${file}.`) : `Chosen, Mimir builds ${file} with it, and the main source imports it once.`,
+      name: e.name, how: e.how, sig: codeLibSignature(e, lang), snippet: codeLibCall(e, lang, true), description: e.description, in: e.item.name,
+      note: inFile.has(e.name) ? `In ${file} already (with its file, ${e.item.file}).` : mf ? (mf.called !== false ? `Called, its file (${e.item.file}, all its macros) goes in ${file}.` : `Chosen, its file (${e.item.file}, all its macros) is added to ${file}.`) : `Chosen, Mimir builds ${file} with its file (${e.item.file}, all its macros), and the main source imports it once.`,
     }));
     void import('../monaco/providers').then(({ asmContext }) => { asmContext.macros = macros; asmContext.useMacro = n => useMacroRef.current(n); });
   }, [codeLib, lang, mf, macroBuilt, quiet, outside]); // eslint-disable-line react-hooks/exhaustive-deps

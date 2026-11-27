@@ -4,7 +4,7 @@
  * renamed; the macros a macro uses; the macros exported as one file, with and without Mimir's lines. */
 import { describe, expect, it } from 'vitest';
 import {
-  checkAsm, codeLibDecor, codeLibExportText, codeLibFileText, codeLibNeeds, codeLibPlain, codeLibPutSub, codeLibRenameMacro, codeLibSubItems, codeLibSubs, codeLibSubText, codeLibTakeOutSub,
+  checkAsm, codeLibAllMacros, codeLibDecor, codeLibExportText, codeLibMacroEntries, codeLibProjectFile, codeLibFileText, codeLibNeeds, codeLibPlain, codeLibPutSub, codeLibRenameMacro, codeLibSubItems, codeLibSubs, codeLibSubText, codeLibTakeOutSub,
   readCodeLibFile,
 } from '../src';
 
@@ -139,5 +139,32 @@ describe('a collection\'s macros', () => {
     expect(a.problems).toEqual([]);
     expect(a.bytes).toBe(b.bytes);
     expect([...a.asm.mem.slice(0x1000, 0x1000 + b.bytes)]).toEqual([...b.asm.mem.slice(0x1000, 0x1000 + b.bytes)]);
+  });
+});
+
+describe('files and their macros, one or several', () => {
+  it('every macro of every file is an entry of the lists: one alone in its file described by the file\'s line, a file of none itself', () => {
+    const one = readCodeLibFile('macro', 'Black screen.asm', codeLibFileText({ lang: 'kickass', description: 'Border and background black', created: 1, color: 'teal' }, '.macro Black() {\n    lda #0\n}'), { changed: 2 })!;
+    const many = readCodeLibFile('macro', 'raster.asm', codeLibFileText({ lang: 'kickass', description: '', created: 1 }, LIB), { changed: 2 })!;
+    const none = readCodeLibFile('macro', 'notes.asm', '// only notes\nlda #1\n', { changed: 2 })!;
+    const code = readCodeLibFile('code', 'Clear.asm', codeLibFileText({ lang: 'kickass', description: '', created: 1 }, '.macro Clear() {\n nop\n}'), { changed: 2 })!;
+    expect(one.macros!.map(m => m.name)).toEqual(['Black']);
+    expect(one.collection).toBeUndefined();
+    const e = codeLibMacroEntries([one, many, none, code]);
+    expect(e.map(x => [x.name, x.file, x.macro ?? null, x.in ?? null])).toEqual([
+      ['Black', 'Black screen.asm', 'Black', 'Black screen'],
+      ['SetBorder', 'raster.asm', 'SetBorder', 'raster'], ['WaitAndSet', 'raster.asm', 'WaitAndSet', 'raster'], ['save', 'raster.asm', 'save', 'raster'], ['restore', 'raster.asm', 'restore', 'raster'],
+      ['notes', 'notes.asm', null, null],
+    ]);
+    expect(e[0]).toMatchObject({ description: 'Border and background black', color: 'teal', code: '.macro Black() {\n    lda #0\n}' });
+  });
+
+  it('the project\'s macro file: a file of one macro whole by its name, its own lines with it', () => {
+    const one = readCodeLibFile('macro', 'Border.asm', codeLibFileText({ lang: 'kickass', description: 'Sets it', created: 1 }, '.const BORDER = $d020\n.macro SetBorder(c) {\n    lda #c\n    sta BORDER\n}'), { changed: 2 })!;
+    const all = codeLibAllMacros([one], 'kickass');
+    expect(all.map(m => [m.name, m.item.file, m.coll?.file ?? null, m.description])).toEqual([['SetBorder', 'Border.asm', 'Border.asm', 'Sets it']]);
+    const b = codeLibProjectFile([one], { macros: [], collections: ['border'], called: false }, ['* = $1000'], 'kickass', 'macros.asm');
+    expect(b.macros.map(m => [m.name, m.why])).toEqual([['SetBorder', 'added']]);
+    expect(b.text).toContain('// ---- Border ----\n.const BORDER = $d020\n\n// Sets it\n.macro SetBorder(c) {');
   });
 });
