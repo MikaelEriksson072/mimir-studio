@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { makePrg, makeTap, notPacked, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackLog, unpackPrg, unpackSummary, type TapeFile } from '../src';
 import { findC64Roms } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
-import { blockFile, bootLoader, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, loaderStartTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, tinyLoader, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, bootLoader, burnerDemoTape, burnerFile, burnerHeader, demoTape,firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, loaderStartTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, tinyLoader, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, otherSideDemoTape, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -362,6 +362,84 @@ describe('Mega-Save', () => {
       megaSaveFile(s, { load: 0x2000, data: bytes(600, 10), pilot });
       expect(readTape(withTurbo(makeTap({ files: [] }), s.pulses)).files).toHaveLength(n);
     }
+  });
+});
+
+describe('Burner', () => {
+  /** a tape of a Burner boot file (its tape header as burnerHeader writes it) and these turbo pulses after it */
+  const tape = (o: Parameters<typeof burnerHeader>[0], pulses: number[], boot = bytes(101, 1)) =>
+    readTape(withTurbo(makeTap({ files: [{ name: 'BOOT', load: 0x02a7, data: boot, header: burnerHeader(o) }] }), pulses));
+
+  it("reads the files after its boot file with the pilot, the sync and the bit order of the boot's loader; no sum", () => {
+    // Star Wars' (Domark): pilot $f8, sync $52, the top bit first, 4 files, then RUN; the boot file has relink and
+    // RUN at $02f0
+    const boot = bytes(101, 1);
+    boot.set([0x20, 0x33, 0xa5, 0x20, 0x59, 0xa6, 0x4c, 0xae, 0xa7], 0x02f0 - 0x02a7);
+    const sw = { pilot: 0xf8, sync: 0x52, msb: true };
+    const w = new TurboWriter(34, 66);
+    firebirdPause(w);
+    burnerFile(w, { ...sw, load: 0x0300, data: bytes(12, 2) });
+    burnerFile(w, { ...sw, load: 0x4400, data: bytes(0x3c00, 3) });
+    // back to back, with no pause between
+    burnerFile(w, { ...sw, load: 0x9000, data: bytes(0x1000, 4), pause: false });
+    burnerFile(w, { ...sw, load: 0x0801, data: bytes(2271, 5) });
+    // one more after them: the program's own loader reads it
+    burnerFile(w, { ...sw, load: 0xe000, data: bytes(0x1ffa, 6) });
+    const img = tape({ ...sw, count: 4, jump: 0x02f0 }, w.pulses, boot);
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.note, f.errors])).toEqual([
+      ['cbm', 'BOOT', 'PRG', 0x02a7, 0x02a7 + 101, undefined, []],
+      ['burner', 'file_0300', 'PRG', 0x0300, 0x030c, "the 1st of the 4 files the boot file's loader reads; no checksum", []],
+      ['burner', 'file_4400', 'PRG', 0x4400, 0x8000, "the 2nd of the 4 files the boot file's loader reads; no checksum", []],
+      ['burner', 'file_9000', 'PRG', 0x9000, 0xa000, "the 3rd of the 4 files the boot file's loader reads; no checksum", []],
+      ['burner', 'file_0801', 'PRG', 0x0801, 0x0801 + 2271, "the last of the 4 files the boot file's loader reads; then it RUNs the BASIC program; no checksum", []],
+      ['burner', 'file_e000', 'PRG', 0xe000, 0xfffa, "after the 4 files the boot file's loader reads (the program's own loader reads it); no checksum", []],
+    ]);
+    expect(img.files[2].data).toEqual(bytes(0x3c00, 3));
+    expect(img.files[5].data).toEqual(bytes(0x1ffa, 6));
+    expect(img.unknown).toEqual([]);
+    // the lowest bit first (ror), as on most of Mastertronic's tapes, and a loader that starts the program itself
+    const m = { pilot: 0xe3, sync: 0xed, msb: false };
+    const l = new TurboWriter(34, 66);
+    firebirdPause(l);
+    burnerFile(l, { ...m, load: 0x0800, data: bytes(0x3c00, 7) });
+    const lsb = tape({ ...m, count: 1, jump: 0x8000 }, l.pulses);
+    expect(lsb.files.map(f => [f.format, f.load, f.end, f.note])).toEqual([
+      ['cbm', 0x02a7, 0x02a7 + 101, undefined],
+      ['burner', 0x0800, 0x4400, "the file the boot file's loader reads; then it starts the program at $8000; no checksum"],
+    ]);
+    expect(lsb.files[1].data).toEqual(bytes(0x3c00, 7));
+  });
+
+  it('reads none without its boot file, and needs 16 pilot bytes before the sync', () => {
+    const m = { pilot: 0xe3, sync: 0xed, msb: false };
+    const w = new TurboWriter(34, 66);
+    firebirdPause(w);
+    burnerFile(w, { ...m, load: 0x0800, data: bytes(3000, 2) });
+    // the same pulses after a boot file whose tape header is not Burner's: turbo data no format reads
+    const other = readTape(withTurbo(makeTap({ files: [{ name: 'BOOT', load: 0x02a7, data: bytes(101, 1), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] }), w.pulses));
+    expect(other.files.map(f => f.format)).toEqual(['cbm']);
+    expect(other.unknown).toHaveLength(1);
+    for (const [pilots, n] of [[15, 0], [16, 1]]) {
+      const s = new TurboWriter(34, 66);
+      firebirdPause(s);
+      burnerFile(s, { ...m, load: 0x2000, data: bytes(3000, 3), pilots });
+      expect(tape({ ...m, count: 1, jump: 0x02f0 }, s.pulses).files.filter(f => f.format === 'burner')).toHaveLength(n);
+    }
+  });
+
+  it('is fixtures/tap/burner-demo.tap, which the e2e tests insert: a table, then the demo, which it RUNs', () => {
+    const t = burnerDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/burner-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, t);
+    expect(new Uint8Array(readFileSync(path))).toEqual(t);
+    const img = readTape(t);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.note, f.errors])).toEqual([
+      ['cbm', 'BURNER DEMO', 0x02a7, 0x02a7 + 101, undefined, []],
+      ['burner', 'file_c000', 0xc000, 0xc000 + 600, "the 1st of the 2 files the boot file's loader reads; no checksum", []],
+      ['burner', 'file_0801', 0x0801, 0x0801 + demo.length - 2, "the last of the 2 files the boot file's loader reads; then it RUNs the BASIC program; no checksum", []],
+    ]);
+    expect(img.files[2].data).toEqual(demo.subarray(2));
   });
 });
 

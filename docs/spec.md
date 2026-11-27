@@ -1664,6 +1664,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Wildload (Interceptor Micros) | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark, Image Works, Incentive, Mirrorsoft (texten "WILD SAVE (C) INTERCEPTOR MICROS 1987 WRITTEN BY ANDREW CHALLIS JANUARY 1987" i bandbufferten, som varje kedjas första block fyller). Formatet heter Wildload i TAPClean och läses i 13.5e; Interceptors egna spel har ett annat, Microload |
 | Microload | avbrottet i bandhuvudet (`$0351`): bitläsningen `lda #$91 / sta $dd0e / lda $dd0d / lsr / lda $dc0d / ror zp` (CIA2:s timer A startas om vid varje puls; svag) och väntan på ledaren `$a0` och synken `$0a`…`$01` genom grenar den skriver om (`cmp #$a0 / bne / lda # / sta / bne / cmp #$a0 / beq / cmp #$0a / beq`; svag), och lagringen som räknar upp den negativa längden (`sta (zp),y / eor zp / sta zp / inc zp / bne +4 / inc zp / dec zp`). Rainbow Arts, Magic Bytes och Golden Goblins bootfiler har de två svaga (så de heter inte Microload). Interceptor Micros egna spel, Electric Dreams, Epyx, Players. Bandformatet i 13.5e |
 | Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
+| Burner (Mastertronic) | bootfilens dekryptering av laddaren i bandhuvudet (`lda ($fb),y / eor $0308 / eor $0317 / sta ($fb),y / dey / bne`, och samma instruktioner bland byte den hoppar över i det andra slagets boot), och i den dekrypterade laddaren väntan på ledarbyten bit för bit och sedan på hela ledarbyte och synkbyten (`rol`/`ror $bd / lda $bd / cmp # / bne / jsr … / cmp # / beq / cmp # / bne`) och bitläsningen (`lda #$10 / bit $dc0d / beq / lda $dd0d / lsr / lda #$19 / sta $dd0e / rts`, svag). Mastertronic, Mirrorsoft, Domark, PSS, Beyond, Quicksilva (120 av arkivets 121 bootfiler; TAPCleans namn). Bandformatet i 13.5e |
 | Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag); samma kod i första steget och i den andra laddaren programmet anropar (Bubble Bobbles `$1c00` och `$4900`). Firebird, Silverbird, Rainbird, Psygnosis, Odin, Thor, Activision, Melbourne House. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload. Bandformaten i 13.5e |
 | Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
 | Super Snapshot copiers (LMS) | diskkopieraren tar emot en sektor till `$0500` (`lda $dd00 / bmi / ora #$17 / sta $dd00 / lda $dd00 / bpl / and #$07 / sta $dd00` … `eor $dd00 / eor #$f9 / sta $0500,y`) och skickar den tillbaka (`ldy #0 / lda $0500,y / pha / ldx #$27 / stx $dd00 / bit $dd00 / bvs`); dess drivkod vid `$033f` (544 byte, `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c`) och `$057c` (352 byte); filkopierarens drivkod vid `$0400` (768 byte, märkt `"2A" $9c` först) |
@@ -5389,6 +5390,20 @@ fönstret på en gång. `readTape()` (`packages/core/src/c64/tap.ts`) läser avb
   två till), datan och en XOR-kontrollsumma. Filen heter `file_<start>`; Tape-flikens anteckning säger vad laddaren gör
   sedan: går vidare till nästa fil, startar den på adressen, eller RUN (BASIC länkas om och RUN skrivs i
   tangentbordsbufferten). Formatet lästes ur Tazz bootkod; en fil vars summa inte stämmer behålls, med felet.
+- **Burner** (Mastertronics, och Mirrorsofts, Domarks, PSS, Beyonds, Quicksilvas …; Star Wars, Spitfire 40, Jungle
+  Story, Sorcerer Lord; TAPCleans namn): bootfilen vid `$02a7`, startad genom `$0302`, gör sitt `jmp $03a2` till
+  `jmp $0351` (`lsr $02c8`), dekrypterar bandhuvudet från `$0351` med byten vid `$0308` och `$0317` (`$a7 ^ $fe` =
+  `$59`; ett andra slags boot, på 59 av arkivets 100 Burner-band, gömmer samma instruktioner bland byte den hoppar
+  över) och hoppar dit. Laddaren startar CIA2:s timer A, en one-shot från `$0180` cykler, vid varje puls på FLAG-linjen,
+  och en 1 är att den hann ta slut. Den söker ledarbyten bit för bit och läser sedan hela byte: fler ledarbyte,
+  synkbyten, start, slut (ett förbi), datan, och ingen kontrollsumma. Ledarbyten, synkbyten och bitordningen (`rol`
+  eller `ror`) är bandets egna och läses ur den dekrypterade laddaren (`cmp #` vid `$03c3` och `$03ce`, `rol`/`ror $bd`
+  vid `$03bf`, samma ställen som TAPClean läser): Star Wars har `$f8`, `$52`, högsta biten först, de flesta
+  Mastertronic-band `$e3`, `$ed`, lägsta biten först. Laddaren läser så många filer som den säger (`dec $03bb`) och
+  RUN:ar sedan BASIC-programmet (bootfilens `$02f0`: länka om, CLR, RUN) eller hoppar dit den lagt på stacken (Star
+  Wars andra halva: `$8000`). Filer läses bara efter en sådan bootfil, med minst 16 ledarbyte (Star Wars har 208), och
+  tar sina pulser från alla andra format. Filen heter `file_<start>`; Tape-flikens anteckning säger vilken av
+  bootladdarens filer det är och vad den gör efter den sista; filer efter dem läser programmets egen laddare.
 - **Novaload** (Novagens egen, och Elites, Encores, US Golds Americana, Epyx, MicroProse, Martech, Activision …;
   Paperboy, Mercenary, 1942, Winter Games): en puls längre än cirka 500 cykler är en 1 (CIA1:s timer A, one-shot från
   `$03f4`, har hunnit under `$0200`; den första Novaload läser toppbiten av `$81f4`), lägsta biten först; före varje fil
@@ -5669,7 +5684,17 @@ vid `$0800`, vars byte laddaren lagrar (Sindri). Alla 35 bootfiler har samma lad
 spelet startar skiljer, och alla ledare har 255 byte utom Magic Bytes 857. Kvar på de banden är Rainbow Arts block
 (Clever & Smart, Western Games). Sindri körde de 34 banden med en bootfil: på 28 laddar den alla filer, och alla
 1 481 929 byte laddaren lagrade är läsarens i samma ordning; de andra laddar mer senare (Winter Games grenar, Movie
-Monster Games delar, Aliens, Vampire's Empire) eller börjar med ett BASIC-program (Token of Ghall). `test/tap.test.ts`
+Monster Games delar, Aliens, Vampire's Empire) eller börjar med ett BASIC-program (Token of Ghall). Burner
+(2026-11-27, Domarks Star Wars, där sex sträckor var grå): i C64Tapes-org och Preservers (1 935 band) har 100 band en
+Burner-bootfil, alla med samma laddare (87 med ledarbyten `$e3` och synken `$ed`, lägsta biten först; 12 med `$61`,
+`$de`; resten var sitt par), två slags boot (59 gömmer dekrypteringen bland byte den hoppar över); 607 filer på 98
+band, sträckorna med okänd turbodata gick från 8 911 till 8 566 och band med inget kvar från 1 144 till 1 241, utan att
+någon fil i ett annat format ändrades. Sindri körde de 98 banden: på 88 laddar den alla filer, och 560 av de 607 filerna
+lagrar laddarna (`sta (zp),y`) byte för byte som läsaren har dem (Star Wars båda halvor, 65 823 byte, i samma ordning).
+De andra tio stannar i programmets egen kod före bandets nästa del: Jungle Story, Bionic Granny, Magic Carpet och
+Westworld ("PRESS A KEY TO CONTINUE" före andra spelet på bandet), Skel och Treasure of the Phoenix, Eurekas delspel,
+och Heist, vars bootfil saknar datablock på avbilden (dess laddare säger två filer men bandet har `$0300` två gånger
+före `$1000`–`$7fff`). `test/tap.test.ts`
 läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen

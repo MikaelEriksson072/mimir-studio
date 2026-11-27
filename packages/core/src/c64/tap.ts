@@ -21,6 +21,8 @@
  * - Freeload (Ocean's) and US Gold's loader: a pilot byte, a sync byte, [a name,] start, end, the data and their XOR;
  * - Mega-Save (Palace's, Hewson's, Level 9's, Alligata's …): a pilot of $63, the sync bytes $64 … $ff, a byte, a header
  *   of 10 bytes (start, end, …), the data and their XOR;
+ * - Burner (Mastertronic's, Mirrorsoft's, Domark's, PSS' …): the boot file's loader in its tape header (encrypted) has the
+ *   pilot byte, the sync byte and the bit order; then start, end and the data, with no sum (burnerFiles);
  * - Novaload (Novagen's, Elite's, Encore's, US Gold's Americana …): the lowest bit first, a pilot of 0 bits, a 1 and $aa;
  *   a file its LOAD reads (the name, start, end, blocks with a running sum) or the pages its boot file's loader reads;
  * - Wildload (Interceptor Micros' loader, on Activision's, Thalamus' Hits, Electric Dreams', Domark's … tapes): the
@@ -101,7 +103,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'novaload' | 'wildload' | 'microload' | 'cyberload' | 'firebird' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'burner' | 'novaload' | 'wildload' | 'microload' | 'cyberload' | 'firebird' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -789,6 +791,80 @@ function megaSaveFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[]
     const note = head[6] ? 'the loader goes on to the next file' : head[7] ? `the loader starts it at $${hex4(head[4] | (head[5] << 8))}` : 'the loader RUNs it';
     out.push({ format: 'megasave', name: `file_${hex4(start)}`, type: 'PRG', load: start, end: stop, data, note, at: base + syncAt, offset: p.offsets[base + syncAt] ?? 0, seconds: (p.times[base + syncAt] ?? 0) / TAPE_CLOCK, to: base + Math.min(at, bits.length), errors });
     k = at - 1; reg = 0;
+  }
+  return out;
+}
+
+/* ---- Burner ---- */
+
+/* Burner (Mastertronic's; TAPClean's name): the boot file at $02a7, started through $0302, decrypts the loader in its
+ * tape header ($0351 on, XOR $59: the boot file's byte at $0308 XOR the BRK vector's high byte, $fe) and jumps there
+ * (a second kind of boot, on 59 of the archive's 100 Burner tapes, hides the same code among bytes it skips). It
+ * starts CIA2's timer A, one shot ($0180 cycles on Star Wars), at each pulse on the FLAG line, and a 1 is that it had
+ * run out; the pilot byte found bit by bit, then whole bytes: more pilot bytes, the sync byte, start, end (exclusive),
+ * the data, and no sum. The pilot, the sync and the bit order (rol or ror) are the tape's own: they are read from the
+ * loader (TAPClean reads them at the same places). It reads as many files as the loader says, then RUNs the BASIC
+ * program (the boot file's $02f0) or starts one. Learned from Domark's Star Wars. */
+
+interface BurnerLoader {
+  pilot: number; sync: number; msb: boolean;
+  /** how many files it reads, and where it goes then (the boot file's RUN: `run`), when its code says so */
+  count: number | null; jump: number | null; run: boolean;
+}
+
+const BURNER_KEY = 0x59;
+/** pilot bytes a Burner file needs before its sync (Star Wars has 208; its data holds the pilot and the sync here and
+ *  there) */
+const BURNER_PILOT = 16;
+
+/** The Burner loader in a boot file's tape header, decrypted: its pilot and sync bytes (cmp #pilot at $03c3, cmp #sync
+ *  at $03ce) and its bit order (rol or ror $bd at $03bf). */
+function burnerLoader(boot: TapeFile | undefined): BurnerLoader | null {
+  const h = boot?.header;
+  if (!h || h.length < 0x94) return null;
+  const d = (i: number) => (i >= 0x15 ? h[i] ^ BURNER_KEY : h[i]);
+  if (d(0x87) !== 0xc9 || d(0x92) !== 0xc9 || (d(0x83) !== 0x26 && d(0x83) !== 0x66)) return null;
+  // dec $03bb / bne: the files it reads; lda #hi / pha / lda #lo / pha: where its RTS goes once they are in
+  const count = d(0x71) === 0xce && d(0x72) === 0xbb && d(0x73) === 0x03 ? d(0x7f) : null;
+  const jump = d(0x76) === 0xa9 && d(0x78) === 0x48 && d(0x79) === 0xa9 && d(0x7b) === 0x48 ? (((d(0x77) << 8) | d(0x7a)) + 1) & 0xffff : null;
+  // the boot file's jsr $a533 … jmp $a7ae: relink, (CLR,) RUN (the second kind of boot has bytes between that are
+  // skipped, to hide its code)
+  const at = jump != null && boot!.load != null ? jump - boot!.load : -1;
+  const bytes = at >= 0 ? Array.from(boot!.data.subarray(at, at + 16)) : [];
+  const run = bytes[0] === 0x20 && bytes[1] === 0x33 && bytes[2] === 0xa5 && bytes.some((v, i) => v === 0x4c && bytes[i + 1] === 0xae && bytes[i + 2] === 0xa7);
+  return { pilot: d(0x88), sync: d(0x93), msb: d(0x83) === 0x26, count: count || null, jump, run };
+}
+
+/** The Burner files in a stretch after the boot file with loader `l`; `before` files of it were read in the stretches
+ *  before (the loader reads `count` of them). */
+function burnerFiles(p: TapPulses, bits: Uint8Array, base: number, l: BurnerLoader, before: number): TapeFile[] {
+  const out: TapeFile[] = [];
+  const byte = l.msb ? msbByte : lsbByte;
+  const nth = (n: number) => n + (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th');
+  for (let k = 8; k + 8 <= bits.length; k++) {
+    if (byte(bits, k) !== l.sync || byte(bits, k - 8) !== l.pilot) continue;
+    let lead = 1;
+    while (lead < BURNER_PILOT && byte(bits, k - 8 - 8 * lead) === l.pilot) lead++;
+    if (lead < BURNER_PILOT) continue;
+    while (byte(bits, k - 8 - 8 * lead) === l.pilot) lead++;
+    let at = k + 8;
+    const take = () => { const v = byte(bits, at); at += 8; return v; };
+    const head = [take(), take(), take(), take()];
+    if (head.includes(-1)) continue;
+    const start = head[0] | (head[1] << 8), stop = head[2] | (head[3] << 8);
+    if (stop <= start) continue;
+    const data = new Uint8Array(stop - start);
+    let whole = true;
+    for (let i = 0; i < data.length; i++) { const v = take(); if (v < 0) { whole = false; break; } data[i] = v; }
+    const n = before + out.length + 1;
+    const then = l.run ? '; then it RUNs the BASIC program' : l.jump != null ? `; then it starts the program at $${hex4(l.jump)}` : '';
+    const note = l.count == null ? `pilot $${hex2(l.pilot)}, sync $${hex2(l.sync)}; no checksum`
+      : n < l.count ? `the ${nth(n)} of the ${l.count} files the boot file's loader reads; no checksum`
+      : n === l.count ? `${l.count === 1 ? 'the file' : `the last of the ${l.count} files`} the boot file's loader reads${then}; no checksum`
+      : `after ${l.count === 1 ? 'the file' : `the ${l.count} files`} the boot file's loader reads (the program's own loader reads it); no checksum`;
+    const from = k - 8 * lead;
+    out.push({ format: 'burner', name: `file_${hex4(start)}`, type: 'PRG', load: start, end: stop, data, note, ...fileAt(p, base + from), to: base + Math.min(at, bits.length), errors: whole ? [] : ['the data runs past the end of the turbo stretch'] });
+    k = at - 1;
   }
   return out;
 }
@@ -1542,6 +1618,8 @@ export function readTape(u8: Uint8Array): TapeImage {
   const doubtful: { f: TapeFile; s: number }[] = [];
   /** Firebird's blocks, made into chains and files across stretches (the loader stops the tape between blocks) */
   const fb: FbBlock[] = [];
+  /** the Burner files read so far after each boot file (its loader reads a number of them) */
+  const burnerRead = new Map<TapeFile, number>();
   for (const r of regions(p, cbm)) {
     const two: { short: number; long: number } | null = twoLengths(p.cycles, r.from, r.to) ?? sameLengths(p.cycles, r.from, r.to, before);
     if (two) before = two;
@@ -1560,15 +1638,21 @@ export function readTape(u8: Uint8Array): TapeImage {
       }
       const pilot = pilotFiles(p, bits, r.from);
       doubtful.push(...pilot.doubtful.map(f => ({ f, s: stretches.length })));
+      const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();
+      // Burner's files, after a boot file whose tape header holds its loader (the pilot and sync are the loader's)
+      const bl = burnerLoader(boot);
+      const burner = bl ? burnerFiles(p, bits, r.from, bl, burnerRead.get(boot!) ?? 0) : [];
+      if (burner.length) burnerRead.set(boot!, (burnerRead.get(boot!) ?? 0) + burner.length);
       // Wildload's chains and Microload's files take their pulses: another format's file inside them is their data
-      // holding its pilot, sync and a sum that fits by chance (a Freeload file of 64 bytes in Ronald Rubberduck's $0800)
-      const wm = wildAndMicro(p, bits, r.from);
-      const own = (f: TapeFile) => !wm.some(w => w.at < f.to && f.at < w.to);
-      found.push(...[...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from)].filter(own), ...wm, ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2).filter(own));
+      // holding its pilot, sync and a sum that fits by chance (a Freeload file of 64 bytes in Ronald Rubberduck's $0800);
+      // Burner's files take theirs
+      const notBurner = (f: { at: number; to: number }) => !burner.some(w => w.at < f.to && f.at < w.to);
+      const wm = wildAndMicro(p, bits, r.from).filter(notBurner);
+      const own = (f: { at: number; to: number }) => notBurner(f) && !wm.some(w => w.at < f.to && f.at < w.to);
+      found.push(...burner, ...[...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from)].filter(own), ...wm, ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2).filter(own));
       // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
       if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
-      const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();
-      const first = boot && !firsts.has(boot) && r.from - boot.to < 50000 ? cyberFirst(p, bits, r, boot) : null;
+      const first = boot && !bl && !firsts.has(boot) && r.from - boot.to < 50000 ? cyberFirst(p, bits, r, boot) : null;
       if (first) {
         firsts.add(boot!);
         found.push(first.file);
@@ -1576,9 +1660,9 @@ export function readTape(u8: Uint8Array): TapeImage {
         if (second) found.push(second);
         else keys = first.keys;
       }
-      blocks = cyberBlocks(bits, r.from);
+      blocks = cyberBlocks(bits, r.from).filter(notBurner);
       cyber.push(...blocks);
-      fb.push(...firebirdBlocks(bits, r.from, stretches.length));
+      fb.push(...firebirdBlocks(bits, r.from, stretches.length).filter(notBurner));
     }
     files.push(...found);
     stretches.push({ r, taken: [...found, ...blocks.filter(b => b.ok)].map(f => [f.at, f.to] as const) });

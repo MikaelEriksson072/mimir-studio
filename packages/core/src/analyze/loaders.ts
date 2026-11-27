@@ -321,6 +321,20 @@ const KNOWN: Known[] = [
       { pat: pat('A2 09 20 .. .. EE 20 D0 CA D0 F7'), role: 'tape', what: 'reads a byte: 9 bits, the border flashing' },
     ],
   },
+  // Burner (TAPClean's name): the loader is in the boot file's tape header, encrypted; the boot file decrypts it with
+  // two bytes of the vectors (Star Wars, Domark; the second kind of boot, on 59 of the archive's 100 Burner tapes,
+  // hides the same instructions among bytes it skips)
+  {
+    id: 'burner', name: 'Burner (Mastertronic)',
+    how: 'tape: the boot file at $02a7 (started through $0302) decrypts the loader in its tape header from $0351 (XOR the bytes at $0308 and $0317: $59) and jumps there; it starts CIA2\'s timer A, one shot from $0180, at each pulse on the FLAG line, and a 1 is that it had run out; the pilot byte found bit by bit, then more of it, the sync byte (both the tape\'s own: $e3 and $ed, the lowest bit first, on most), start, end, the data and no sum. It reads as many files as it says, then RUNs the program or jumps to it. Mastertronic\'s, Mirrorsoft\'s, Domark\'s, PSS\', Beyond\'s and Quicksilva\'s tapes',
+    signs: [
+      { pat: pat('B1 FB 4D 08 03 4D 17 03 91 FB 88 D0'), role: 'tape', what: 'the boot: decrypts the loader in the tape header ($0351 on) with the bytes at $0308 and $0317 and starts it' },
+      { pat: pat('B3 FB 54 .. 4D 08 03 80 .. 4D 17 03 89 .. 91 FB'), role: 'tape', what: 'the boot: decrypts the loader in the tape header ($0351 on) with the bytes at $0308 and $0317, among bytes it skips' },
+      // the loader, decrypted
+      { pat: pat('26|66 BD A5 BD C9 .. D0 F5 20 .. .. C9 .. F0 F9 C9 .. D0'), role: 'tape', what: 'waits for the pilot byte bit by bit, then for whole pilot bytes and the sync byte' },
+      { pat: pat('A9 10 2C 0D DC F0 FB AD 0D DD 4A A9 19 8D 0E DD 60'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA2\'s timer A had run out (it starts it again)', weak: true },
+    ],
+  },
   {
     id: 'firebird', name: "Firebird's tape loader",
     how: 'tape: an IRQ on the FLAG line restarts CIA2\'s timer A (one shot from $0232), whose underflow is the bit, the top bit first; each block a pilot byte, its complement and the pilot again. The loader the boot file loads (Bubble Bobble\'s at $1c00) reads a chain of blocks: the next block\'s pilot, the block\'s number and address, 256 bytes (64 in the first), bytes it skips, their XOR and where it jumps after the block, the last one into code that decrypts what was loaded; a second loader the program calls reads files: a header of 7 bytes (number, address, the page the file ends before, where it jumps after it), 256 bytes and their XOR a block. Firebird\'s, Silverbird\'s and Rainbird\'s tapes, Psygnosis\', Odin\'s, Thor\'s, Activision\'s, Melbourne House\'s',

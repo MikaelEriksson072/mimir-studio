@@ -7448,6 +7448,30 @@ test('a Mega-Save tape: its files are listed and open, as Tazz\'s and Cauldron\'
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('a Burner tape: the files its boot file\'s loader reads are listed and open, as Star Wars\' (Domark) are', async ({ app, page }) => {
+  // fixtures/tap/burner-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file whose tape header says what
+  // Burner's loader would (pilot $e3, sync $ed, the lowest bit first, 2 files, then RUN), then a table and the raster
+  // demo in Burner's format at Star Wars' speed
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/burner-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted burner-demo\.tap \(\d+ s\): 3 files \(1 KERNAL, 2 Burner\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on burner-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"BURNER DEMO"\s*\+header\s*PRG/, /"file_c000"\s*Burner/, /"file_0801"\s*Burner/]);
+  // every stretch read: nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['KERNAL PRG', 'Burner', 'Burner']);
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$02a7–$030b', '$c000–$c257', /^\$0801–\$[0-9a-f]{4}$/]);
+  await expect(table.locator('tbody tr td:nth-child(7)')).toHaveText([/header 2×, data 2×/, "the 1st of the 2 files the boot file's loader reads; no checksum", "the last of the 2 files the boot file's loader reads; then it RUNs the BASIC program; no checksum"]);
+  await table.getByRole('row', { name: /"file_0801"/ }).click();
+  await expect(toast(page, 'Loaded file_0801.prg at $0801')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
 test('a Novaload tape: the pages its boot file\'s loader reads and the files its LOAD reads are listed and open, as Paperboy\'s are', async ({ app, page }) => {
   // fixtures/tap/novaload-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, the pages a Novaload boot's
   // loader reads ($c000-$c1ff, $e000-$e0ff), then the raster demo as Novaload's file "DEMO", at Paperboy's speed

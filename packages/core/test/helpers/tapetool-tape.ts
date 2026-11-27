@@ -301,6 +301,49 @@ export function microloadDemoTape(demo: Uint8Array): Uint8Array {
   return withTurbo(kernal, w.pulses);
 }
 
+/** A Burner boot file's tape header (the 171 bytes after the name, as makeTap takes them): bytes of our own, encrypted
+ *  as Burner's boot decrypts them (XOR $59), with only what the reader takes from Burner's loader at its places: the
+ *  bit order (rol or ror $bd), cmp #pilot, cmp #sync, dec $03bb and the number of files, the address pushed for the
+ *  RTS after them (`jump` - 1). No loader code of Mastertronic's is on the tape. */
+export function burnerHeader(o: { pilot: number; sync: number; msb: boolean; count: number; jump: number }): Uint8Array {
+  const d = Uint8Array.from({ length: 192 }, (_, i) => (i * 13 + 5) & 0xff);
+  const back = o.jump - 1;
+  const set: Record<number, number> = {
+    0x71: 0xce, 0x72: 0xbb, 0x73: 0x03, 0x7f: o.count,
+    0x76: 0xa9, 0x77: back >> 8, 0x78: 0x48, 0x79: 0xa9, 0x7a: back & 0xff, 0x7b: 0x48,
+    0x83: o.msb ? 0x26 : 0x66, 0x87: 0xc9, 0x88: o.pilot, 0x92: 0xc9, 0x93: o.sync,
+  };
+  for (const [i, v] of Object.entries(set)) d[+i] = v;
+  return d.slice(21).map(v => v ^ 0x59);
+}
+
+/** A Burner file: a pilot of `pilot` bytes (208 on Star Wars), the sync byte, start, end (exclusive), the data, no
+ *  sum, the top bit first or the lowest; then a pause, unless `pause` is false. */
+export function burnerFile(w: TurboWriter, o: { pilot: number; sync: number; msb: boolean; load: number; data: ArrayLike<number>; pilots?: number; pause?: boolean }): void {
+  const byte = (v: number) => { for (let i = 0; i < 8; i++) w.bit(o.msb ? (v >> (7 - i)) & 1 : (v >> i) & 1); };
+  for (let i = 0; i < (o.pilots ?? 208); i++) byte(o.pilot);
+  byte(o.sync);
+  const end = o.load + o.data.length;
+  for (const v of [o.load & 0xff, o.load >> 8, end & 0xff, end >> 8]) byte(v);
+  for (let i = 0; i < o.data.length; i++) byte(o.data[i]);
+  if (o.pause !== false) firebirdPause(w);
+}
+
+/** fixtures/tap/burner-demo.tap: a KERNAL boot file "BURNER DEMO" at $02a7 (bytes of our own, ending with relink and
+ *  RUN at $02f0) whose tape header says what Burner's loader would (burnerHeader: pilot $e3, sync $ed, the lowest bit
+ *  first, as on most of Mastertronic's tapes; 2 files, then RUN), then Burner's files at Star Wars' speed (a 0 of 272
+ *  cycles, a 1 of 528): a table at $c000 and `demo` (a PRG) from its load address. */
+export function burnerDemoTape(demo: Uint8Array): Uint8Array {
+  const boot = Uint8Array.from({ length: 101 }, (_, i) => (i * 11 + 3) & 0xff);
+  boot.set([0x20, 0x33, 0xa5, 0x20, 0x59, 0xa6, 0x4c, 0xae, 0xa7], 0x02f0 - 0x02a7);
+  const kernal = makeTap({ files: [{ name: 'BURNER DEMO', load: 0x02a7, data: boot, header: burnerHeader({ pilot: 0xe3, sync: 0xed, msb: false, count: 2, jump: 0x02f0 }) }] });
+  const w = new TurboWriter(34, 66);
+  firebirdPause(w);
+  burnerFile(w, { pilot: 0xe3, sync: 0xed, msb: false, load: 0xc000, data: Uint8Array.from({ length: 600 }, (_, i) => (i * 7) & 0xff) });
+  burnerFile(w, { pilot: 0xe3, sync: 0xed, msb: false, load: demo[0] | (demo[1] << 8), data: demo.subarray(2) });
+  return withTurbo(kernal, w.pulses);
+}
+
 /** A whole tape: a KERNAL tape (makeTap) with turbo pulses after it. */
 export function withTurbo(kernal: Uint8Array, turbo: number[]): Uint8Array {
   const p = tapPulses(kernal), n = p.cycles.length + turbo.length;

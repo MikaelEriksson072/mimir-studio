@@ -657,6 +657,19 @@ describe("the Action Replay's loaders", () => {
     expect(ids(' lda #$b6\n sta $dd04\n lda #$01\n sta $dd05\n jsr byte\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda #$11\n sta $dd0e\n lda $dd0d\n lsr\n bit $dc0d\n rol $fc\n rts\nbyte: ldx #$09\nb: jsr bit\n inc $d020\n dex\n bne b\n lda $fc\n rts\n')).toEqual(['mastertronic']);
   });
 
+  it("know Burner by its boot, which decrypts the loader in the tape header, and by the loader's wait for the pilot", () => {
+    // the boot's loop (Star Wars'): the key is the bytes at $0308 and $0317
+    const [l] = loaders(' lda #$50\n sta $fb\n lda #$03\n sta $fc\n ldy #$af\nd: lda ($fb),y\n eor $0308\n eor $0317\n sta ($fb),y\n dey\n bne d\n jmp $0351\n');
+    expect(l).toMatchObject({ id: 'burner', name: 'Burner (Mastertronic)' });
+    expect(l.parts.map(p => p.what.split(':')[0])).toEqual(['the boot']);
+    // the loader once decrypted: the pilot bit by bit, whole pilot bytes, the sync byte
+    const bit = 'bit: lda #$10\nw: bit $dc0d\n beq w\n lda $dd0d\n lsr\n lda #$19\n sta $dd0e\n rts\n';
+    const byte = 'byte: ldx #$08\nb: jsr bit\n ror $bd\n inc $d020\n dex\n bne b\n lda $bd\n rts\n';
+    expect(ids(' jsr sync\n rts\nsync: jsr bit\n ror $bd\n lda $bd\n cmp #$e3\n bne sync\np: jsr byte\n cmp #$e3\n beq p\n cmp #$ed\n bne sync\n rts\n' + byte + bit)).toEqual(['burner']);
+    // its bit reading alone: a tape loader, not named
+    expect(ids(' jsr byte\n rts\n' + byte + bit)).toEqual(['tape?']);
+  });
+
   it('know Mega-Save by its wait for the pilot $63 and the sync bytes $64 … $ff', () => {
     // a pulse on the FLAG line restarts CIA2's timer B, whose underflow is the bit (Tazz's boot: $01fa cycles)
     const bit = 'bit: lda $dc0d\n and #$10\n beq bit\n lda $dd0d\n stx $dd07\n lsr\n lsr\n lda #$19\n sta $dd0f\n rts\n';
