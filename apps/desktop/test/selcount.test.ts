@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { analyze, makeDemo, parsePrg, render, type ProjectInput } from '@mimir/core';
+import { analyze, checkAsm, makeDemo, parsePrg, render, type ProjectInput } from '@mimir/core';
 import { foldLines } from '../src/lib/fold';
-import { listingSelCount, selCountText, sourceSelCount } from '../src/lib/selcount';
+import { asmLineBytes, linesSelCount, listingSelCount, selCountText, sourceSelCount } from '../src/lib/selcount';
 
 const demo = (): ProjectInput => {
   const d = makeDemo();
@@ -60,5 +60,32 @@ describe('the count of a selection’s bytes', () => {
       { startLineNumber: basic, startColumn: 1, endLineNumber: fill, endColumn: 20 },
       { startLineNumber: fill - 1, startColumn: 1, endLineNumber: fill, endColumn: 20 },
     ])!.bytes).toBe(15);
+  });
+
+  it('counts the bytes of the lines selected in the Assembler, by its check', () => {
+    const src = [
+      'BasicUpstart2(start)', //   1: the BASIC line, 12 bytes
+      '.macro border(v) {', //     2
+      '  lda #v', //               3
+      '  sta $d020', //            4
+      '}', //                      5
+      'start:', //                 6
+      '  border(1)', //            7: the macro's 5 bytes
+      '  inc $d021', //            8: 3
+      '  rts', //                  9: 1
+      'tab: .fill 4, 0', //       10: 4
+    ].join('\n');
+    const c = checkAsm({ 'main.asm': src }, 'main.asm', 'kickass');
+    expect(c.ok).toBe(true);
+    const b = asmLineBytes(c, 'main.asm');
+    expect([...b].sort((x, y) => x[0] - y[0])).toEqual([[1, 12], [7, 5], [8, 3], [9, 1], [10, 4]]);
+    const at = (from: number, to: number, endColumn = 2) => linesSelCount(n => b.get(n) ?? 0, [{ startLineNumber: from, startColumn: 1, endLineNumber: to, endColumn }]);
+    // the macro's own lines write nothing (its call does)
+    expect(at(2, 5)).toBeNull();
+    expect(at(6, 10)).toEqual({ bytes: 13, first: 6, last: 10 });
+    expect(at(1, 8, 1)).toEqual({ bytes: 17, first: 1, last: 7 });
+    expect(selCountText(at(1, 10)!.bytes)).toBe('25 bytes ($19)');
+    // a file the program has no bytes of
+    expect(asmLineBytes(c, 'other.asm').size).toBe(0);
   });
 });

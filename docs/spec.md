@@ -3977,6 +3977,13 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   hållet) och en tabell med raden, koden, cyklerna och summan till radens slut (det vägen hoppar över är grått). En
   markering som slutar i första kolumnen på en rad tar inte med den raden. Under en körning i debuggern räknas den
   körda kontrollens program.
+- **Antal byte i en markering** (2026-11-27). Som i re-assemblerns källkodsflik (10.1, *Markering*) står hur många byte
+  de markerade raderna skriver i högermarginalen bredvid markeringen, i decimalt och hex (*17 bytes ($11)*): vid dess
+  första rad, kvar i bild så länge en del av den syns, när markeringen går över mer än en rad (en som slutar i början av
+  en rad tar inte med den raden). Byten kommer ur Mimirs kontroll (`asmLineBytes`, `linesSelCount` i
+  `apps/desktop/src/lib/selcount.ts`): ett makroanrop har de byte makrot skriver, en `.fill` eller en importerad binärfil
+  sin rads; makrots egna rader skriver inget. Räknas om när kontrollen gjorts om; under en körning i debuggern efter den
+  körda kontrollen, som *Cycles*.
 - **Rita i den förstorade spriten eller tecknet, och i Graphics** (2026-11-25). I ett Assembler-projekt ritar man i
   inspektorns förstorade sprite eller tecken (14.1), och i Graphics-flikens tecken, sprites och bitmappar med *Draw* (en
   ruta under *Draw* bland vyns val; i flerfärg pennorna bredvid; `pixelAt` i `lib/gfxview.ts` ger byten och biten under

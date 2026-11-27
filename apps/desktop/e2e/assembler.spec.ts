@@ -733,6 +733,58 @@ test('cycles in the Assembler: each instruction\'s beside its line number, the l
   await closeProject(page, 'cyc');
 });
 
+test('a selection in the Assembler shows how many bytes its lines write, beside its first line as in the re-assembler: a macro\'s call its bytes, a .fill its', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'selc');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', '.macro border(v) {', '  lda #v', '  sta $d020', '}', 'start:', '        border(1)', '        inc $d021', '        rts', 'tab:    .fill 4, 0', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const editor = page.locator('.scr-editor .view-lines'), count = page.getByTestId('asm-sel-count');
+  await editor.click();
+  await page.keyboard.press('Control+Home');
+  await expect(count).toBeHidden();
+
+  // lines 1-2 (down to the start of line 3): the BASIC line's 12 bytes, beside the first line
+  await page.keyboard.press('Shift+ArrowDown'); await page.keyboard.press('Shift+ArrowDown');
+  await expect(count).toHaveText('12 bytes ($0c)');
+  const line = (await editor.locator('.view-line', { hasText: 'BasicUpstart2(start)' }).boundingBox())!, c = (await count.boundingBox())!;
+  const box = (await page.locator('.scr-editor').boundingBox())!;
+  expect(Math.abs(c.y - line.y)).toBeLessThan(4);
+  expect(c.x + c.width).toBeLessThan(box.x + box.width);
+  expect(c.x).toBeGreaterThan(box.x + box.width / 2);
+  await expect(count).toHaveClass(/sel-count/);
+
+  // the macro's own lines (2-5) write nothing
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('ArrowDown');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+End');
+  await expect(count).toBeHidden();
+
+  // lines 6-9: the macro's call (5), inc (3), rts (1); with line 10 the .fill's 4
+  await page.keyboard.press('Control+Home');
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown');
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowDown');
+  await expect(count).toHaveText('9 bytes ($09)');
+  await page.keyboard.press('Shift+End');
+  await expect(count).toHaveText('13 bytes ($0d)');
+  // a selection in one line is no count
+  await page.keyboard.press('ArrowRight');
+  await expect(count).toBeHidden();
+
+  // a line typed: counted once the check has it
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('        nop');
+  await page.keyboard.press('Control+a');
+  await expect(count).toHaveText('26 bytes ($1a)');
+  await shot(page, '22-selection-count');
+  await page.keyboard.press('Control+Home');
+  await expect(count).toBeHidden();
+  await closeProject(page, 'selc');
+});
+
 test('a name in the Assembler: its references in all the sources (Shift+F12), renamed in all of them (F2), the file\'s outline (Ctrl+Shift+O)', async ({ workDir: work, app, page }) => {
   const dir = join(work, 'names');
   mkdirSync(dir);

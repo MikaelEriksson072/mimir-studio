@@ -36,6 +36,7 @@ import { AsmMacroPanel, AsmMacroZone, macroZoneRows } from './AsmMacroList';
 import type { AsmLibMacro } from '../monaco/providers';
 import type { AsmMacroDefined } from '../store/asmlink';
 import { asmBookmarkSpan } from './AsmBookmarks';
+import { asmLineBytes, linesSelCount, selCountText } from '../lib/selcount';
 
 const kr = window.kr;
 type MonacoNs = typeof Monaco;
@@ -492,6 +493,11 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const views = useRef<Record<string, Monaco.editor.ICodeEditorViewState | null>>({});
   const [state, setState] = useState<'loading' | 'ready' | 'fallback'>('loading');
   const applying = useRef(false);
+  /** the byte count beside a selection: the check it counts by (the debugged one while debugging), each line's bytes in
+   *  the file shown (from that check), and what places it (the editor's, once it is made) */
+  const selCheck = useRef<AsmCheck | null>(null);
+  const selBytes = useRef<{ c: AsmCheck; p: string; m: Map<number, number> } | null>(null);
+  const placeCountRef = useRef<() => void>(() => { });
   /** a line to show once its file is in the editor */
   /** (`soft`: the debugger's line, scrolled to only when it is out of view, the focus left where it is) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
@@ -551,6 +557,34 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         // (the caret's line and the lines selected: the bookmark editor can take them)
         useAsmLink.getState().set({ caret: p ? { file: p, line: ev.selection.positionLineNumber } : null, selection: sel });
       });
+      // how many bytes the lines selected write, in the right margin beside them, as in the re-assembler's source tab
+      // (lib/selcount.ts): at the first line selected, kept in view while part of the selection is (by the check: a
+      // macro's call has the bytes the macro writes)
+      const countNode = document.createElement('div');
+      countNode.className = 'sel-count mon-sel-count'; countNode.dataset.testid = 'asm-sel-count'; countNode.style.display = 'none';
+      editor.addOverlayWidget({ getId: () => 'mimir.sel-count', getDomNode: () => countNode, getPosition: () => null });
+      const placeCount = () => {
+        const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null, sels = editor.getSelections(), ck = selCheck.current;
+        let bytes: Map<number, number> | null = null;
+        if (p && ck) {
+          const k = selBytes.current;
+          bytes = k && k.c === ck && k.p === p ? k.m : asmLineBytes(ck, p);
+          selBytes.current = { c: ck, p, m: bytes };
+        }
+        const c = bytes?.size && sels ? linesSelCount(n => bytes!.get(n) ?? 0, sels) : null;
+        const li = editor.getLayoutInfo(), st = editor.getScrollTop(), lh = editor.getOption(monaco.editor.EditorOption.lineHeight);
+        const y0 = c ? editor.getTopForLineNumber(c.first) - st : 0, y1 = c ? editor.getTopForLineNumber(c.last) + lh - st : 0;
+        if (!c || y1 <= 0 || y0 >= li.height) { countNode.style.display = 'none'; return; }
+        countNode.textContent = selCountText(c.bytes);
+        countNode.style.display = '';
+        countNode.style.top = `${Math.min(Math.max(y0 + 1, 4), y1 - lh + 1)}px`;
+        countNode.style.right = `${li.width - li.contentLeft - li.contentWidth + 12}px`;
+      };
+      placeCountRef.current = placeCount;
+      editor.onDidChangeCursorSelection(placeCount);
+      editor.onDidScrollChange(placeCount);
+      editor.onDidLayoutChange(placeCount);
+      editor.onDidChangeModel(placeCount);
       // the editor's menu: a block of sprites, a charset, a bitmap, music … put in where the caret is
       editor.addAction({ id: 'mimir.insertBlock', label: 'Insert block…', contextMenuGroupId: '1_modification', contextMenuOrder: 0, run: () => keys.current.block() });
       // bookmarks, as the re-assembler's on its lines: Ctrl+F2 adds or edits the one on the caret's line (a selection: an
@@ -584,6 +618,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       void writeAll();
       keys.current.bmFlush();
       for (const [p, m] of Object.entries(models.current)) if (!m.isDisposed()) useAssembler.getState().setBps(dir, p, bpLines(p));
+      placeCountRef.current = () => { };
       ed.current?.dispose(); ed.current = null; pcDeco.current = null;
       Object.values(models.current).forEach(m => m.dispose()); models.current = {};
     };
@@ -1270,7 +1305,10 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const [selLines, setSelLines] = useState<{ file: string; from: number; to: number } | null>(null);
   const [taken, setTaken] = useState<ReadonlySet<Addr>>(new Set());
   const cycCheck = dbg?.c ?? check;
-  const lineCyc = useMemo(() => (cycOn && cycCheck && shown ? asmLineCycles(cycCheck, shown) : null), [cycOn, cycCheck, shown]);
+  // (the selection's byte count goes by the same check: placed again when it or the file shown changes)
+  selCheck.current = cycCheck;
+  useEffect(() => { placeCountRef.current(); }, [cycCheck, shown, state]);
+  const lineCyc =useMemo(() => (cycOn && cycCheck && shown ? asmLineCycles(cycCheck, shown) : null), [cycOn, cycCheck, shown]);
   const cycCode = useMemo(() => (cycOn && cycCheck ? asmCode(cycCheck) : null), [cycOn, cycCheck]);
   const cycPath = useMemo(() => {
     if (!cycOn || !cycCheck || !cycCode || !selLines || selLines.to <= selLines.from) return null;
