@@ -4142,6 +4142,14 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   använda; vad som saknas i biblioteket; *Stop*: filen och importen står kvar), och listan märker makrona som är i den.
   Sparas i projektfilen (ångra tar tillbaka en ändring). Mätt: filen som Mimir bygger, importerad av riktiga
   KickAss.jar, ger samma bytes som koden utskriven.
+- **Hur makrofilen syns** (`AsmMacroList.tsx`; det användaren ser är inte det assemblern läser): i en källa som
+  importerar den står under importraden en hopfälld lista, en rad (filen, hur många, deras anrop) som fälls ut till
+  makrona under sina samlingar, vart och ett med namn och parametrar (`codeLibSignature`) och varför det är där; att peka
+  på ett visar dess beskrivning på listans första rad (och hela i tipset). Raderna är en view zone i Monaco som håller
+  plats och en overlay-widget över den som tar pekaren (editorns rader ligger annars över zonens egna noder). Källans
+  text är som den är: bara importraden. Filen själv öppnad är samma lista som en sida (samlingarnas egna rader med; ett
+  klick fäller ut ett makros kod, att peka visar beskrivningen nedanför), och *Show the code* visar koden Mimir skriver
+  (skrivskyddad), *Show the list* listan igen.
 
 ## 11. Kick Assembler-generatorn
 

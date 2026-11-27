@@ -2134,16 +2134,54 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .cl-proj-row .check { display: flex; align-items: center; gap: 4px; color: var(--fg-2); }
 .cl-proj-row .icon-btn { width: 22px; height: 22px; }
 .cl-proj-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 0; border: 0; background: none; color: var(--fg); font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; overflow: hidden; }
-.cl-proj-name .mono { overflow: hidden; text-overflow: ellipsis; }
-.cl-proj-name .lib-n { flex: none; font-weight: 400; font-size: 11px; }
+.cl-proj-name .mono { flex: none; }
+.cl-proj-name .lib-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 400; font-size: 11px; }
 .cl-proj-sum { padding-left: 16px; overflow-wrap: anywhere; }
 .cl-proj-list { display: flex; flex-direction: column; max-height: 180px; overflow: auto; padding: 2px 0 0 16px; }
-.cl-proj-item { display: flex; align-items: center; gap: 6px; min-height: 20px; font-size: 12px; }
+.cl-proj-item { display: flex; align-items: center; gap: 6px; min-height: 20px; font-size: 12px; white-space: nowrap; }
+.cl-proj-item .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cl-proj-item .muted { flex: none; }
 .cl-proj-item .icon-btn { width: 18px; height: 18px; }
 .cl-infile { flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; border-radius: 3px; font-size: 10px; color: var(--ok, var(--accent-hi)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok, var(--accent)) 40%, transparent); }
 .cl-infile:not(.added) { opacity: 0.75; }
 .cl-why { display: inline-flex; align-items: center; gap: 3px; }
 .btn.small.on { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent-hi); }
+/* the project's macro file in the editor: the folded list under the import line (a view zone), and the file opened */
+.am-zone-host { position: absolute; pointer-events: auto; }
+.am-zone { height: 100%; margin-left: 2px; border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); font-family: var(--font-code); font-size: 12px; color: var(--fg-2); overflow: hidden; }
+.am-zone-head, .am-row, .am-group { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 4px; white-space: nowrap; overflow: hidden; }
+.am-zone-head { color: var(--fg-2); }
+.am-fold, .am-open { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 3px; background: none; color: var(--fg-3); cursor: pointer; }
+.am-fold:hover, .am-open:hover { background: var(--row-hover); color: var(--fg); }
+.am-open { margin-left: auto; }
+.am-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.am-sum > .mono:first-child { color: var(--fg); }
+.am-names { color: var(--accent-hi); }
+.am-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); font-family: var(--font-ui); }
+.am-desc b { color: var(--accent-hi); font-weight: 600; margin-right: 4px; }
+.am-group { padding-left: 24px; color: var(--fg-3); font-family: var(--font-ui); font-size: 11px; }
+.am-row { padding-left: 40px; cursor: default; }
+.am-row:hover { background: var(--row-hover); }
+.am-sig { color: var(--accent-hi); overflow: hidden; text-overflow: ellipsis; }
+.am-why { flex: none; font-family: var(--font-ui); font-size: 10px; color: var(--fg-3); }
+.am-why.added { color: var(--ok, var(--accent-hi)); }
+.am-bar { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); color: var(--fg-2); }
+.am-bar .btn.small { height: 22px; padding: 0 8px; font-size: 11px; }
+.am-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--editor); }
+.am-note { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 8px 14px 6px; }
+.am-list { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 8px; }
+.am-pgroup { margin-top: 6px; }
+.am-pgroup-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 4px; border: 0; border-radius: 5px; background: none; color: var(--fg); font-weight: 600; font-size: 12.5px; cursor: pointer; text-align: left; }
+.am-pgroup-head:hover { background: var(--row-hover); }
+.am-pgroup-head .lib-n { font-weight: 400; font-size: 11px; }
+.am-rest { margin: 2px 0 2px 30px; padding: 2px 8px; border-left: 2px solid var(--line-2); color: var(--fg-3); font-size: 11.5px; white-space: pre; overflow: auto; }
+.am-prow { margin-left: 18px; border-radius: 5px; }
+.am-prow.open { background: var(--panel-2); }
+.am-prow-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 2px 6px; border: 0; border-radius: 5px; background: none; color: var(--fg-2); font-size: 12.5px; cursor: pointer; text-align: left; }
+.am-prow-head:hover { background: var(--row-hover); }
+.am-code { margin: 2px 6px 6px 24px; }
+.am-detail { flex: none; min-height: 58px; max-height: 30%; overflow: auto; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--panel); font-size: 12.5px; }
+.am-detail-text { margin-top: 3px; white-space: pre-wrap; color: var(--fg); }
 /* the export dialog: the macros checked, a collection's under it */
 .modal.cl-export { width: min(640px, 100%); }
 .cl-ex-search { margin: 0 0 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; }

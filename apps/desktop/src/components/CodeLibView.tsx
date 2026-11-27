@@ -397,7 +397,7 @@ function ProjectMacros({ project, built, lang, fileName, onTakeOut }: { project:
       {list && <div className="cl-proj-list" role="list" aria-label={`What is in ${fileName}`}>
         {(built?.macros ?? []).map(m => (
           <div key={m.name} role="listitem" className="cl-proj-item">
-            <span className="mono">{m.name}</span><span className="muted small">{m.why === 'added' ? 'added' : m.why === 'called' ? 'called' : 'used'}{m.in ? ` · ${m.in}` : ''}</span>
+            <span className="mono" title={m.description || m.sig}>{m.sig}</span><span className="muted small">{m.why === 'added' ? 'added' : m.why === 'called' ? 'called' : 'used'}{m.in ? ` · ${m.in}` : ''}</span>
             <span className="grow" />
             {pm.macros.includes(m.name) && <button className="icon-btn" aria-label={`Take ${m.name} out of ${fileName}`} title="Take it out (it stays while the code calls it)" onClick={() => onTakeOut([m.name], [])}><Icon name="x" size={11} /></button>}
           </div>))}

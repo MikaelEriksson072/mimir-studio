@@ -98,9 +98,39 @@ test('the project\'s macro file: built from the library as the code calls its ma
   await expect.poll(file).toContain('.macro WaitAndSet');
   await expect(page.locator('.scr-check')).toContainText('Ready');
 
-  // read only in the editor: Mimir writes it
+  // in the source, under the line that imports it: a folded list of the macros by name and parameters; pointing at one
+  // shows its description
+  // (Monaco keeps its view zones out of the accessibility tree: found by their look)
+  const zone = page.locator('.scr-editor .am-zone');
+  await expect(zone).toContainText('macros.asm · 4 macros: Black()  SetBorder(c)  WaitAndSet(line, c)  save()');
+  await zone.locator('.am-fold').click();
+  await expect(zone.locator('.am-group')).toHaveCount(2);
+  await expect(zone.locator('.am-row')).toHaveCount(4);
+  await expect(zone.locator('.am-row').nth(2)).toContainText('WaitAndSet(line, c)called');
+  await zone.locator('.am-row').nth(2).hover();
+  await expect(zone.locator('.am-zone-head')).toContainText('WaitAndSet(line, c) Waits for a line, then the border');
+  await shot(page, '46-codelib-macro-zone');
+  // (the code as it is: the import line and what follows)
+  expect(readFileSync(join(dir, 'main.asm'), 'utf8')).toMatch(/^#import "macros\.asm"\n\nBasicUpstart2\(start\)/);
+  await zone.locator('.am-fold').click();
+  await expect(zone.locator('.am-row')).toHaveCount(0);
+
+  // the file opened: the list of its macros, not its code; a click shows a macro's code, pointing its description
   await region.getByRole('button', { name: 'Open macros.asm' }).click();
   await expect(page.getByRole('tab', { name: /macros\.asm/ })).toBeVisible();
+  const panel = page.getByRole('region', { name: 'The macros of macros.asm' });
+  await expect(page.locator('.scr-editor')).toBeHidden();
+  await expect(panel.getByRole('group', { name: 'raster' })).toContainText('.const BORDER = $d020');
+  await panel.getByRole('button', { name: /^save\(\)/ }).hover();
+  await expect(panel.locator('.am-detail')).toContainText('a macro in it uses it');
+  await panel.getByRole('button', { name: /^Black\(\)/ }).hover();
+  await expect(panel.locator('.am-detail')).toContainText('Black, all of it');
+  await panel.getByRole('button', { name: /^Black\(\)/ }).click();
+  await expect(panel.getByLabel('The code of Black')).toContainText('sta $d022');
+  await shot(page, '47-codelib-macro-panel');
+  // its code on request: read only, Mimir writes it
+  await page.getByRole('button', { name: 'Show the code' }).click();
+  await expect(page.locator('.scr-editor')).toBeVisible();
   const before = file();
   await (await lineWith('#importonce')).click();
   await page.keyboard.type('xyz');

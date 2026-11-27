@@ -507,12 +507,17 @@ export function codeLibRest(code: string, lang: ScriptLang): string {
   return keep.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** what a project's macro file was built of: each macro (`in` its collection; `why` it is there: added, called by the
- *  code, or used by another of them), the names added that the library has not, and those the project defines itself
- *  (left out: they would be defined twice) */
+/** a macro of a project's macro file as the editor shows it: its name, its collection (`in`), why it is there (added,
+ *  called by the code, or used by another of them), its call as the list shows it (`sig`), its description and its
+ *  definition */
+export interface CodeLibBuiltMacro { name: string; in: string | null; why: 'added' | 'called' | 'used'; sig: string; description: string; code: string }
+/** what a project's macro file was built of: its text, each macro, the groups it has (a collection's, with its own lines,
+ *  or the macros of their own: `in` null) in its order, the names added that the library has not, and those the project
+ *  defines itself (left out: they would be defined twice) */
 export interface CodeLibBuilt {
   text: string;
-  macros: { name: string; in: string | null; why: 'added' | 'called' | 'used' }[];
+  macros: CodeLibBuiltMacro[];
+  groups: { in: string | null; rest: string; macros: string[] }[];
   missing: string[];
   own: string[];
 }
@@ -527,12 +532,12 @@ export interface CodeLibBuilt {
 export function codeLibProjectFile(items: readonly CodeLibItem[], want: { macros: readonly string[]; collections: readonly string[]; called?: boolean }, sources: readonly string[], lang: ScriptLang, file: string): CodeLibBuilt {
   const tass = langIs(lang) === '64tass';
   // the library's macros by name (the first of a name in the library's order)
-  type Entry = { name: string; code: string; description: string; decor?: CodeLibSub['decor']; coll: CodeLibItem | null; order: number };
+  type Entry = { name: string; params: string[]; how: CodeLibMacro['how']; code: string; description: string; decor?: CodeLibSub['decor']; coll: CodeLibItem | null; order: number };
   const all: Entry[] = [], byName = new Map<string, Entry>();
   for (const i of codeLibOrder(items.filter(x => x.kind === 'macro' && langIs(x.lang) === langIs(lang)))) {
     const subs = i.collection ? i.macros ?? codeLibSubs(i.code, i.lang) : codeLibIsMacro(i.code, i.lang) ? codeLibSubs(i.code, i.lang).slice(0, 1) : [];
     for (const s of subs) {
-      const e: Entry = { name: s.name, code: s.code, description: i.collection ? s.description : i.description || s.description, ...(s.decor ? { decor: s.decor } : {}), coll: i.collection ? i : null, order: all.length };
+      const e: Entry = { name: s.name, params: s.params, how: s.how, code: s.code, description: i.collection ? s.description : i.description || s.description, ...(s.decor ? { decor: s.decor } : {}), coll: i.collection ? i : null, order: all.length };
       all.push(e);
       if (!byName.has(s.name)) byName.set(s.name, e);
     }
@@ -566,19 +571,22 @@ export function codeLibProjectFile(items: readonly CodeLibItem[], want: { macros
     ...(tass ? [] : ['#importonce']),
   ];
   let group: CodeLibItem | null | undefined;
+  const groups: CodeLibBuilt['groups'] = [];
   for (const e of chosen) {
-    if (e.coll !== group) {
+    if (e.coll !== group || !groups.length) {
       group = e.coll;
       out.push('', `${c} ---- ${group ? group.name : 'macros of their own'} ----`);
       const rest = group ? codeLibRest(group.code, lang) : '';
       if (rest) out.push(rest);
+      groups.push({ in: group ? group.name : null, rest, macros: [] });
     }
+    groups[groups.length - 1].macros.push(e.name);
     out.push('', codeLibSubText({ code: e.code, description: e.description }, lang, e.decor));
   }
   return {
     text: `${out.join('\n')}\n`,
-    macros: chosen.map(e => ({ name: e.name, in: e.coll ? e.coll.name : null, why: why.get(e.name)! })),
-    missing, own: [...skipped],
+    macros: chosen.map(e => ({ name: e.name, in: e.coll ? e.coll.name : null, why: why.get(e.name)!, sig: codeLibSignature(e, lang), description: e.description, code: e.code })),
+    groups, missing, own: [...skipped],
   };
 }
 

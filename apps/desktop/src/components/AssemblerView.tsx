@@ -9,6 +9,7 @@
  * and the C64 screen; under the code the problems, the last build and the last run. The start screen's Assembler page
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgLibdirs, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, splitLabel, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
@@ -31,6 +32,7 @@ import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
 import { codeLibMacroAt, codeLibProjectFile, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
 import { useCodeLib } from '../store/codelib';
+import { AsmMacroPanel, AsmMacroZone, macroZoneRows } from './AsmMacroList';
 import { asmBookmarkSpan } from './AsmBookmarks';
 
 const kr = window.kr;
@@ -1485,6 +1487,68 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     void change({ dir, op: 'file', path: mf.file, text: built.text }).finally(() => { makingMacros.current = false; });
   }, [quiet, codeLib, mf, lang, outside, loaded, dbg, paths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => useAsmLink.getState().set({ macroFile: null }), []);
+  // what the editor shows of it: the file opened is a folded list of its macros (its code on request), and a source
+  // that imports it has the list under the import line, one line that unfolds (a view zone: what the user sees is not
+  // what the assembler reads)
+  const macroBuilt = useAsmLink(s => s.macroFile);
+  const [macroCode, setMacroCode] = useState(false);
+  const macroList = shownMacros && !macroCode && !!macroBuilt;
+  const [zoneOpen, setZoneOpen] = useState<Record<string, boolean>>({});
+  // (a view zone keeps the lines free; the list itself is an overlay widget over it, which takes the pointer: the
+  // editor's lines lie over a view zone's own nodes)
+  const zones = useRef<{ key: string; ids: string[]; roots: Root[]; widgets: Monaco.editor.IOverlayWidget[]; subs: Monaco.IDisposable[] }>({ key: '', ids: [], roots: [], widgets: [], subs: [] });
+  const clearZones = () => {
+    const z = zones.current, e = ed.current;
+    if (z.ids.length) e?.changeViewZones(a => { for (const id of z.ids) a.removeZone(id); });
+    for (const w of z.widgets) e?.removeOverlayWidget(w);
+    for (const s of z.subs) s.dispose();
+    // (unmounted after this render: a root is not unmounted while React renders)
+    const roots = z.roots;
+    if (roots.length) setTimeout(() => { for (const r of roots) r.unmount(); }, 0);
+    zones.current = { key: '', ids: [], roots: [], widgets: [], subs: [] };
+  };
+  useEffect(() => {
+    const e = ed.current, monaco = monacoRef.current, m = e?.getModel();
+    const p = shown;
+    if (!e || !monaco || !m || !mf || !macroBuilt || state !== 'ready' || !p || p === mf.file || !ASM_SOURCE.test(p) || pathOfUri(m.uri) !== p) { clearZones(); return; }
+    // the lines that import the file, by its path from this source's folder
+    const from = p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
+    const at: number[] = [];
+    m.getLinesContent().forEach((l, i) => {
+      const x = /^\s*(?:#import(?:once)?|\.include)\s+"([^"]+)"/.exec(l);
+      if (!x) return;
+      const parts: string[] = [];
+      for (const s of `${from}${x[1].replace(/\\/g, '/')}`.split('/')) { if (s === '..') parts.pop(); else if (s && s !== '.') parts.push(s); }
+      if (parts.join('/') === mf.file) at.push(i + 1);
+    });
+    const open = !!zoneOpen[p], lh = e.getOption(monaco.editor.EditorOption.lineHeight);
+    const key = `${p}\n${at.join(',')}\n${open}\n${lh}\n${macroBuilt.text}`;
+    if (key === zones.current.key) return;
+    clearZones();
+    if (!at.length) return;
+    const ids: string[] = [], roots: Root[] = [], widgets: Monaco.editor.IOverlayWidget[] = [], subs: Monaco.IDisposable[] = [];
+    e.changeViewZones(a => {
+      at.forEach((line, i) => {
+        const dom = document.createElement('div');
+        dom.className = 'am-zone-host';
+        const place = () => { const li = e.getLayoutInfo(); dom.style.left = `${li.contentLeft}px`; dom.style.width = `${Math.max(0, li.contentWidth - li.verticalScrollbarWidth)}px`; };
+        place();
+        const widget: Monaco.editor.IOverlayWidget = { getId: () => `mimir.macros.${i}`, getDomNode: () => dom, getPosition: () => null };
+        e.addOverlayWidget(widget);
+        widgets.push(widget);
+        subs.push(e.onDidLayoutChange(place));
+        const root = createRoot(dom);
+        root.render(<AsmMacroZone built={macroBuilt} file={mf.file} open={open} lineHeight={lh} onToggle={() => setZoneOpen(z => ({ ...z, [p]: !open }))} onOpenFile={() => openFile(mf.file)} />);
+        roots.push(root);
+        ids.push(a.addZone({
+          afterLineNumber: line, heightInPx: macroZoneRows(macroBuilt, open) * lh, domNode: document.createElement('div'),
+          onDomNodeTop: top => { dom.style.top = `${top}px`; }, onComputedHeight: h => { dom.style.height = `${h}px`; },
+        }));
+      });
+    });
+    zones.current = { key, ids, roots, widgets, subs };
+  }, [macroBuilt, mf, shown, state, zoneOpen, quiet]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => clearZones(), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     ed.current?.updateOptions({ readOnly: !!dbg || shownOutside || shownMacros, readOnlyMessage: { value: shownOutside ? `${foundOut.current[shown!] ?? shown} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : shownMacros ? `${shown} is built by Mimir from the macro library: change the macros there (Macros and code), or add one to it` : 'The program is being debugged: Stop to edit' } });
   }, [dbg, state, shownOutside, shownMacros, shown]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1629,8 +1693,14 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         <div className="scr-body">
           <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf} outside={outsideTabs}
             onShow={p => setShown(p)} onKeep={p => placeTab(p, true)} onClose={closeTabs} onMove={moveTab} onMenu={tabMenu} />
+          {shownMacros && <div className="am-bar small" role="note">
+            <Icon name="codelib" size={12} /><span>{macroList ? 'The macros Mimir puts in this file' : 'The code Mimir writes in this file, as the assembler reads it (read only)'}</span>
+            <span className="grow" />
+            <button type="button" className="btn small" onClick={() => setMacroCode(!macroList ? false : true)}>{macroList ? 'Show the code' : 'Show the list'}</button>
+          </div>}
           <div className="scr-edit-row" ref={editRow}>
-            <div className="mon-host scr-editor" ref={host} aria-label="Code" style={{ display: state === 'ready' && shownText ? 'block' : 'none' }} />
+            <div className="mon-host scr-editor" ref={host} aria-label="Code" style={{ display: state === 'ready' && shownText && !macroList ? 'block' : 'none' }} />
+            {macroList && macroBuilt && <AsmMacroPanel built={macroBuilt} file={mf!.file} />}
             {state === 'fallback' && shownText && <textarea className="fallback-code scr-fallback" aria-label="Code" value={shownOutside ? String(outside[shown!]) : texts[shown!]} readOnly={!!dbg || shownOutside} onChange={e => { const p = shown!; if (shownOutside) return; setTexts(t => ({ ...t, [p]: e.target.value })); schedule(p); }} />}
             {shown && !shownText && <div className="asm-binary" role="note">
               <Icon name={shownEntry?.dir ? 'folder' : fileIcon(shown)} size={28} />

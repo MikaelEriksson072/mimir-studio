@@ -39,12 +39,15 @@ describe('the project\'s macro file', () => {
   it('has the macros added, those the code calls, and those they use; a collection\'s own lines with its macros', () => {
     const main = '* = $1000\nstart:  WaitAndSet(100, 2)\n        rts\n';
     const b = codeLibProjectFile(lib, { macros: ['Black'], collections: [] }, [main], 'kickass', 'macros.asm');
-    expect(b.macros).toEqual([
-      { name: 'Black', in: null, why: 'added' },
-      { name: 'SetBorder', in: 'raster', why: 'used' },
-      { name: 'WaitAndSet', in: 'raster', why: 'called' },
-      { name: 'save', in: 'raster', why: 'used' },
+    expect(b.macros.map(({ name, in: i, why, sig }) => ({ name, in: i, why, sig }))).toEqual([
+      { name: 'Black', in: null, why: 'added', sig: 'Black()' },
+      { name: 'SetBorder', in: 'raster', why: 'used', sig: 'SetBorder(c)' },
+      { name: 'WaitAndSet', in: 'raster', why: 'called', sig: 'WaitAndSet(line, c)' },
+      { name: 'save', in: 'raster', why: 'used', sig: 'save()' },
     ]);
+    // what the editor shows of it: each macro's description and definition, the groups with their own lines
+    expect(b.macros[2]).toMatchObject({ description: 'Waits for a line, then the border', code: expect.stringMatching(/^\.macro WaitAndSet\(line, c\) \{\n/) });
+    expect(b.groups).toEqual([{ in: null, rest: '', macros: ['Black'] }, { in: 'raster', rest: '.const BORDER = $d020', macros: ['SetBorder', 'WaitAndSet', 'save'] }]);
     expect(b.missing).toEqual([]);
     expect(b.text).toBe([
       '// macros.asm: built by Mimir from the macro library (Macros and code) as this project\'s code calls its macros and as',
