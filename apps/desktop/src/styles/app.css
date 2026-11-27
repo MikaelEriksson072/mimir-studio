@@ -2297,6 +2297,12 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .monaco-editor .asm-blk.g-text { background: var(--g-text); }
 .monaco-editor .asm-blk.g-table { background: var(--g-table); }
 .monaco-editor .asm-blk.g-data, .monaco-editor .asm-blk.g-fill { background: var(--g-data); }
+/* a block's sprites, charset or bitmap drawn above its .byte lines (lib/asmgfx.ts): the picture, and its block's bar
+   beside it in the gutter */
+.asm-pic-host { position: absolute; pointer-events: auto; overflow: hidden; }
+.asm-pic { display: flex; flex-direction: column; align-items: flex-start; box-sizing: border-box; height: 100%; }
+.asm-pic .gfx-strip { cursor: pointer; }
+.asm-pic-margin::before { content: ''; position: absolute; top: 0; bottom: 0; left: calc(var(--bar-left, 0px) + 3px); width: 3px; border-radius: 1px; background: var(--g-gfx); }
 /* Insert block */
 .asm-block.modal { width: min(760px, 94vw); }
 .asm-block .modal-body { display: flex; flex-direction: column; gap: 10px; max-height: min(78vh, 760px); overflow: auto; }

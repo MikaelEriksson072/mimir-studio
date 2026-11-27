@@ -3984,6 +3984,29 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `apps/desktop/src/lib/selcount.ts`): ett makroanrop har de byte makrot skriver, en `.fill` eller en importerad binärfil
   sin rads; makrots egna rader skriver inget. Räknas om när kontrollen gjorts om; under en körning i debuggern efter den
   körda kontrollen, som *Cycles*.
+- **Grafik som bilder i editorn** (2026-11-27). Med *Settings → General → Show graphics as pictures in the listing and
+  the Assembler* på (som förut; kommandopaletten slår om den) ritas `.byte`-raderna i ett block märkt som sprites, ett
+  teckenset eller en bitmapp (*Insert block*, `// @block sprite` … `// @end`) som de ser ut, så som re-assemblerns
+  listning ritar samma block: samma bildrader (`GfxLine`, `gfxSpans` i `lib/gfxlines.ts`, och `GfxStrip`), sprites åtta
+  i bredd med adressen eller etiketten under sig, tecknen i rader efter skärmkod (32, 16 eller 8 så många som får plats),
+  en bitmapps 8000 första byte, i Graphics-flikens färger och flerfärg som märket säger (`multicolor`, `hires`), annars
+  som fönstrets analys VIC-bevis säger. Bilden är en vy-zon ovanför raderna den står för, och de raderna är dolda
+  (Monacos *hidden areas*, som dess vikning) medan markören inte står på någon av dem; blockets rand i marginalen går
+  förbi bilden. Vilka rader en bild tar in avgörs av kontrollen (varje bytes fil och rad, `asmPictures` i
+  `apps/desktop/src/lib/asmgfx.ts`): raderna i blocket som skriver dess byte i följd, med kommentarrader och tomma rader
+  mellan dem, och en sprites etikett där en sprite börjar (den står under spriten, som i listningen; en etikett före
+  den första raden står kvar och ger också namnet). Allt annat bryter bilden där och står kvar: ett teckensets eller en
+  bitmapps etikett, `* =`, `.align`, byte som inte följer på varandra. En rad som skriver en fils byte eller många på en
+  gång (`.import binary`, `.binary`, `.fill`) står kvar med bilden av sina byte under sig. Som i listningen ramas
+  föremålet under pekaren in och verktygstipset säger vad det är (en sprites pekare och vilka sprites som pekar på den)
+  och vilken rad som skriver det; ett klick väljer dess byte i fönstret (markören, statusraden, inspektorn, Graphics),
+  `Shift`+klick markerar fram till det, och fönstrets markering och markör syns i bilden. Ett dubbelklick sätter
+  markören på föremålets rad: bildens rader visas under bilden, som ritas om efter kontrollen medan man skriver, och
+  bilden hålls i bild ovanför raden när båda får plats. Ett hopp in bland raderna (F12 till en etikett, sök, ett
+  problem, ett bokmärke) visar dem likadant, och när markören lämnar dem döljs de igen. Medan man skriver väntar bilderna
+  på kontrollen av det som skrivits (Monaco flyttar det dolda och zonerna med texten under tiden). Test:
+  `apps/desktop/test/asmgfx.test.ts` (även att raderna blir desamma som listningens bilder av samma block) och e2e
+  *sprites and a charset in the Assembler drawn as pictures …*.
 - **Rita i den förstorade spriten eller tecknet, och i Graphics** (2026-11-25). I ett Assembler-projekt ritar man i
   inspektorns förstorade sprite eller tecken (14.1), och i Graphics-flikens tecken, sprites och bitmappar med *Draw* (en
   ruta under *Draw* bland vyns val; i flerfärg pennorna bredvid; `pixelAt` i `lib/gfxview.ts` ger byten och biten under

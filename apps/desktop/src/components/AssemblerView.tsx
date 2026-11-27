@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
+import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmBlockMark, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgLibdirs, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, splitLabel, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
@@ -37,6 +37,9 @@ import type { AsmLibMacro } from '../monaco/providers';
 import type { AsmMacroDefined } from '../store/asmlink';
 import { asmBookmarkSpan } from './AsmBookmarks';
 import { asmLineBytes, linesSelCount, selCountText } from '../lib/selcount';
+import { gfxColsFor, vicMc } from '../lib/gfxlines';
+import { asmHiddenRanges, asmPictureHeight, asmPictures, type AsmPicture } from '../lib/asmgfx';
+import { AsmPictureZone } from './AsmPictures';
 
 const kr = window.kr;
 type MonacoNs = typeof Monaco;
@@ -58,6 +61,9 @@ const DEBUG_SLICE = 400_000;
 const WRITE_MS = 500;
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** what Monaco's hidden areas of the pictures' lines are kept under (its folding has its own) */
+const PICTURE_LINES = 'mimir.pictures';
+const NO_SPRITES: readonly { addr: Addr; n: number }[] = [];
 /** a file's name in a path of the computer's (\ or /), as baseName is of a path in the folder */
 const fileName = (path: string) => path.replace(/^.*[\\/]/, '');
 /** `fn` on each of `items`, `n` at a time */
@@ -256,6 +262,9 @@ export interface AssemblerTabProps {
   onBookmarkSelect: (id: string) => void;
   onBookmarkLines: (moved: Record<string, { line: number; end?: number }>) => void;
   onBookmarksRenamed: (from: string, to: string) => void;
+  /** an item of a picture in the editor clicked (lib/asmgfx.ts): its bytes picked, as a click on one in the listing picks
+   *  them (`extend`: with Shift, the selection up to them) */
+  onPick: (c: { a: Addr; n: number }, extend: boolean) => void;
 }
 
 /** The Assembler tab of an Assembler project: its folder opened (listed, watched), then the files and the code. */
@@ -277,7 +286,7 @@ interface WorkspaceProps extends AssemblerTabProps {
   onFolder: (f: AsmFolder) => void;
 }
 
-function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease, toolArgs, onSettings, onBookmark, onBookmarkSelect, onBookmarkLines, onBookmarksRenamed }: WorkspaceProps) {
+function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onMenu, onRelease, toolArgs, onSettings, onBookmark, onBookmarkSelect, onBookmarkLines, onBookmarksRenamed, onPick }: WorkspaceProps) {
   const dir = folder.dir;
   const ui = useAssembler();
   const activeRef = useRef(active); activeRef.current = active;
@@ -1059,6 +1068,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const cmp = (x: { file: string; line: number }) => (here == null ? 1 : x.file.localeCompare(here) || x.line - line);
     const next = dir > 0 ? all.find(x => cmp(x.p) > 0) ?? all[0] : [...all].reverse().find(x => cmp(x.p) < 0) ?? all[all.length - 1];
     openFile(next.p.file, { line: next.p.line, keep: true });
+    // (in the file shown, the caret there at once: the next Alt+F2 goes on from it, also before the editor has shown it)
+    if (e && m && here === next.p.file) e.setPosition({ lineNumber: Math.min(next.p.line, m.getLineCount()), column: 1 });
     toast(`Bookmark ${asmBookmarkSpan(next.p)}: ${bmRef.current[next.id].title}`, 'info');
   };
   /** a click on a bookmark's mark: its note in the list */
@@ -1651,6 +1662,128 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     zones.current = { key, ids, roots, widgets, subs };
   }, [macroBuilt, mf, shown, state, zoneOpen, quiet]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => clearZones(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- pictures: the .byte lines of a block of sprites, a charset or a bitmap drawn as they look (lib/asmgfx.ts), as
+     the re-assembler's listing draws them when Settings → General → Show graphics as pictures is on. A picture is a
+     view zone above the lines it stands for, which are hidden while the caret is not on one of them ---- */
+  const gfxOn = useUi(s => s.gfxPictures);
+  const analysis = useAsmLink(s => s.analysis);
+  /** the room a picture has (the editor's width, in steps): how many characters and sprites a row */
+  const [picRoom, setPicRoom] = useState(0);
+  const picCols = gfxColsFor(picRoom || 1e9);
+  const pictures = useMemo(() => {
+    const text = shown ? quiet[shown] : undefined;
+    if (!gfxOn || !cycCheck || !shown || !ASM_SOURCE.test(shown) || typeof text !== 'string') return [];
+    // (multicolour as the mark says, else as the analysis's VIC evidence says: as the listing draws the block)
+    const mc = (m: AsmBlockMark, s: Addr, e: Addr) => m.props.mc ?? (analysis ? vicMc(analysis, m.kind, s, e) : false);
+    return asmPictures(cycCheck, shown, text, blocks.marks, lang, { mc, cols: { chars: picCols.chars, sprite: picCols.sprite } });
+  }, [gfxOn, cycCheck, shown, quiet, blocks, lang, analysis, picCols.chars, picCols.sprite]);
+  const picZones = useRef<{ key: string; ids: string[]; roots: Root[]; widgets: Monaco.editor.IOverlayWidget[]; subs: Monaco.IDisposable[] }>({ key: '', ids: [], roots: [], widgets: [], subs: [] });
+  /** the pictures in the editor, the model and its version they were made for (typed since: Monaco moves what it hides
+   *  and the zones with the text, the pictures' line numbers wait for the check of it), the lines hidden */
+  const picState = useRef<{ list: AsmPicture[]; model: Monaco.editor.ITextModel | null; version: number; hidden: string }>({ list: [], model: null, version: -1, hidden: '' });
+  const clearPicZones = () => {
+    const z = picZones.current, e = ed.current;
+    if (z.ids.length) e?.changeViewZones(a => { for (const id of z.ids) a.removeZone(id); });
+    for (const w of z.widgets) e?.removeOverlayWidget(w);
+    for (const s of z.subs) s.dispose();
+    const roots = z.roots;
+    if (roots.length) setTimeout(() => { for (const r of roots) r.unmount(); }, 0);
+    picZones.current = { key: '', ids: [], roots: [], widgets: [], subs: [] };
+  };
+  /** the lines of the pictures the caret is not on, hidden (Monaco's own hidden areas, as its folding has them) */
+  const hidePictureLines = () => {
+    const e = ed.current, m = e?.getModel(), s = picState.current;
+    if (!e || !m) return;
+    if (s.model === m && m.getVersionId() !== s.version) return;
+    const carets = (e.getSelections() ?? []).map(x => x.positionLineNumber);
+    const ranges = s.model === m ? asmHiddenRanges(s.list, carets) : [];
+    const key = JSON.stringify(ranges);
+    if (key === s.hidden) return;
+    const opened = s.list.some(p => p.from <= p.to && carets.some(n => n >= p.from && n <= p.to));
+    s.hidden = key;
+    (e as unknown as { setHiddenAreas(r: Monaco.IRange[], source?: unknown): void }).setHiddenAreas(ranges, PICTURE_LINES);
+    // (the caret put on a picture's line: that line in view, with the picture above it when both fit, so what is
+    // typed is seen drawn)
+    const at = e.getPosition(), p = at && opened ? s.list.find(x => x.from <= x.to && at.lineNumber >= x.from && at.lineNumber <= x.to) : null;
+    if (!at || !p) return;
+    const lh = monacoRef.current ? e.getOption(monacoRef.current.editor.EditorOption.lineHeight) : 20, view = e.getLayoutInfo().height, st = e.getScrollTop();
+    const top = e.getTopForLineNumber(at.lineNumber), zone = e.getTopForLineNumber(p.from) - asmPictureHeight(p);
+    if (top >= st && top + lh <= st + view && zone >= st) return;
+    if (top + lh - zone + lh <= view) e.setScrollTop(Math.max(0, zone - lh)); else e.revealPositionInCenter(at);
+  };
+  const hideRef = useRef(hidePictureLines); hideRef.current = hidePictureLines;
+  const pickRef = useRef(onPick); pickRef.current = onPick;
+  useEffect(() => {
+    const e = ed.current, monaco = monacoRef.current;
+    if (state !== 'ready' || !e || !monaco) return;
+    const room = () => { const li = e.getLayoutInfo(); setPicRoom(Math.max(0, Math.floor((li.contentWidth - li.verticalScrollbarWidth - 90) / 16) * 16)); };
+    room();
+    const subs = [
+      e.onDidChangeCursorSelection(() => hideRef.current()),
+      // (another file: its view starts with nothing hidden and no zones)
+      e.onDidChangeModel(() => { picState.current = { list: [], model: null, version: -1, hidden: '' }; picZones.current.key = ''; }),
+      e.onDidLayoutChange(room),
+    ];
+    return () => subs.forEach(s => s.dispose());
+  }, [state]);
+  useEffect(() => {
+    const e = ed.current, monaco = monacoRef.current, m = e?.getModel();
+    if (!e || !monaco || !m || state !== 'ready' || !shown || pathOfUri(m.uri) !== shown || !pictures.length) {
+      clearPicZones();
+      picState.current = { ...picState.current, list: [], model: m ?? null, version: m?.getVersionId() ?? -1 };
+      hideRef.current();
+      return;
+    }
+    // (made for the text the check had: typed since, they wait for the check of it; Monaco makes a file's line ends one kind)
+    if (m.getValue(monaco.editor.EndOfLinePreference.LF) !== (quiet[shown] ?? '').replace(/\r\n?/g, '\n')) return;
+    picState.current = { ...picState.current, list: pictures, model: m, version: m.getVersionId() };
+    const mem = cycCheck?.asm.mem ?? new Uint8Array(0x10000), sprites = analysis?.vic.sprites ?? NO_SPRITES;
+    const ch = e.getOption(monaco.editor.EditorOption.fontInfo).typicalHalfwidthCharacterWidth;
+    /** where a picture starts: under the text of its lines (their indent) */
+    const indent = (p: AsmPicture) => {
+      const t = m.getLineContent(Math.min(m.getLineCount(), Math.max(1, p.from <= p.to ? p.from : p.after)));
+      let col = 0;
+      for (const c of t) { if (c === ' ') col++; else if (c === '\t') col += 8 - (col % 8); else break; }
+      return Math.round(col * ch);
+    };
+    const zone = (p: AsmPicture) => <AsmPictureZone p={p} mem={mem} sprites={sprites} onPick={(c, extend) => pickRef.current(c, extend)}
+      onOpen={line => { e.setPosition({ lineNumber: line, column: m.getLineFirstNonWhitespaceColumn(line) || 1 }); e.focus(); }} />;
+    const key = `${shown}\n${pictures.map(p => `${p.after}:${asmPictureHeight(p)}:${indent(p)}`).join(',')}`;
+    const z = picZones.current;
+    if (key === z.key) { pictures.forEach((p, i) => z.roots[i]?.render(zone(p))); hideRef.current(); return; }
+    clearPicZones();
+    const ids: string[] = [], roots: Root[] = [], widgets: Monaco.editor.IOverlayWidget[] = [], subs: Monaco.IDisposable[] = [];
+    e.changeViewZones(a => {
+      pictures.forEach((p, i) => {
+        const dom = document.createElement('div'), left = indent(p);
+        dom.className = 'asm-pic-host';
+        const place = () => { const li = e.getLayoutInfo(); dom.style.left = `${li.contentLeft + left}px`; dom.style.width = `${Math.max(0, li.contentWidth - li.verticalScrollbarWidth - left)}px`; };
+        place();
+        // (the editor's lines lie over a view zone's own nodes: the picture is an overlay widget over it, which takes the pointer)
+        const widget: Monaco.editor.IOverlayWidget = { getId: () => `mimir.picture.${i}`, getDomNode: () => dom, getPosition: () => null };
+        e.addOverlayWidget(widget);
+        widgets.push(widget);
+        subs.push(e.onDidLayoutChange(place));
+        const root = createRoot(dom);
+        root.render(zone(p));
+        roots.push(root);
+        // the block's bar beside it, as beside its lines
+        const margin = document.createElement('div');
+        margin.className = 'asm-pic-margin';
+        margin.style.setProperty('--bar-left', `${e.getLayoutInfo().decorationsLeft}px`);
+        // (shown though the line after it is hidden: Monaco hides a zone above hidden lines)
+        ids.push(a.addZone({
+          afterLineNumber: p.after, heightInPx: asmPictureHeight(p), domNode: document.createElement('div'), marginDomNode: margin, showInHiddenAreas: true,
+          onDomNodeTop: top => { dom.style.top = `${top}px`; }, onComputedHeight: h => { dom.style.height = `${h}px`; },
+        }));
+      });
+    });
+    picZones.current = { key, ids, roots, widgets, subs };
+    hideRef.current();
+  }, [pictures, state, shown, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => clearPicZones(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // the macro library's macros in the editor's suggestions (those the project's sources define themselves left out);
   // one chosen goes in the macro file: it is made with it when the project has none, added when the calls are off
   const macroFileOf = () => `${main?.includes('/') ? main.slice(0, main.lastIndexOf('/') + 1) : ''}macros.asm`;

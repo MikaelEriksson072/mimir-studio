@@ -167,7 +167,7 @@ const NO_ASM_BOOKMARKS: Record<string, AsmBookmark> = {};
 const ALL_LOADED = new Int16Array(0x10000);
 /** an Assembler project's commands: those that are not of the analysis, the re-assembly or the listing (its own Run,
  *  Build and Debug come first) */
-const ASM_COMMANDS = new Set(['mount', 'tape', 'side-panel', 'inspector-show', 'inspector-mode', 'panel', 'library-show', 'library-add', 'save', 'save-copy', 'openproj', 'reveal', 'start-screen', 'settings', 'theme', 'undo', 'redo', 'tab-gfx', 'tab-mem', 'tab-scripts', 'script-full', 'tab-git', 'script-new', 'tab-spec', 'pack-view', 'pack-run', 'pack-save']);
+const ASM_COMMANDS = new Set(['mount', 'tape', 'side-panel', 'inspector-show', 'inspector-mode', 'panel', 'library-show', 'library-add', 'save', 'save-copy', 'openproj', 'reveal', 'start-screen', 'settings', 'theme', 'undo', 'redo', 'tab-gfx', 'tab-mem', 'tab-scripts', 'script-full', 'tab-git', 'script-new', 'tab-spec', 'pack-view', 'pack-run', 'pack-save', 'gfx-pictures']);
 
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
 type Note = { text: string; n: number };
@@ -238,6 +238,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   // an Assembler project's C64 checks (spec 10.7): what the analysis sees that the assembler cannot, to the Assembler tab
   const asmNotes = useMemo(() => (asmMode && A.files.length ? asmC64Notes(A) : []), [asmMode, A]);
   useEffect(() => { useAsmLink.getState().set({ notes: asmNotes }); }, [asmNotes]);
+  // (the analysis itself: the pictures in its editor are drawn multicolour as its VIC evidence says)
+  useEffect(() => { useAsmLink.getState().set({ analysis: asmMode && A.files.length ? A : null }); }, [asmMode, A]);
   const past = useProject(s => s.past), future = useProject(s => s.future), home = useProject(s => s.home);
   const { update, replace, undo, redo, enter, setHome } = useProject.getState();
   /** analysis settings from the project, toolchain paths from the app */
@@ -263,6 +265,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [srcPath, setSrcPath] = useState<string | null>(null);
   const [cursor, setCursor] = useState<Addr | null>(null);
   const [sel, setSel] = useState<Sel | null>(null);
+  // (an Assembler project: the pictures in its editor show what is picked, as the listing's do)
+  const selStart = sel?.start ?? null, selEnd = sel?.end ?? null;
+  useEffect(() => { if (asmMode) useAsmLink.getState().set({ place: { cursor, sel: selStart != null && selEnd != null ? { start: selStart, end: selEnd } : null } }); }, [asmMode, cursor, selStart, selEnd]);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
   /** the page Settings opens at this time (the Assembler's settings button: Assembler project); none: the one it was last on */
@@ -4504,7 +4509,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-listing', label: 'Show listing', run: () => setUi({ tab: 'listing' }) },
     { id: 'tab-drive', label: 'Show the drive code: the code for the 1541 the program uploads, re-assembled where it runs in the drive', run: () => setUi({ tab: 'drive' }) },
     { id: 'cycles', label: cycles ? 'Listing: hide cycle counts' : 'Listing: show cycle counts (6510 cycles per instruction; select a range or block to count it)', run: () => setUi({ cycles: !cycles, tab: 'listing' }) },
-    { id: 'gfx-pictures', label: gfxPictures ? 'Listing: show sprites, charsets and bitmaps as .byte rows' : 'Listing: show sprites, charsets and bitmaps as pictures', run: () => setUi({ gfxPictures: !gfxPictures, tab: 'listing' }) },
+    { id: 'gfx-pictures', label: asmMode ? (gfxPictures ? 'Assembler: show the .byte lines of sprites, charsets and bitmaps as text' : 'Assembler: draw the .byte lines of sprites, charsets and bitmaps as pictures')
+      : gfxPictures ? 'Listing: show sprites, charsets and bitmaps as .byte rows' : 'Listing: show sprites, charsets and bitmaps as pictures', run: () => setUi({ gfxPictures: !gfxPictures, tab: asmMode ? 'asm' : 'listing' }) },
     { id: 'data-as-code', label: dataAsCode ? 'Listing: show data as classified' : 'Listing: show data as code (find code that is marked as data)', run: () => setUi({ dataAsCode: !dataAsCode, tab: 'listing' }) },
     { id: 'offsets', label: offsets ? 'Listing: hide the offset in the file' : 'Listing: show the offset in the file (as SourceGen)', run: () => setUi({ offsets: !offsets }) },
     { id: 'text-cols', label: textCols ? 'Listing: hide the Text columns' : 'Listing: show each line\'s bytes as PETSCII and as screen codes (Text columns; with Data as code, every block as code with its text)', key: 'V', run: () => setUi({ textCols: !textCols, tab: 'listing' }) },
@@ -5255,6 +5261,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           <ErrorBoundary>
             {asmMode && home && stored.asm && <AssemblerTab key={home.dir} dir={home.dir} name={home.name} info={stored.asm} active={tab === 'asm'} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })} onRelease={() => setAsmRelease(true)}
               toolArgs={{ kick: toolchain.kickArgs, tass: toolchain.tassArgs }} onSettings={asmSettings}
+              // (an item clicked before the analysis has the program the check drew it from: nothing to go to yet)
+              onPick={(c, extend) => { if (A.owner[c.a] >= 0) pickCell(c, extend && cursor != null); }}
               onBookmark={openAsmBookmark} onBookmarkSelect={id => { setAsmBmSel(id); showBookmarks(); }} onBookmarkLines={moveAsmBookmarks} onBookmarksRenamed={renameAsmBookmarks}
               onInfo={(label, c) => update(label, d => { if (d.asm) Object.assign(d.asm, c); })} />}
             {tab === 'listing' && !project.files.length && <div className="empty-project">

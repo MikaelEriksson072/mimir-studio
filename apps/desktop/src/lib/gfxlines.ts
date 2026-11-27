@@ -134,7 +134,7 @@ export function gfxRects(l: GfxLine, start: Addr, end: Addr): { x: number; y: nu
 
 /** What item `k` is, for its tooltip: a character's screen code (in its 2 KB, as the VIC counts them), a sprite's
  *  pointer and the sprites that point to it, a bitmap cell's column and row. */
-export function gfxItemText(A: AnalysisResult, l: GfxLine, k: number): string {
+export function gfxItemText(A: { vic: { sprites: readonly { addr: Addr; n: number }[] } }, l: GfxLine, k: number): string {
   const { a, n } = itemCell(l, k), span = n > 1 ? `$${h4(a)}–$${h4(a + n - 1)}` : `$${h4(a)}`;
   const part = n < l.unit ? ` · ${n} of its ${l.unit} bytes` : '';
   if (l.kind === 'chars') return `Character $${((a & 0x7ff) >> 3).toString(16).padStart(2, '0')} · ${span}${part}`;
@@ -178,6 +178,22 @@ export function gfxColsFor(room: number): Partial<Record<GfxKind, number>> {
   return { chars: room >= 512 ? 32 : room >= 256 ? 16 : 8, sprite: Math.max(1, Math.min(8, Math.floor((room + GFX_GEOMETRY.sprite.gap * 2) / step))) };
 }
 
+/** The picture lines bytes `start`..`end` of a block of `kind` (starting at `blk`) are drawn as, `cols` items a row: a
+ *  bitmap whole (from the cell its first byte is in); a charset's rows hold the characters whose screen codes share it
+ *  ($00-$1f, $20-$3f …); sprites start each row anew. `col`: the column its first item is in. */
+export function gfxSpans(kind: GfxKind, blk: Addr, start: Addr, end: Addr, cols: number): { s: Addr; e: Addr; col: number }[] {
+  const unit = GFX_GEOMETRY[kind].unit, aligned = (start - blk) % unit === 0;
+  if (kind === 'bitmap') return [{ s: start, e: end, col: aligned ? ((start - blk) >> 3) % 40 : 0 }];
+  const out: { s: Addr; e: Addr; col: number }[] = [];
+  let p = start, col = kind === 'chars' && aligned && !(start & 7) ? ((start & 0x7ff) >> 3) % cols : 0;
+  while (p < end) {
+    const e = Math.min(end, p + (cols - col) * unit);
+    out.push({ s: p, e, col });
+    p = e; col = 0;
+  }
+  return out;
+}
+
 /** The listing's lines with the .byte rows of every sprite, charset and bitmap block drawn as pictures, and each
  *  line's number in its .asm file (a picture: the first row it stands for; its room: 0). Blocks shown as code (Data as
  *  code) stay as they are. `cols`: how many characters and sprites a row (gfxColsFor; GFX_GEOMETRY by default). */
@@ -210,15 +226,7 @@ export function gfxListing(all: readonly ListingLine[], A: AnalysisResult, cols:
       for (let k = 1; k < l.rows; k++) keep({ ...l, n: 0, pad: true, cmt: undefined, cmtAt: undefined, names: undefined }, 0);
       for (const x of r.after) if (x.l.a >= s && (x.l.a < e || e === r.end)) keep(x.l, x.num);
     };
-    const aligned = (r.start - b.start) % g.unit === 0;
-    if (kind === 'bitmap') { push(r.start, r.end, aligned ? ((r.start - b.start) >> 3) % 40 : 0); return; }
-    // a charset row holds the characters whose screen codes share it ($00-$1f, $20-$3f …); sprites start each row anew
-    let p = r.start, col = kind === 'chars' && aligned && !(r.start & 7) ? ((r.start & 0x7ff) >> 3) % g.cols : 0;
-    while (p < r.end) {
-      const e = Math.min(r.end, p + (g.cols - col) * g.unit);
-      push(p, e, col);
-      p = e; col = 0;
-    }
+    for (const s of gfxSpans(kind, b.start, r.start, r.end, g.cols)) push(s.s, s.e, s.col);
   };
   all.forEach((l, i) => {
     if (l.k === 'hdr' || l.k === 'file') {

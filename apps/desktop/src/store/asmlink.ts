@@ -3,7 +3,7 @@
  * Graphics, Memory, the inspector and the Explorer, show it); the window asks it to show an address's line in the
  * sources, to run or build, and to write what is not written yet before the window closes or the project does. */
 import { create } from 'zustand';
-import type { Addr, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram, CodeLibBuilt, CodeLibKind, ScriptLang } from '@mimir/core';
+import type { Addr, AnalysisResult, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram, CodeLibBuilt, CodeLibKind, ScriptLang } from '@mimir/core';
 import type { LibraryRef } from './library';
 
 /** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
@@ -68,6 +68,10 @@ interface AsmLinkState {
   selection: { file: string; from: number; to: number } | null;
   /** the C64 checks of the program (the window's analysis of it: asmC64Notes) */
   notes: AsmC64Note[];
+  /** the window's analysis of the program (null: none yet), and its cursor and selection: the pictures in the editor
+   *  (lib/asmgfx.ts) are drawn multicolour as its VIC evidence says, name its sprite pointers, and show what is picked */
+  analysis: AnalysisResult | null;
+  place: { cursor: Addr | null; sel: { start: Addr; end: Addr } | null };
   /** the memory of the program being debugged (Memory and Graphics show it while it is): its RAM, where it stopped (or
    *  runs: `running`), that line, whether it is the whole C64; `n` tells one from the next. Null: not debugging */
   live: AsmLive | null;
@@ -85,11 +89,12 @@ interface AsmLinkState {
 const none = () => Promise.resolve();
 const noBuild = () => Promise.resolve(null);
 /** no folder open: no text files, no caret */
+const NO_PLACE = { cursor: null, sel: null };
 const NO_TEXT = { textFiles: [], linesOf: () => null, titleAt: (file: string, line: number) => `${file}:${line}`, macroDefined: () => null, macroFile: null, caret: null, selection: null };
 export const useAsmLink = create<AsmLinkState>(set => ({
-  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], live: null, flush: none, buildPrg: noBuild,
+  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], analysis: null, place: NO_PLACE, live: null, flush: none, buildPrg: noBuild,
   set: p => set(p),
   request: (what, o) => set(s => ({ ask: { what, n: (s.ask?.n ?? 0) + 1, ...o } })),
   showAddr: addr => set(s => ({ show: { addr, n: (s.show?.n ?? 0) + 1 } })),
-  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], live: null, flush: none, buildPrg: noBuild }),
+  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, sources: [], found: null, ...NO_TEXT, notes: [], analysis: null, place: NO_PLACE, live: null, flush: none, buildPrg: noBuild }),
 }));

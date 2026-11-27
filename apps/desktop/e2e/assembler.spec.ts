@@ -1474,3 +1474,92 @@ test('macros imported from outside the project\'s folder: by a path of their own
   await expect.poll(() => editorText(page)).toContain('.byte nothere');
   await closeProject(page, 'outside');
 });
+
+test('sprites and a charset in the Assembler drawn as pictures, as the re-assembler\'s listing draws them: their .byte lines hidden while the caret is not on one, a click picks a sprite, a double-click shows the lines to edit, off in Settings', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'pics');
+  mkdirSync(dir);
+  const rows = (r: string) => Array.from({ length: 21 }, () => `        .byte ${r}`);
+  const chars = Array.from({ length: 16 }, (_, i) => `        .byte ${Array.from({ length: 8 }, (_, k) => (k === i % 8 ? '$ff' : '$00')).join(', ')}`);
+  writeFileSync(join(dir, 'main.asm'), [
+    'BasicUpstart2(start)', 'start:  rts', '        * = $2000 "sprites"', '// @block sprite hires', 'ship:', ...rows('%11111111, %00000000, %11111111'), '        .byte 0',
+    'rock:', ...rows('%00011000, %00111100, %00011000'), '        .byte 0', '// @end',
+    '        * = $3000 "font"', '// @block charset', 'font:', ...chars, '// @end', 'after:  .byte 1', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const editor = page.locator('.scr-editor .view-lines');
+  // lines 6-50 (both sprites, rock: in it as the second one's name), lines 55-70 (the 16 characters)
+  const sprites = page.getByRole('group', { name: 'Sprites $2000–$207f, lines 6–50' });
+  const font = page.getByRole('group', { name: 'Characters $3000–$307f, lines 55–70' });
+  await expect(sprites).toBeVisible({ timeout: 15_000 });
+  await expect(font).toBeVisible();
+  await expect.poll(() => editorText(page)).not.toContain('%11111111');
+  const text = await editorText(page);
+  expect(text).toContain('ship:');
+  expect(text).not.toContain('rock:');
+  expect(text).toContain('font:');
+  expect(text).toContain('after:  .byte 1');
+  // under its label, above the @end; the sprites' names under them, as in the listing
+  const at = async (t: string) => (await editor.locator('.view-line', { hasText: t }).first().boundingBox())!;
+  const box = (await sprites.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual((await at('ship:')).y + 10);
+  expect(box.y + box.height).toBeLessThanOrEqual((await at('// @end')).y + 2);
+  await expect(sprites.locator('.gfx-cap')).toHaveText(['ship', 'rock']);
+  // drawn as the bytes are: ship's first byte set, its second not
+  const pixel = (x: number, y: number) => sprites.locator('canvas').first().evaluate((c: HTMLCanvasElement, [x, y]) => [...c.getContext('2d')!.getImageData(x, y, 1, 1).data].join(','), [x, y]);
+  expect(await pixel(0, 0)).not.toBe(await pixel(8, 0));
+  expect(await pixel(16, 0)).toBe(await pixel(0, 0));
+  await shot(page, '23-asm-pictures');
+
+  // a click on rock: its bytes picked, as in the listing (framed; the window's cursor on it, the inspector's sprite)
+  const canvas = sprites.locator('canvas').first(), cb = (await canvas.boundingBox())!;
+  // (the picture comes from the editor's check, the window's analysis of the program a moment later: until then a
+  // click picks nothing)
+  await expect(async () => {
+    await page.mouse.click(cb.x + (29 + 12) * 2, cb.y + 10 * 2);
+    await expect(page.locator('.statusbar')).toContainText(/\$2040 · rock · Sprite/, { timeout: 1000 });
+  }).toPass({ timeout: 30_000 });
+  await expect(sprites.locator('.gfx-cur')).toBeVisible();
+  // (the lines stay hidden: the editor's caret did not move)
+  expect(await editorText(page)).not.toContain('rock:');
+  // its tooltip says what it is and its line
+  await canvas.hover({ position: { x: (29 + 12) * 2, y: 10 * 2 } });
+  await expect(canvas.locator('..')).toHaveAttribute('title', /^Sprite rock · \$2040–\$207f · pointer \$81.* · line 29 · a double-click shows the lines$/);
+
+  // a double-click on ship: the caret on its first line, the picture's lines shown under it, the picture in view above
+  // them
+  await page.mouse.dblclick(cb.x + 12 * 2, cb.y + 10 * 2);
+  await expect.poll(() => editorText(page)).toContain('%11111111, %00000000, %11111111');
+  await expect(sprites).toBeInViewport();
+  expect((await sprites.boundingBox())!.y).toBeLessThan((await at('%11111111, %00000000, %11111111')).y);
+  // typed: drawn again (ship's first row all set)
+  const before = await pixel(8, 0);
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Shift+End');
+  await page.keyboard.type('        .byte %11111111, %11111111, %11111111');
+  await expect.poll(() => pixel(8, 0), { timeout: 10_000 }).not.toBe(before);
+  await expect.poll(() => readFileSync(join(dir, 'main.asm'), 'utf8').split('\n')[5], { timeout: 5000 }).toBe('        .byte %11111111, %11111111, %11111111');
+  await shot(page, '24-asm-picture-open');
+  // the caret off them: hidden again
+  await page.keyboard.press('Control+End');
+  await expect.poll(() => editorText(page)).not.toContain('%00011000');
+
+  // Settings → General turns the pictures off: the lines are back
+  await page.getByRole('button', { name: 'Assembler project settings' }).click();
+  await page.getByRole('tab', { name: 'General' }).click();
+  await page.getByLabel(/Show graphics as pictures in the listing and the Assembler/).uncheck();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(sprites).toHaveCount(0);
+  await expect(font).toHaveCount(0);
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('Control+Home');
+  await expect.poll(() => editorText(page)).toContain('%11111111, %00000000, %11111111');
+  // (and on again, for the other tests)
+  await page.getByRole('button', { name: 'Assembler project settings' }).click();
+  await page.getByRole('tab', { name: 'General' }).click();
+  await page.getByLabel(/Show graphics as pictures in the listing and the Assembler/).check();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(sprites).toBeVisible();
+  await closeProject(page, 'pics');
+});
