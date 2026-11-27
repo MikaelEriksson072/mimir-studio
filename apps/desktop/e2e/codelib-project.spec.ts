@@ -184,6 +184,11 @@ test('the macro library\'s macros in the Assembler\'s suggestions: one chosen is
   await page.keyboard.press('Backspace');
   await page.keyboard.type('SetB');
   await expect(suggest.locator('.monaco-list-row .label-name')).toHaveText(['SetBorder']);
+  // its description beside it from the start (no Ctrl+Space), and what choosing it does
+  const details = page.locator('.suggest-details-container .suggest-details');
+  await expect(details).toBeVisible();
+  await expect(details).toContainText('Sets the border\'s colour');
+  await expect(details).toContainText('Chosen, Mimir builds macros.asm with it');
   await shot(page, '48-codelib-suggest');
   // Tab takes it: the call with its parameter selected to type over
   await page.keyboard.press('Tab');

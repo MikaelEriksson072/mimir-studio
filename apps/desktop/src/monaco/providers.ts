@@ -189,6 +189,21 @@ export function registerProviders(monaco: typeof Monaco): void {
   // a script's code: what fits where the cursor is (scriptSuggestions); Tab takes one, Enter always ends the line
   // (a library macro chosen: the project gets it)
   monaco.editor.registerCommand(USE_MACRO_CMD, (_: unknown, name: string) => asmContext.useMacro(name));
+  // the suggestions' details (a library macro's description and what choosing it does, a name's address) open from the
+  // start, not only after Ctrl+Space: Monaco keeps that in its storage, one for all its editors, so it is set once, by
+  // the first editor's suggestion box (Ctrl+Space still closes them, and they stay closed then)
+  let detailsOpen = false;
+  monaco.editor.onDidCreateEditor(ed => {
+    if (detailsOpen) return;
+    setTimeout(() => {
+      if (detailsOpen) return;
+      try {
+        const c = ed.getContribution('editor.contrib.suggestController') as unknown as { widget?: { value?: { _isDetailsVisible?: () => boolean; _setDetailsVisible?: (on: boolean) => void } } } | null;
+        const w = c?.widget?.value;
+        if (w?._setDetailsVisible) { if (!w._isDetailsVisible?.()) w._setDetailsVisible(true); detailsOpen = true; }
+      } catch { /* (another Monaco: the details open with Ctrl+Space as before) */ }
+    }, 0);
+  });
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerCompletionItemProvider(lang, {
     // (`#`: a 64tass macro's call starts with it)
     triggerCharacters: lang === TASS64 ? ['.', '#'] : ['.'],
@@ -208,7 +223,8 @@ export function registerProviders(monaco: typeof Monaco): void {
         label, kind: m.how === 'function' || m.how === 'sfunction' ? K.Function : K.Module, insertText: insert, insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
         range: new monaco.Range(pos.lineNumber, w.startColumn, pos.lineNumber, w.endColumn), sortText: `35${label}`, filterText: label,
         detail: `${m.sig} — ${m.in ? `from ${m.in}, ` : ''}macro library`,
-        documentation: { value: `**${m.sig}**\n\n${m.description ? m.description.replace(/\n/g, '  \n') : '_No description._'}\n\n_${m.note}_` },
+        // (its call is the details' first line: the detail)
+        documentation: { value: `${m.description ? m.description.replace(/\n/g, '  \n') : '_No description._'}\n\n_${m.note}_` },
         command: { id: USE_MACRO_CMD, title: 'Use the library macro', arguments: [m.name] },
       })) : [];
       // (a `#` typed: only the macros, never every name for an immediate operand)
