@@ -50,7 +50,7 @@ describe('the project\'s macro file', () => {
     ]);
     // what the editor shows of it: each macro's description and definition, the files with their own lines
     expect(b.macros[2]).toMatchObject({ description: 'Waits for a line, then the border', code: expect.stringMatching(/^\.macro WaitAndSet\(line, c\) \{\n/) });
-    expect(b.groups).toEqual([{ in: 'Black', rest: '', macros: ['Black'] }, { in: 'raster', rest: '.const BORDER = $d020', macros: ['SetBorder', 'WaitAndSet', 'save', 'Unused'] }]);
+    expect(b.groups).toEqual([{ in: 'Black', rest: '', macros: ['Black'], collection: false }, { in: 'raster', rest: '.const BORDER = $d020', macros: ['SetBorder', 'WaitAndSet', 'save', 'Unused'], collection: true }]);
     expect(b.missing).toEqual([]);
     expect(b.text).toBe([
       '// macros.asm: built by Mimir from the macro library (Macros and code): the files of macros this project uses, all of',

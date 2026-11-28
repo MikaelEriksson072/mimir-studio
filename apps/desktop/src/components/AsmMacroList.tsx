@@ -1,6 +1,6 @@
 /* The project's macro file as the editor shows it (spec 10.8): not the code Mimir writes in it (what the assembler reads)
  * but a folded list of its macros, each by its name and its parameters, under the file it is from; pointing at one
- * shows its description. In the source, under the line that imports the file, the list is one line that unfolds
+ * shows its description. In the source, under the line that imports the file, the list is one line (the file, how many, the collections' names) that unfolds
  * (`zone`: Monaco's view zone, a line high each row); the file itself opened is the list as a page (`panel`), a click
  * on a macro unfolding its code. */
 import { useState } from 'react';
@@ -16,13 +16,15 @@ const groupName = (g: CodeLibBuilt['groups'][number]) => g.in ?? 'macros of thei
 /** how many rows the list in the source is, folded or not (its view zone's height in lines) */
 export const macroZoneRows = (b: CodeLibBuilt, open: boolean) => 1 + (open ? b.groups.length + b.macros.length : 0);
 
-/** The list under the line that imports the macro file: one line (the file, how many, the calls) that unfolds on a
+/** The list under the line that imports the macro file: one line (the file, how many, the names of the collections in
+ *  it, none when there are only macros of their own: not every macro, a list too long for one line) that unfolds on a
  *  click to the macros under their collections; pointing at a macro puts its description on the first line. */
 export function AsmMacroZone({ built, file, open, lineHeight, onToggle, onOpenFile }: { built: CodeLibBuilt; file: string; open: boolean; lineHeight: number; onToggle: () => void; onOpenFile: () => void }) {
   const [hover, setHover] = useState<CodeLibBuiltMacro | null>(null);
   const by = new Map(built.macros.map(m => [m.name, m]));
   const row = { height: lineHeight, lineHeight: `${lineHeight}px` };
   const n = built.macros.length;
+  const colls = built.groups.filter(g => g.collection && g.in).map(g => g.in!);
   return (
     <div className="am-zone" role="region" aria-label={`The macros of ${file}`} onMouseLeave={() => setHover(null)}>
       <div className="am-zone-head" style={row}>
@@ -30,7 +32,7 @@ export function AsmMacroZone({ built, file, open, lineHeight, onToggle, onOpenFi
           <Icon name="chevron" size={10} className={cx('cl-chev', open && 'on')} /></button>
         {hover ? <span className="am-desc" title={tipOf(hover)}><b className="mono">{hover.sig}</b> {hover.description ? hover.description.split('\n')[0] : <i>no description</i>}</span>
           : <span className="am-sum" onClick={onToggle}>
-            <span className="mono">{file.split('/').pop()}</span> · {n} macro{n === 1 ? '' : 's'}{!open && n > 0 && <span className="mono am-names">: {built.macros.map(m => m.sig).join('  ')}</span>}
+            <span className="mono">{file.split('/').pop()}</span> · {n} macro{n === 1 ? '' : 's'}{!open && colls.length > 0 && <span className="mono am-names" title={`The collection${colls.length === 1 ? '' : 's'} in it: ${colls.join(', ')}`}>: {colls.join(', ')}</span>}
           </span>}
         <button type="button" className="am-open" title={`Open ${file}: the list, and the code Mimir writes`} onClick={onOpenFile}><Icon name="doc" size={11} /></button>
       </div>

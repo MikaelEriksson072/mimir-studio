@@ -101,11 +101,12 @@ test('the project\'s macro file: built from the library as the code calls its ma
   await expect.poll(file).toContain('.macro WaitAndSet');
   await expect(page.locator('.scr-check')).toContainText('Ready');
 
-  // in the source, under the line that imports it: a folded list of the macros by name and parameters; pointing at one
-  // shows its description
+  // in the source, under the line that imports it: a folded list, its line the file, how many and the collections in
+  // it (raster; Black is a macro of its own), not every macro; unfolded the macros by name and parameters, pointing at
+  // one shows its description
   // (Monaco keeps its view zones out of the accessibility tree: found by their look)
   const zone = page.locator('.scr-editor .am-zone');
-  await expect(zone).toContainText('macros.asm · 4 macros: Black()  SetBorder(c)  WaitAndSet(line, c)  save()');
+  await expect(zone.locator('.am-zone-head')).toHaveText('macros.asm · 4 macros: raster');
   await zone.locator('.am-fold').click();
   await expect(zone.locator('.am-group')).toHaveCount(2);
   await expect(zone.locator('.am-row')).toHaveCount(4);
@@ -117,6 +118,12 @@ test('the project\'s macro file: built from the library as the code calls its ma
   expect(readFileSync(join(dir, 'main.asm'), 'utf8')).toMatch(/^#import "macros\.asm"\n\nBasicUpstart2\(start\)/);
   await zone.locator('.am-fold').click();
   await expect(zone.locator('.am-row')).toHaveCount(0);
+  // only macros of their own in it (the calls left out: Black alone): no names on its line
+  await region.getByLabel('Calls').uncheck();
+  await expect(zone.locator('.am-zone-head')).toHaveText('macros.asm · 1 macro');
+  await region.getByLabel('Calls').check();
+  await expect(zone.locator('.am-zone-head')).toHaveText('macros.asm · 4 macros: raster');
+  await shot(page, '46b-codelib-macro-zone-folded');
 
   // the file opened: the list of its macros, not its code; a click shows a macro's code, pointing its description
   await region.getByRole('button', { name: 'Open macros.asm' }).click();

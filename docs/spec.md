@@ -4235,7 +4235,9 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   ångra tar tillbaka en ändring). Mätt: filen som Mimir bygger, importerad av riktiga KickAss.jar, ger samma bytes som
   koden utskriven.
 - **Hur makrofilen syns** (`AsmMacroList.tsx`; det användaren ser är inte det assemblern läser): i en källa som
-  importerar den står under importraden en hopfälld lista, en rad (filen, hur många, deras anrop) som fälls ut till
+  importerar den står under importraden en hopfälld lista, en rad (filen, hur många, och namnen på samlingarna i den,
+  filerna med flera makron; inga namn när där bara är makron i egna filer: inte varje makro, en lista för lång för en
+  rad) som fälls ut till
   makrona under sina filer, vart och ett med namn och parametrar (`codeLibSignature`) och varför det är där; att peka
   på ett visar dess beskrivning på listans första rad (och hela i tipset). Raderna är en view zone i Monaco som håller
   plats och en overlay-widget över den som tar pekaren (editorns rader ligger annars över zonens egna noder). Källans

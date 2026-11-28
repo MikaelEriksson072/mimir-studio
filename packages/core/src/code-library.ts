@@ -524,13 +524,14 @@ export type CodeLibWhy = 'added' | 'called' | 'used';
 export interface CodeLibBuiltMacro { name: string; in: string | null; why: CodeLibWhy; sig: string; description: string; code: string }
 /** what a project's macro file was built of: its text; each macro; the files of the library in it (their macros, all of
  *  them: macros that belong together), each with why and with the macros of it the project defines itself (`own`: left
- *  out, they would be defined twice); the groups it has (a file's own lines and its macros) in its order; the names
- *  added that the library has not; all the macros the project defines itself */
+ *  out, they would be defined twice); the groups it has (a file's own lines and its macros; whether the file is a
+ *  collection, a file of several macros) in its order; the names added that the library has not; all the macros the
+ *  project defines itself */
 export interface CodeLibBuilt {
   text: string;
   macros: CodeLibBuiltMacro[];
   files: { file: string; name: string; why: CodeLibWhy; count: number; own: string[] }[];
-  groups: { in: string | null; rest: string; macros: string[] }[];
+  groups: { in: string | null; rest: string; macros: string[]; collection: boolean }[];
   missing: string[];
   own: string[];
 }
@@ -609,7 +610,7 @@ export function codeLibProjectFile(items: readonly CodeLibItem[], want: { macros
       out.push('', `${c} ---- ${group.name} ----`);
       const rest = codeLibRest(group.code, lang);
       if (rest) out.push(rest);
-      groups.push({ in: group.name, rest, macros: [] });
+      groups.push({ in: group.name, rest, macros: [], collection: !!group.collection || (group.macros ?? codeLibSubs(group.code, lang)).length > 1 });
     }
     groups[groups.length - 1].macros.push(e.name);
     out.push('', codeLibSubText({ code: e.code, description: e.description }, lang, e.decor));
