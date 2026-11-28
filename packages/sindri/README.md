@@ -23,8 +23,19 @@ and exact instruction timing, the memory banked by `$01`, the VIC-II's raster li
 takes from the CPU (badlines, also made in the middle of a line, and sprite fetches),
 both CIAs with timers, interrupts and the keyboard and joysticks, and the SID registers a program can read (voice 3's
 oscillator at `$d41b` as an 8580 makes it). With the
-C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
+C64 ROMs it starts the machine, types `LOAD"name",8,1` (the file's name on the disk, `*` for a file alone, as VICE's
+autostart types it; `LOAD` for a tape), loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
+The load is Sindri's own, but the KERNAL's messages for it are printed by the KERNAL's own routines before the file's
+bytes go in, so `READY.` and `RUN` land on the rows they take on a C64 and in VICE's autostart: from a disk, or a
+file alone, `SEARCHING FOR` and the name (`*` without one) and `LOADING` (`READY.` on row 10, `RUN` on row 11); from a
+tape, `PRESS PLAY ON TAPE`, `OK`, `SEARCHING`, `FOUND` and the name, `LOADING` (`READY.` on row 14). Without them
+`READY.` was on row 8, over the bytes of a file that loads there that a C64 leaves alone. The zero page is left as
+the KERNAL's serial LOAD leaves it too: `$b9` is `$60` after a load from a disk (the channel it read the file on, not
+the `1` of `LOAD"name",8,1`), and `$94`, `$95`, `$a3` and `$a4` (the byte it took last) are as VICE has them when
+the program starts. As the line is typed, ten keys at a time as VICE's autostart puts them in the keyboard buffer,
+BASIC leaves what it leaves on a C64 (`$b8`, `$49`, the name at the top of string space, the rest of the line in the
+input buffer); a byte of the name that typing does not give back (a quote, DEL, a lowercase letter) is typed as `?`.
 When BASIC would get text after `RUN` from the screen row it is typed on, Sindri types `RUN:`, as VICE's autostart
 does with `-autostartwithcolon`: RETURN hands BASIC the whole row, and a file that loads into the screen can have its
 text there. Channel 42 Intro (FBI Crew) loads at `$0450` with its text over rows 2-24, and `RUN` followed by that text
@@ -36,7 +47,7 @@ colon would be one more of the file's bytes typed over (Coop Demo by Digitech ke
 Started at an address (`entry`, `-e`), as a program Sindri saved is, it types `SYS` instead, and the file is in memory
 as it has it when the jump comes, as Mimir's Build & Run puts it in VICE (loaded from the monitor, nothing typed after
 it): LOAD's relinking of BASIC's lines at `$0801` is left out, and right before the jump the file's bytes that
-`READY.` and the typed line wrote over (on the screen at `$0540` and `$0568`, in the input and keyboard buffers) are
+`READY.` and the typed line wrote over (on the screen at `$0590` and `$05b8`, in the input and keyboard buffers) are
 put back. Delta's game, which Sindri saves as `$02a1-$ffff` from `$1770`, has its sound routine on the screen's
 `$0403-$059a`; with 13 of its bytes typed over it ran into a BRK at its first sound.
 
@@ -564,8 +575,9 @@ in all of them, the second in two ways. Both layers of 252 of the 253 are named,
 A backup saved as two files (the Super Snapshot's BREAK INTO 2 FILES, the Action Replay 4's split freeze; unp64 calls
 the first file an Action Replay v4.x Split Freeze) starts with a loader that copies the top of memory it holds to
 `$d000` and loads its second file over itself: "1" and the name it was itself loaded by, which it takes from where
-BASIC's LOAD left it. A file from a disk is now loaded as `LOAD"name",8,1` leaves things: its name, from the disk's
-directory, is below `$a000` with `$b7`, `$bb` and `$bc` set to it (the saved program gets back what was there before,
+BASIC's LOAD left it. A file from a disk is now loaded as `LOAD"name",8,1` leaves things (since 2026-11-28 the line is
+typed, and BASIC copies the name): its name, from the disk's directory, is below `$a000` with `$b7`, `$bb` and `$bc`
+set to it (the saved program gets back what was there before,
 unless the program loaded a file by the name or wrote those bytes itself). With their disks, 104 of the archive's 106
 Action Replay split freezes and 29 of its 31 Super Snapshot ones are unpacked with both layers named (5 entries for
 the first layer, where the loader and the backup's depacker ran as one). Of the other four, two have a BASIC line that
@@ -678,9 +690,9 @@ with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of te
   not changed.
 - A run stops at 500 layers (`budget`, *500 layers: it keeps jumping into code it wrote*): programs have a few dozen at
   most, but a loader that starts itself over and over makes two each time, each slower than the last. Ping Pong
-  (Konami, tape) does: Sindri's LOAD from the tape does not print the KERNAL's messages (PRESS PLAY ON TAPE, OK,
-  SEARCHING, FOUND, LOADING), so READY. lands on row 8 of the screen, not on row 14 as in VICE, over the boot file's
-  bytes there, which its loader copies to `$7000` and runs.
+  (Konami, tape) did while Sindri's LOAD from the tape printed none of the KERNAL's messages: READY. landed on row 8
+  of the screen, not on row 14 as in VICE, over the boot file's bytes there, which its loader copies to `$7000` and
+  runs.
 - An intro that waits for something other than the keys it tries stays where it is; `-e` can start the program behind
   it. A trainer menu that shows an answer only in colour, or with fewer than eight characters in a row (a marker that
   moves, a YES), is taken as one that does not react: each key is pressed once there.

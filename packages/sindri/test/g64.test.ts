@@ -189,4 +189,20 @@ describe.skipIf(!roms)('LOAD', () => {
     expect(lines[0]).toBe('the file loads over the STOP vector: LOAD calls $0300 before each byte it takes');
     expect(page).toEqual([...Array.from({ length: 0xff }, (_, i) => i), 0xff ^ 0x5a]);
   });
+
+  it('has the byte it took last in $a4 when it calls the STOP vector, where the KERNAL\'s ACPTR leaves it', () => {
+    // as above, but the STOP routine copies $a4 to $c000 + the low byte of the address stored last (for page 8):
+    // lda $af / cmp #8 / bne out / ldy $ae / beq out / dey / lda $a4 / sta $c000,y / out: rts
+    const file = new Uint8Array(2 + 0x600);
+    file[0] = 0x00; file[1] = 0x03;
+    const at = (a: number, ...b: number[]) => file.set(b, 2 + a - 0x0300);
+    at(0x0300, 0xa5, 0xaf, 0xc9, 0x08, 0xd0, 0x0a, 0xa4, 0xae, 0xf0, 0x06, 0x88, 0xa5, 0xa4, 0x99, 0x00, 0xc0, 0x60);
+    const vectors = [0xea31, 0xfe66, 0xfe47, 0xf34a, 0xf291, 0xf20e, 0xf250, 0xf333, 0xf157, 0xf1ca, 0x0300, 0xf13e, 0xf32f, 0xfe66, 0xf4a5, 0xf5ed];
+    vectors.forEach((v, k) => at(0x0314 + 2 * k, v & 0xff, v >> 8));
+    for (let i = 0; i < 0x100; i++) at(0x0800 + i, i ^ 0x5a);
+    let seen: number[] = [];
+    unpack(file, { roms, maxCycles: 3_000_000, onStep: (_pc, m) => { if (!seen.length && m.ram[0xaf] === 9) seen = [...m.ram.subarray(0xc000, 0xc0ff)]; } });
+    // (no call after the last byte, $08ff)
+    expect(seen).toEqual(Array.from({ length: 0xff }, (_, i) => i ^ 0x5a));
+  });
 });

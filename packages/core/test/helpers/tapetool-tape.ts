@@ -172,6 +172,50 @@ export function novaloadDemoTape(demo: Uint8Array): Uint8Array {
   return withTurbo(kernal, w.pulses);
 }
 
+/** Ocean's loader's blocks (oceanFiles in tap.ts): the lowest bit first, a pilot of `pilot` 0 bits (12 382 on Rambo's
+ *  tape), a 1 and $aa (none with `aa` false, as on Arkanoid's); then each block's flag byte, page and 256 bytes, with no
+ *  sum; then a page 0 and `trail` 0 bits, or with `repeat` that byte over and over (Hyper Sports' $02). */
+export function oceanBlocks(w: TurboWriter, blocks: { flags: number; page: number; data: ArrayLike<number> }[], o: { pilot?: number; aa?: boolean; trail?: number; repeat?: number } = {}): void {
+  for (let i = 0; i < (o.pilot ?? 12382); i++) w.bit(0);
+  w.bit(1);
+  if (o.aa !== false) novaByte(w, 0xaa);
+  for (const b of blocks) {
+    novaByte(w, b.flags);
+    novaByte(w, b.page);
+    for (let i = 0; i < 256; i++) novaByte(w, b.data[i] ?? 0);
+  }
+  if (o.repeat != null) for (let i = 0; i < 600; i++) novaByte(w, o.repeat);
+  else {
+    novaByte(w, 0x80);
+    novaByte(w, 0);
+    for (let i = 0; i < (o.trail ?? 13784); i++) w.bit(0);
+  }
+}
+
+/** The blocks for `data` loaded at `load` (a page's start) with this flag byte, a page each. */
+export function oceanPages(load: number, data: ArrayLike<number>, flags = 0x8e): { flags: number; page: number; data: Uint8Array }[] {
+  return Array.from({ length: Math.ceil(data.length / 256) }, (_, i) => ({ flags, page: (load >> 8) + i, data: Uint8Array.from({ length: 256 }, (_, j) => data[i * 256 + j] ?? 0) }));
+}
+
+/** fixtures/tap/ocean-demo.tap: a KERNAL boot file "OCEAN DEMO" at $0316 (bytes of our own: vectors as the KERNAL has
+ *  them, no loader), then Ocean's blocks as on Rambo's tape (a 0 of 304 cycles, a 1 of 688): a table at $c000-$c1ff,
+ *  colours into the colour RAM ($d800-$dbff, flag bit 0 set) and `demo` (a PRG at $0801) in pages from $0800. */
+export function oceanDemoTape(demo: Uint8Array): Uint8Array {
+  const boot = Uint8Array.from({ length: 0x0700 - 0x0316 }, (_, i) => (i * 11 + 3) & 0xff);
+  // (the vectors the KERNAL has, as Ocean's boot loads them, CHRIN's into the file)
+  [0x63, 0x03, 0x63, 0x03, 0x4a, 0xf3, 0x91, 0xf2, 0x0e, 0xf2, 0x50, 0xf2, 0x33, 0xf3, 0x63, 0x03, 0xca, 0xf1, 0xed, 0xf6, 0x3e, 0xf1, 0x2f, 0xf3, 0x63, 0x03].forEach((v, i) => { boot[i] = v; });
+  const kernal = makeTap({ files: [{ name: 'OCEAN DEMO', load: 0x0316, data: boot }] });
+  const w = new TurboWriter(38, 86);
+  const program = new Uint8Array(1 + demo.length - 2);
+  program.set(demo.subarray(2), 1);
+  oceanBlocks(w, [
+    ...oceanPages(0xc000, Uint8Array.from({ length: 512 }, (_, i) => (i * 7) & 0xff), 0x80),
+    ...oceanPages(0xd800, Uint8Array.from({ length: 1024 }, (_, i) => i % 16), 0x0f),
+    ...oceanPages(0x0800, program),
+  ]);
+  return withTurbo(kernal, w.pulses);
+}
+
 /** A pause in the tape (the tape stops between Firebird's blocks): a pulse of 20 000 cycles. */
 export const firebirdPause = (w: TurboWriter) => { w.pulses.push(0, 0x20, 0x4e, 0); };
 

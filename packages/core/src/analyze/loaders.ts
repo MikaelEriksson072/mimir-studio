@@ -335,6 +335,17 @@ const KNOWN: Known[] = [
       { pat: pat('A9 10 2C 0D DC F0 FB AD 0D DD 4A A9 19 8D 0E DD 60'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA2\'s timer A had run out (it starts it again)', weak: true },
     ],
   },
+  // Ocean's own loader (TAPClean's Ocean/Imagine), learned from Rambo's boot (Ocean); the second kind keeps it in the
+  // zero page and the stack page (Arkanoid, Imagine)
+  {
+    id: 'ocean', name: "Ocean's tape loader",
+    how: 'tape: the boot file loads over the vectors from $0316 and starts through CHRIN ($0324) at the READY prompt; its IRQ on the FLAG line starts CIA2\'s timer A from $03e0 again at each pulse, and bit 1 of the high byte it read (eor #$02 / lsr / lsr) tells a 0 from a 1, the lowest bit first; a long pilot of 0 bits, a 1 (and $aa, on the first kind), then blocks back to back of a flag byte (the border, a picture or music while it loads; bit 0: into the I/O), a page and its 256 bytes, with no sum, up to a page 0. Ocean\'s and Imagine\'s tapes of 1985-87 (Rambo, Yie Ar Kung-Fu, Comic Bakery, Ping Pong, Arkanoid, Head over Heels, Green Beret …). Mimir reads them from a .tap',
+    signs: [
+      { pat: pat('AD 07 DD A0 11 8C 0F DD 49 02 4A 4A 6E|66'), role: 'tape', what: 'reads a bit in its IRQ: bit 1 of CIA2\'s timer A high byte (it starts the timer again from $03e0), into the byte' },
+      { pat: pat('AE 07 DD A0 11 8C 0F DD 68 85 .. 68 85 .. 68 85 .. 8A 49 02 4A 4A 66'), role: 'tape', what: 'reads a bit in its IRQ, in the zero page: bit 1 of CIA2\'s timer A high byte (it starts the timer again from $03e0), into the byte' },
+      { pat: pat('4A B0 04 A9 00 85 01'), role: 'tape', what: 'stores a byte with the RAM all through ($01 = $00), unless bit 0 of the block\'s flag byte says into the I/O', weak: true },
+    ],
+  },
   {
     id: 'firebird', name: "Firebird's tape loader",
     how: 'tape: an IRQ on the FLAG line restarts CIA2\'s timer A (one shot from $0232), whose underflow is the bit, the top bit first; each block a pilot byte, its complement and the pilot again. The loader the boot file loads (Bubble Bobble\'s at $1c00) reads a chain of blocks: the next block\'s pilot, the block\'s number and address, 256 bytes (64 in the first), bytes it skips, their XOR and where it jumps after the block, the last one into code that decrypts what was loaded; a second loader the program calls reads files: a header of 7 bytes (number, address, the page the file ends before, where it jumps after it), 256 bytes and their XOR a block. Firebird\'s, Silverbird\'s and Rainbird\'s tapes, Psygnosis\', Odin\'s, Thor\'s, Activision\'s, Melbourne House\'s',

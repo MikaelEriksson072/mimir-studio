@@ -774,8 +774,9 @@ export class C64 implements Bus {
       this.ddr = v;
     } else this.port = v;
     this.updateMap();
-    // the cassette motor runs while the port drives bit 5 low
-    if (this.tape) this.tape.motor = (this.ddr & 0x20) !== 0 && (this.port & 0x20) === 0;
+    // the cassette motor runs while bit 5 is low: driven low, or an input, as it has no pull-up (VICE runs the motor
+    // unless $00 & $01 has bit 5; the loader of Hyper Sports, Imagine, sets $00 = $07 and $01 = $25 to play the tape)
+    if (this.tape) this.tape.motor = (this.ddr & this.port & 0x20) === 0;
   }
 
   /** the value at $01 as a program sees it */
@@ -1082,7 +1083,7 @@ export class C64 implements Bus {
 
   restore(s: MachineState): void {
     this.ram.set(s.ram); this.color.set(s.color); this.ddr = s.ddr; this.port = s.port;
-    if (this.tape) this.tape.motor = (this.ddr & 0x20) !== 0 && (this.port & 0x20) === 0;
+    if (this.tape) this.tape.motor = (this.ddr & this.port & 0x20) === 0;
     const c = this.cpu;
     c.a = s.cpu.a; c.x = s.cpu.x; c.y = s.cpu.y; c.s = s.cpu.s; c.pc = s.cpu.pc; c.p = s.cpu.p;
     this.vic.regs.set(s.vic.regs); this.vic.line = s.vic.line; this.vic.lineCycle = s.vic.lineCycle;

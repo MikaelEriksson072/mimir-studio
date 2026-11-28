@@ -297,6 +297,14 @@ const SYS_RETURN = 0xe146;
 const READY_WAITS = 0xe5cd;
 /** where the KERNAL's interrupt has scanned the keyboard (JSR $EA87 at $ea7b returned): a key found is in the buffer */
 const KEYS_SCANNED = 0xea7e;
+/**
+ * the bytes of a name that typed in quotes come back to BASIC as they are (1), found by typing each between two letters
+ * at the READY prompt: the rest do not. $00 is no key, DEL ($14) deletes the letter before it, a quote ends the string,
+ * RETURN ($0d, $8d) the line, shift RUN/STOP ($83) types LOAD and RUN; $60-$7f, $de and $e0-$fe show as the characters
+ * of other codes and come back as those ($c0-$df, $ff, $a0-$be). Control codes come back: quote mode shows them reversed.
+ */
+const TYPED_BACK = Uint8Array.from({ length: 256 }, (_, b) =>
+  (b === 0 || b === 0x0d || b === 0x14 || b === 0x22 || (b >= 0x60 && b < 0x80) || b === 0x83 || b === 0x8d || b === 0xde || (b >= 0xe0 && b < 0xff) ? 0 : 1));
 /** RETURN in the keyboard matrix: column 0 (PA0), row 1 (PB1) */
 const RETURN_KEY = [0, 1] as const;
 /** RETURN held down that no keyboard scan finds in this many cycles (two frames) goes into the buffer instead */
@@ -470,6 +478,10 @@ class Session {
   /** the file's name as LOAD left it below $a000 (with a disk), what was there before, and whether the program loaded
    *  a file by it */
   private loadName: { at: number; bytes: Uint8Array; before: Uint8Array; icount: number; used: boolean } | null = null;
+  /** where BASIC will copy the typed LOAD's name, and that RAM as it was before (with who wrote it when) */
+  private nameBefore: { at: number; ram: Uint8Array; wid: Int32Array; wtime: Uint32Array; touch: Uint32Array } | null = null;
+  /** keys of the line being typed that the keyboard buffer has yet to take (feedKeys) */
+  private keys: number[] = [];
   /** the bytes the start-up left as the C64 powered them on (POWER_ON), not $00 (null: going on from a snapshot) */
   private leftover: Uint8Array | null = null;
   /** the I/O at the READY prompt, which a saved program's I/O (Saved.io) is told against */
@@ -511,6 +523,7 @@ class Session {
     if (this.o.resume) this.resumeFrom(this.o.resume);
     else if (this.real) this.bootReal(); else this.bootStandIn();
     if (this.o.disk && !this.stopped) this.attachDrive();
+    if (this.real && !this.o.resume && !this.stopped) this.typeLoad();
     if (!this.stopped) this.loop();
     return this.finish(performance.now() - t0);
   }
@@ -535,7 +548,7 @@ class Session {
     this.setPhase('run');
   }
 
-  /** The C64 started up a while ago, at the READY prompt: type LOAD. */
+  /** The C64 started up a while ago, at the READY prompt (LOAD is typed once the drive is there: typeLoad). */
   private bootReal(): void {
     const m = this.m, roms = this.o.roms!;
     const key = `${roms.source}:${checksum(m.kernal)}:${checksum(m.basic)}`;
@@ -545,8 +558,33 @@ class Session {
     m.restore(booted.state);
     this.leftover = booted.leftover;
     this.readyIo = ioState(m);
-    this.typeLine('LOAD');
     this.setPhase('load');
+  }
+
+  /** whether the file comes from the tape (device 1), else from the disk or alone, as from a disk (device 8) */
+  private get loadsFromTape(): boolean {
+    return !!this.tape && (!!this.tapeFile || !this.drive);
+  }
+
+  /**
+   * LOAD typed at the READY prompt, as VICE's autostart types it: from a tape LOAD alone (device 1, the tape's next
+   * file); else LOAD"name",8,1 with the file's name on the disk (* for a file alone or one the disk does not have, as
+   * VICE's autostart of a D64 types it). BASIC takes the line as on a C64: the device and the secondary address from it
+   * in $ba and $b9 (and $b8, $49 as it parses them), the name copied to the top of its string space ($bb/$bc, $b7: a
+   * loader takes the drive's number from $ba, and a split freeze's first file loads "1" and the name it was loaded by),
+   * the rest of the line left in the input buffer after the tokenized LOAD, the line on the screen's row 6. A byte of
+   * the name that typing does not give back (TYPED_BACK) goes in as ?, which the drive takes for any character, as one
+   * types such a name on a C64. The keys go into the keyboard buffer ten at a time, as the screen editor takes them.
+   */
+  private typeLoad(): void {
+    const m = this.m, text = (s: string) => [...s].map(c => c.charCodeAt(0));
+    if (this.loadsFromTape) { this.typeKeys(text('LOAD')); return; }
+    const name = this.drive ? d64NameOf(this.d64!, this.file) : null;
+    const typed = name?.length ? [...name].map(b => (TYPED_BACK[b] ? b : 0x3f)) : [0x2a];
+    // (what the top of the string space held before BASIC copies the name there: the run's, not the program's)
+    const at = 0xa000 - typed.length;
+    this.nameBefore = { at, ram: m.ram.slice(at, 0xa000), wid: m.wid.slice(at, 0xa000), wtime: m.wtime.slice(at, 0xa000), touch: m.firstTouch.slice(at, 0xa000) };
+    this.typeKeys([...text('LOAD"'), ...typed, ...text('",8,1')]);
   }
 
   /** A 1541 with the disk on the serial bus, started up a while ago (it needs the real ROMs and its DOS ROM). */
@@ -587,7 +625,7 @@ class Session {
     }
     this.tape = d;
     this.m.tape = d;
-    d.motor = (this.m.ddr & 0x20) !== 0 && (this.m.port & 0x20) === 0;
+    d.motor = (this.m.ddr & this.m.port & 0x20) === 0;
   }
 
   /** A KERNAL file's header in the tape buffer ($033c-$03fb), as LOAD from the tape leaves it: bytes that were loaded. */
@@ -595,6 +633,87 @@ class Session {
     const m = this.m;
     if (!f) return;
     for (let i = 0; i < 192; i++) { m.ram[0x033c + i] = f.header[i]; m.wid[0x033c + i] = LOADED; m.wtime[0x033c + i] = m.icount; m.firstTouch[0x033c + i] ||= m.icount; }
+  }
+
+  /**
+   * What the KERNAL prints for the LOAD typed at the prompt that Sindri does itself from a TAP: PRESS PLAY ON TAPE and
+   * OK (PLAY pressed after LOAD was typed, as a C64's owner does and VICE's autostart), SEARCHING, FOUND and the file's
+   * name from the tape buffer, LOADING, each on a line of its own, printed by the KERNAL's own routines ($f12f, $f5af,
+   * $f5d2; FOUND as $f750 prints it, without its wait for the C= key). So READY. goes where it goes on a C64 (row 14
+   * after LOAD on row 6, as in VICE; without the messages it was row 8): over a boot file that loads into the screen it
+   * is over the file's bytes, and BASIC prints it before the program starts. Rambo's boot (Ocean) loads $0316-$06ff,
+   * starts through CHRIN and copies $0400-$06ff, its loader, to $4000: READY. on row 14 is over bytes the loader does
+   * not use, on row 8 it was over its main loop (`lda $4132` became `lda $1232`) and the game never started.
+   */
+  private tapeMessages(f: TapeFile | null): void {
+    const m = this.m;
+    if (!this.real || this.tape?.t64 != null) return;
+    this.kernalCall(0xf12f, 0, 0x1b);
+    this.kernalCall(0xf12f, 0, 0x6a);
+    this.kernalCall(0xf5af, 0, 0);
+    if (f && m.ram[0x9d] & 0x80) {
+      this.kernalCall(0xf12f, 0, 0x63);
+      for (let i = 5; i < 0x15; i++) this.kernalCall(0xffd2, m.ram[0x033c + i], 0);
+    }
+    // (the LOAD's first instruction, STA $93: a LOAD, not a VERIFY)
+    m.ram[0x93] = m.cpu.a;
+    this.kernalCall(0xf5d2, 0, 0);
+  }
+
+  /**
+   * What the KERNAL prints for the LOAD typed at the prompt that Sindri does itself from a disk (or for a file alone,
+   * which a C64 loads from one): SEARCHING FOR and the name LOAD was given, then LOADING, each on a line of its own,
+   * printed by the KERNAL's own routines ($f5af, $f5d2) before the file's bytes go in, as its serial LOAD prints them
+   * (only in direct mode, $9d bit 7; the name is the one typed, typeLoad). So READY. goes where it goes on a C64 and in
+   * VICE's autostart (row 10 after LOAD on row 6; without the messages it was row 8) and RUN or SYS on row 11, over the
+   * bytes of a file that loads into the screen where a C64 has them.
+   */
+  private diskMessages(): void {
+    const m = this.m;
+    if (!this.real) return;
+    this.kernalCall(0xf5af, 0, 0);
+    // (the LOAD's first instruction, STA $93: a LOAD, not a VERIFY)
+    m.ram[0x93] = m.cpu.a;
+    this.kernalCall(0xf5d2, 0, 0);
+  }
+
+  /**
+   * The zero page as the KERNAL's serial LOAD leaves it, for the LOAD Sindri does itself from a disk (or of a file
+   * alone): from $f4c4 on the secondary address in $b9 is $60, the channel it reads the file on, and nothing puts it
+   * back, so after LOAD"name",8,1 a program finds $60 there, not 1. Sending the name to the drive leaves the deferred
+   * byte flag $94 and the EOI flag $a3 shifted by CIOUT and UNLISTEN ($40 both after boot), and the byte sent under ATN
+   * in $95 rotated to $ff (each bit the drive took rotates a 1 in). ACPTR leaves the byte it took last in $a4: the load
+   * address's high byte, then each of the file's bytes as it comes in (fileBytes). VICE leaves them so at a program's
+   * first instruction, with true drive emulation or without; before, Sindri left $b9 1 and the others 0.
+   */
+  private serialLoadZp(): void {
+    const m = this.m;
+    m.ram[0xb9] = 0x60;
+    for (const a of [0x94, 0xa3]) m.ram[a] = ((m.ram[a] >> 1) | 0x80) >> 1;
+    m.ram[0x95] = 0xff;
+    m.ram[0xa4] = this.loadAt >> 8;
+  }
+
+  /** A KERNAL routine run from here until it returns, as a JSR to it would (no interrupt taken meanwhile); the
+   *  registers are put back as they were. The tape does not move meanwhile: on a C64 the messages come before the file
+   *  is read, and here it already stands after it (with it moving, Space Crusade's boot, Gremlin, started 49 pulses later
+   *  and its loader read its header wrong). */
+  private kernalCall(addr: number, a: number, y: number): void {
+    const m = this.m, cpu = m.cpu, motor = this.tape?.motor ?? false;
+    if (this.tape) this.tape.motor = false;
+    const was = { a: cpu.a, x: cpu.x, y: cpu.y, p: cpu.p, s: cpu.s, pc: cpu.pc, lastOp: cpu.lastOp };
+    const back = (was.pc - 1) & 0xffff;
+    m.write(0x100 | cpu.s, back >> 8); cpu.s = (cpu.s - 1) & 0xff;
+    m.write(0x100 | cpu.s, back & 0xff); cpu.s = (cpu.s - 1) & 0xff;
+    cpu.pc = addr; cpu.a = a; cpu.y = y;
+    for (let n = 0; n < 50000 && !cpu.jammed && !(cpu.pc === was.pc && cpu.s === was.s); n++) {
+      m.dmaWait();
+      const cycles = cpu.step();
+      m.icount++;
+      m.advance(cycles);
+    }
+    cpu.a = was.a; cpu.x = was.x; cpu.y = was.y; cpu.p = was.p; cpu.s = was.s; cpu.pc = was.pc; cpu.lastOp = was.lastOp;
+    if (this.tape) this.tape.motor = motor;
   }
 
   /** The KERNAL keeps the IRQ vector at $029f/$02a0 while it reads the tape (its own reading IRQ is in $0314 then).
@@ -841,7 +960,8 @@ class Session {
   /**
    * The file's bytes for loadFile, a byte at a time (`put` stores the next one); `end` what LOAD leaves in $ae/$af.
    * `live`: the pointer is in $ae/$af all along, as the KERNAL's serial LOAD keeps it there, for code the load calls
-   * between its bytes to read and move (diskLoadOn).
+   * between its bytes to read and move (diskLoadOn), and each byte in $a4 before it is stored, where ACPTR leaves it;
+   * at the end $95 is $ff again, as UNTALK and CLOSE leave it (serialLoadZp).
    */
   private fileBytes(live = false): { n: number; put: () => void; end: () => number } {
     const m = this.m;
@@ -852,6 +972,7 @@ class Session {
       put: () => {
         if (live) { lo = m.ram[0xae]; hi = m.ram[0xaf]; }
         const a = lo | (hi << 8), v = this.data[i++];
+        if (live) m.ram[0xa4] = v;
         if (a >= 2) {
           m.ram[a] = v;
           m.wid[a] = LOADED;
@@ -866,6 +987,7 @@ class Session {
       end: () => {
         m.ram[0xae] = lo; m.ram[0xaf] = hi;
         m.ram[0x90] = 0x40;
+        if (live) m.ram[0x95] = 0xff;
         return lo | (hi << 8);
       },
     };
@@ -905,11 +1027,18 @@ class Session {
     if (put.length) this.trace(`put back the file's bytes typing wrote over: ${put.map(r => r.start === r.end ? hex4(r.start) : `${hex4(r.start)}-${hex4(r.end)}`).join(' ')}`);
   }
 
-  /** Type a line into the keyboard buffer (10 characters at most, RETURN added). */
-  private typeLine(text: string): void {
-    const m = this.m, bytes = [...text].map(c => c.charCodeAt(0)).concat(0x0d).slice(0, 10);
-    m.ram.set(bytes, 0x0277);
-    m.ram[0xc6] = bytes.length;
+  /** Type a line (PETSCII, RETURN added): into the keyboard buffer as it takes them, ten keys at a time (feedKeys). */
+  private typeKeys(bytes: number[]): void {
+    this.keys = [...bytes, 0x0d];
+    this.feedKeys();
+  }
+
+  /** the next keys of the line typed into the keyboard buffer, while it is empty: VICE's -keybuf and autostart put a
+   *  line of more than ten keys there so, the next ten once the screen editor took the last */
+  private feedKeys(): void {
+    const m = this.m, n = Math.min(10, this.keys.length);
+    m.ram.set(this.keys.splice(0, n), 0x0277);
+    m.ram[0xc6] = n;
   }
 
   /**
@@ -1506,20 +1635,15 @@ class Session {
     // both: LOAD and SAVE through their vectors, the KERNAL's own BRK handling, reset
     this.trap(0xf4a5, KERNAL, () => {
       if (this.phase === 'load') {
-        // from a disk the file came from device 8 by its name (LOAD"name",8,1): loaders take the drive's number from
-        // here, and a split freeze's first file loads "1" and the name it was loaded by. BASIC keeps the name of a
-        // LOAD typed at the prompt at the top of its string space, below $a000 (the file can load over it)
-        if (this.drive) {
-          m.ram[0xba] = 8; m.ram[0xb9] = 1;
-          const name = d64NameOf(this.d64!, this.file);
-          if (name?.length) {
-            const at = 0xa000 - name.length;
-            this.loadName = { at, bytes: name, before: m.ram.slice(at, 0xa000), icount: m.icount, used: false };
-            m.ram.set(name, at); m.ram[0xb7] = name.length; m.ram[0xbb] = at & 0xff; m.ram[0xbc] = at >> 8;
-          }
+        // the name of LOAD"name",8,1 (typeLoad), which BASIC copied to the top of its string space, below $a000 (the
+        // file can load over it): the run's, as if nothing had written it, unless the program loads a file by it
+        const nb = this.nameBefore, at = m.ram[0xbb] | (m.ram[0xbc] << 8), len = m.ram[0xb7];
+        if (nb && len && at === nb.at && at + len === 0xa000) {
+          this.loadName = { at, bytes: m.ram.slice(at, 0xa000), before: nb.ram, icount: m.icount, used: false };
+          m.wid.set(nb.wid, at); m.wtime.set(nb.wtime, at); m.firstTouch.set(nb.touch, at);
         }
         // from a tape: device 1, and the file's header in the tape buffer
-        const fromTape = !!this.tape && (!!this.tapeFile || !this.drive);
+        const fromTape = this.loadsFromTape;
         const loaded = (end: number) => {
           if (fromTape) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
           cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
@@ -1528,11 +1652,13 @@ class Session {
         };
         if (!fromTape) {
           // a byte at a time, as the KERNAL's serial LOAD takes them: the STOP vector may lead into the file
+          this.diskMessages();
+          this.serialLoadZp();
           const f = this.fileBytes(true);
           const t: TapeLoad = { n: f.n, i: 0, put: f.put, sp: cpu.s, called: false, first: () => this.runFromHere(), done: () => { if (!t.called) this.runFromHere(); return loaded(f.end()); } };
           return this.diskLoadOn(t);
         }
-        m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave();
+        m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeMessages(this.tapeFile); this.tapeIrqSave();
         // a byte at a time, as the KERNAL's interrupt stores them: the STOP vector may lead into the file
         const f = this.fileBytes();
         const t: TapeLoad = { n: f.n, i: 0, put: f.put, sp: cpu.s, called: false, first: () => this.runFromHere(), done: () => { if (!t.called) this.runFromHere(); return loaded(f.end()); } };
@@ -1566,6 +1692,7 @@ class Session {
       // the READY prompt waiting for a key (LOAD was typed at the start): type RUN; after that the program has
       // returned to BASIC
       this.trap(READY_WAITS, KERNAL, () => {
+        if (!m.ram[0xc6] && this.keys.length) this.feedKeys();
         if (m.ram[0xc6]) return false;
         // the line typed is on the screen: RETURN goes down for the keyboard scan to find (typeThenReturn); with no
         // scan (no KERNAL interrupt) it goes into the buffer
@@ -1627,7 +1754,8 @@ class Session {
       // Run puts it: VICE loads a program over the screen from the monitor at the READY prompt and types nothing after
       // it. Here LOAD and SYS were typed at the prompt, and READY. and the SYS line went onto the screen: over a program
       // that covers it, its bytes (Delta's game, $02a1-$ffff from $1770, has its sound routine at $0403-$059a, and
-      // READY. on row 8 and SYS6000 on row 9 were 13 bytes of it: the game ran into a BRK at its first sound). So
+      // READY. and SYS6000 were 13 bytes of it, on rows 8 and 9 before Sindri printed the KERNAL's SEARCHING FOR and
+      // LOADING, READY. on row 10 since: the game ran into a BRK at its first sound). So
       // right before the jump the file's bytes the KERNAL and BASIC wrote over since the load are put back (putBack).
       // A start with its own $01 gets it then too (as Build & Run's stub sets it), so a program under the BASIC ROM
       // is what runs, not the ROM. A $01 that banks the KERNAL out too ($35: a game at $0400 with RAM all through,

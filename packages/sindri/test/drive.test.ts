@@ -444,7 +444,65 @@ cmds:
 ${byteLines(commands(DRIVE_CODE, 0x0500))}
 `);
 
+/** the screen's rows as text when the program's first instruction at `at` runs (screen codes $00-$3f) */
+/** The C64's RAM (a copy) when the program first gets to `at` */
+function ramAt(prg: Uint8Array, at: number, o: object): Uint8Array {
+  let ram: Uint8Array | null = null;
+  unpack(prg, { roms, maxCycles: 5_000_000, ...o, onStep: (pc, m) => { if (pc === at && !ram) ram = m.ram.slice(); } });
+  return ram!;
+}
+
+/** The screen's rows then, as text */
+function rowsAt(prg: Uint8Array, at: number, o: object): string[] {
+  const ram = ramAt(prg, at, o);
+  const ch = (v: number) => (v < 0x20 ? String.fromCharCode(v + 64) : v < 0x40 ? String.fromCharCode(v) : '#');
+  return Array.from({ length: 25 }, (_, r) => Array.from(ram.subarray(0x0400 + 40 * r, 0x0428 + 40 * r), ch).join('').trimEnd());
+}
+
 describe.skipIf(!withDrive)('programs that load from the disk', () => {
+  it('has the KERNAL print SEARCHING FOR and LOADING for the LOAD at the prompt, so READY. and RUN or SYS go on rows 10 and 11 as on a C64', () => {
+    // VICE after LOAD"MY PROGRAM",8,1 and RUN typed, and its autostart (LOAD"*",8,1): LOAD on row 6, SEARCHING FOR
+    // and the name on row 8, LOADING on row 9, READY. on row 10, RUN on row 11 (without the messages: READY. on row 8)
+    const prg = asm(`${SYS_LINE}\nloop:  jmp loop`).prg, mc = asm('* = $c000\nloop:  jmp loop').prg;
+    const disk = makeD64([{ name: 'MY PROGRAM', prg }, { name: 'MC', prg: mc }]);
+    expect(rowsAt(prg, 0x080d, { disk }).slice(5, 13)).toEqual(['READY.', 'LOAD"MY PROGRAM",8,1', '', 'SEARCHING FOR MY PROGRAM', 'LOADING', 'READY.', 'RUN', '']);
+    expect(rowsAt(mc, 0xc000, { disk }).slice(5, 13)).toEqual(['READY.', 'LOAD"MC",8,1', '', 'SEARCHING FOR MC', 'LOADING', 'READY.', 'SYS49152', '']);
+    // a file alone loads as from a disk, as VICE's autostart of a D64 types it
+    expect(rowsAt(prg, 0x080d, {}).slice(5, 13)).toEqual(['READY.', 'LOAD"*",8,1', '', 'SEARCHING FOR *', 'LOADING', 'READY.', 'RUN', '']);
+  });
+
+  it('types LOAD"name",8,1 as VICE does, so BASIC leaves what it leaves on a C64: $b8, $49, the name, the input buffer', () => {
+    // VICE at $080d after LOAD"MY PROGRAM",8,1 and RUN typed with -keybuf: the screen and $0002-$03ff the same but for
+    // the jiffy clock, the cursor's blink and RETURN in the keyboard matrix; $b8 is the secondary address BASIC passed
+    // SETLFS in A, $49 the device it parsed, and the input buffer the tokenized RUN over the rest of the LOAD line
+    const prg = asm(`${SYS_LINE}\nloop:  jmp loop`).prg;
+    const ram = ramAt(prg, 0x080d, { disk: makeD64([{ name: 'MY PROGRAM', prg }]) });
+    expect([0xb7, 0xb8, 0xb9, 0xba, 0x49, 0x35, 0x36, 0x50].map(a => ram[a])).toEqual([10, 1, 0x60, 8, 8, 0x00, 0xa0, 0x19]);
+    expect(ram[0xbb] | (ram[0xbc] << 8)).toBe(0x9ff6);
+    expect(String.fromCharCode(...ram.subarray(0x9ff6, 0xa000))).toBe('MY PROGRAM');
+    expect([...ram.subarray(0x0200, 0x0213)]).toEqual([0x8a, 0, 0x4e, 0, ...[...' PROGRAM",8,1'].map(c => c.charCodeAt(0)), 0, 0x2c]);
+  });
+
+  it('types a byte of the name that typing does not give back as ?, which the drive takes for any character', () => {
+    // a lowercase letter ($61) is a graphics character at the prompt and comes back as $c1, DEL deletes: A?B and C?D
+    const prg = asm(`${SYS_LINE}\nloop:  jmp loop`).prg;
+    for (const [name, typed] of [['A\x61B', 'A?B'], ['C\x14D', 'C?D']]) {
+      const disk = makeD64([{ name, prg }]);
+      expect(rowsAt(prg, 0x080d, { disk }).slice(6, 9)).toEqual([`LOAD"${typed}",8,1`, '', `SEARCHING FOR ${typed}`]);
+    }
+  });
+
+  it('leaves the zero page as the KERNAL\'s serial LOAD does: $b9 $60, $94 and $a3 $40, $95 $ff, the last byte taken in $a4', () => {
+    // VICE at $080d after its autostart (LOAD"*",8,1) or LOAD"END",8 typed, with true drive emulation or without: the
+    // KERNAL makes the secondary address $60 for the load and never puts it back (Sindri left 1, and 0 in the others)
+    const prg = asm(`${SYS_LINE}\nloop:  jmp loop\n       .byte $5a`).prg;
+    const disk = makeD64([{ name: 'END', prg }]);
+    for (const o of [{ disk }, {}]) {
+      const ram = ramAt(prg, 0x080d, o);
+      expect([0xb9, 0x94, 0xa3, 0x95, 0xa4].map(a => ram[a])).toEqual([0x60, 0x40, 0x40, 0xff, 0x5a]);
+    }
+  });
+
   it('follows a KERNAL LOAD of the next file through the drive', () => {
     const disk = makeD64([{ name: 'BOOT', prg: KERNAL_BOOT.prg }, { name: 'PART2', prg: PART2.prg }]);
     const r = unpack(KERNAL_BOOT.prg, { roms, disk });

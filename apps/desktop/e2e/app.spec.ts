@@ -7495,6 +7495,29 @@ test('a Novaload tape: the pages its boot file\'s loader reads and the files its
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('an Ocean tape: the blocks its boot file\'s loader reads are listed as files and open, as Rambo\'s are', async ({ app, page }) => {
+  // fixtures/tap/ocean-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file over the vectors from $0316, then
+  // Ocean's blocks at Rambo's speed: a table at $c000, colours into the colour RAM, the raster demo in pages from $0800
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/ocean-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted ocean-demo\.tap \(\d+ s\): 4 files \(1 KERNAL, 3 Ocean\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on ocean-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"OCEAN DEMO"/, /"file_c000"\s*Ocean/, /"file_d800"\s*Ocean/, /"file_0800"\s*Ocean/]);
+  // every stretch read: nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText([/^KERNAL/, 'Ocean', 'Ocean', 'Ocean']);
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$0316–$06ff', '$c000–$c1ff', '$d800–$dbff', /^\$0800–\$[0-9a-f]{2}ff$/]);
+  await expect(table.locator('tbody tr td:nth-child(7)')).toHaveText([/header 2×, data 2×/, "the boot file's loader reads it, 2 pages; no checksum", "the boot file's loader reads it, 4 pages, into the I/O (the colour RAM); no checksum", /^the boot file's loader reads it, \d+ pages; no checksum$/]);
+  await table.getByRole('row', { name: /"file_0800"/ }).click();
+  await expect(toast(page, 'Loaded file_0800.prg at $0800')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
 test('a Wildload tape: the blocks of its chains are listed and open, as Delta\'s are', async ({ app, page }) => {
   // fixtures/tap/wildload-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, then a Wildload chain at
   // Delta's speed (the tape buffer, the VIC's $d011, colour memory under the I/O at $d800, the raster demo) that ends

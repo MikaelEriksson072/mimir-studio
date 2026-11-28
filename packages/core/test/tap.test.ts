@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { makePrg, makeTap, notPacked, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackLog, unpackPrg, unpackSummary, type TapeFile } from '../src';
 import { findC64Roms } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
-import { blockFile, bootLoader, burnerDemoTape, burnerFile, burnerHeader, demoTape,firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, loaderStartTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, tinyLoader, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, bootLoader, burnerDemoTape, burnerFile, burnerHeader, demoTape,firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, loaderStartTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, oceanBlocks, oceanDemoTape, oceanPages, pilotFile, rle, runs, sineTable, tinyFile, tinyLoader, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, otherSideDemoTape, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -517,6 +517,97 @@ describe('Novaload', () => {
       ['novaload', 'DEMO', 0x0801, 0x0801 + demo.length - 2, []],
     ]);
     expect(img.files[3].data).toEqual(demo.subarray(2));
+  });
+});
+
+describe("Ocean's loader", () => {
+  /** Rambo's speed: a 0 of 304 cycles, a 1 of 688 */
+  const ocean = () => new TurboWriter(38, 86);
+  const boot = () => makeTap({ files: [{ name: 'BOOT', load: 0x0316, data: bytes(0x03ea, 1) }] });
+  const tape = (w: TurboWriter, kernal = boot()) => readTape(withTurbo(kernal, w.pulses));
+  const page = (n: number) => bytes(256, n);
+  const by = "the boot file's loader reads it";
+
+  it("reads the blocks after the pilot, a 1 and $aa: a flag byte, the page, 256 bytes, up to a page 0; files are pages that follow on", () => {
+    const w = ocean();
+    // Rambo's order (Ocean): pages for the loader first, music, the loading picture with its colours (into the I/O: flag
+    // bit 0), then the game, over the music and the picture at the end
+    oceanBlocks(w, [
+      { flags: 0x80, page: 0xc0, data: page(1) }, { flags: 0x80, page: 0xcf, data: page(2) }, { flags: 0x80, page: 0xc1, data: page(3) },
+      ...oceanPages(0x2000, bytes(0x1300, 4), 0x02), ...oceanPages(0xd800, bytes(0x400, 5), 0x0f), ...oceanPages(0x6000, bytes(0x2000, 6), 0x0e),
+      ...oceanPages(0xd000, bytes(0x2f00, 7), 0x8e), ...oceanPages(0x2000, bytes(0x1300, 8), 0x86), ...oceanPages(0x0200, bytes(0x200, 9), 0x00),
+    ]);
+    const img = tape(w);
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.note, f.errors])).toEqual([
+      ['cbm', 'BOOT', 'PRG', 0x0316, 0x0700, undefined, []],
+      ['ocean', 'file_c000', 'PRG', 0xc000, 0xc100, `${by}, 1 page; no checksum`, []],
+      ['ocean', 'file_cf00', 'PRG', 0xcf00, 0xd000, `${by}, 1 page; no checksum`, []],
+      ['ocean', 'file_c100', 'PRG', 0xc100, 0xc200, `${by}, 1 page; no checksum`, []],
+      ['ocean', 'file_2000', 'PRG', 0x2000, 0x3300, `${by}, 19 pages; no checksum; a later file loads over it`, []],
+      // (the colour RAM, then the RAM under the I/O: not the same bytes)
+      ['ocean', 'file_d800', 'PRG', 0xd800, 0xdc00, `${by}, 4 pages, into the I/O (the colour RAM); no checksum`, []],
+      ['ocean', 'file_6000', 'PRG', 0x6000, 0x8000, `${by}, 32 pages; no checksum`, []],
+      ['ocean', 'file_d000', 'PRG', 0xd000, 0xff00, `${by}, 47 pages; no checksum`, []],
+      ['ocean', 'file_2000', 'PRG', 0x2000, 0x3300, `${by}, 19 pages; no checksum`, []],
+      ['ocean', 'file_0200', 'PRG', 0x0200, 0x0400, `${by}, 2 pages; no checksum`, []],
+    ]);
+    expect(img.files[2].data).toEqual(page(2));
+    expect(img.files[7].data).toEqual(bytes(0x2f00, 7));
+    expect(img.unknown).toEqual([]);
+  });
+
+  it("reads Arkanoid's kind (no $aa after the 1) and the tapes that go on with a byte over and over after the last block", () => {
+    const w = ocean();
+    oceanBlocks(w, [...oceanPages(0x0100, bytes(0x200, 1), 0x00), ...oceanPages(0xa000, bytes(0x1000, 2), 0x00), ...oceanPages(0xd800, bytes(0x400, 3), 0x83)], { pilot: 4190, aa: false, trail: 2047 });
+    expect(tape(w).files.map(f => [f.format, f.load, f.end, f.errors])).toEqual([['cbm', 0x0316, 0x0700, []], ['ocean', 0x0100, 0x0300, []], ['ocean', 0xa000, 0xb000, []], ['ocean', 0xd800, 0xdc00, []]]);
+    // Hyper Sports (Imagine): no page 0, $02 to the end
+    const r = ocean();
+    oceanBlocks(r, [...oceanPages(0x8c00, bytes(0x1400, 4)), ...oceanPages(0xff00, bytes(0x100, 5))], { repeat: 0x02 });
+    const img = tape(r);
+    expect(img.files.map(f => [f.format, f.load, f.end, f.errors])).toEqual([['cbm', 0x0316, 0x0700, []], ['ocean', 0x8c00, 0xa000, []], ['ocean', 0xff00, 0x10000, []]]);
+    expect(img.unknown).toEqual([]);
+    // a side with no boot file before it (The Neverending Story's sides B-D): the program's loader reads it
+    const s = ocean();
+    oceanBlocks(s, oceanPages(0x2f00, bytes(0x6800, 6), 0x80), { pilot: 98320, repeat: 0x97 });
+    expect(tape(s, makeTap({ files: [] })).files.map(f => [f.load, f.end, f.note])).toEqual([[0x2f00, 0x9700, "the program's own loader (no boot file before it) reads it, 104 pages; no checksum"]]);
+  });
+
+  it("takes nothing that is not a program's blocks: fewer than 16, pages at random, data after the page 0, a short pilot, Novaload's pages", () => {
+    const count = (blocks: { flags: number; page: number; data: ArrayLike<number> }[], o: Parameters<typeof oceanBlocks>[2] = {}, extra?: (w: TurboWriter) => void) => {
+      const w = ocean();
+      oceanBlocks(w, blocks, o);
+      extra?.(w);
+      return tape(w).files.filter(f => f.format === 'ocean').length;
+    };
+    expect(count(oceanPages(0x4000, bytes(0x1000, 1)))).toBe(1);
+    expect(count(oceanPages(0x4000, bytes(0xf00, 1)))).toBe(0);
+    // another loader's data after a long leader: its "pages" do not follow on
+    expect(count(Array.from({ length: 40 }, (_, i) => ({ flags: 0x8e, page: (i * 97 + 13) & 0xff || 1, data: page(i) })))).toBe(0);
+    // a page 0 with more data after it
+    expect(count(oceanPages(0x4000, bytes(0x2000, 2)), { trail: 64 }, w => w.bytes(bytes(3000, 3)))).toBe(0);
+    expect(count(oceanPages(0x4000, bytes(0x2000, 2)), { pilot: 2900 })).toBe(0);
+    // Novaload's pages after a pilot as long: $aa, $55, then each page with its sum (Racing Destruction Set's)
+    const n = ocean();
+    for (let i = 0; i < 4348; i++) n.bit(0);
+    novaPages(n, Array.from({ length: 20 }, (_, i) => ({ page: 0x40 + i, data: page(i) })), { pilot: 0 });
+    expect(tape(n).files.map(f => f.format)).toEqual(['cbm', 'novaload']);
+  });
+
+  it('is fixtures/tap/ocean-demo.tap, which the e2e tests insert: a table, colours, then the demo in pages', () => {
+    const t = oceanDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/ocean-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, t);
+    expect(new Uint8Array(readFileSync(path))).toEqual(t);
+    const img = readTape(t);
+    expect(img.unknown).toEqual([]);
+    const pages = Math.ceil((demo.length - 1) / 256);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.note, f.errors])).toEqual([
+      ['cbm', 'OCEAN DEMO', 0x0316, 0x0700, undefined, []],
+      ['ocean', 'file_c000', 0xc000, 0xc200, `${by}, 2 pages; no checksum`, []],
+      ['ocean', 'file_d800', 0xd800, 0xdc00, `${by}, 4 pages, into the I/O (the colour RAM); no checksum`, []],
+      ['ocean', 'file_0800', 0x0800, 0x0800 + pages * 256, `${by}, ${pages} pages; no checksum`, []],
+    ]);
+    expect(img.files[3].data.subarray(1, demo.length - 1)).toEqual(demo.subarray(2));
   });
 });
 

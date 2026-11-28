@@ -251,6 +251,24 @@ describe('the datasette', () => {
     }
   });
 
+  it.skipIf(!roms)("has the KERNAL print its tape messages for the LOAD at the prompt, so READY. goes on row 14 as on a C64", () => {
+    // a boot file over the vectors from $0316, as Ocean's (Rambo), started through CHRIN at the prompt after the load:
+    // the screen as it starts is the KERNAL's and BASIC's after LOAD typed on row 6 (VICE's after its autostart)
+    const vectors = [0xfe66, 0xfe47, 0xf34a, 0xf291, 0xf20e, 0xf250, 0xf333, 0x0334, 0xf1ca, 0xf6ed, 0xf13e, 0xf32f, 0xfe66, 0xf4a5, 0xf5ed];
+    const data = Uint8Array.from([...vectors.flatMap(v => [v & 0xff, v >> 8]), 0x4c, 0x34, 0x03]);
+    let rows: string[] | null = null;
+    const res = unpack(prgOf(0x0316, data), {
+      roms, tape: bootTape(0x0316, data), maxCycles: 3_000_000,
+      onStep: (pc, m) => {
+        if (pc !== 0x0334 || rows) return;
+        const ch = (v: number) => (v >= 1 && v <= 26 ? String.fromCharCode(v + 64) : v === 0x2e ? '.' : v >= 0x30 && v <= 0x39 ? String.fromCharCode(v) : ' ');
+        rows = Array.from({ length: 25 }, (_, r) => Array.from(m.ram.subarray(0x0400 + 40 * r, 0x0428 + 40 * r), ch).join('').trimEnd());
+      },
+    });
+    expect(res.layers[0].entry).toBe(0x0334);
+    expect(rows!.slice(5, 16)).toEqual(['READY.', 'LOAD', '', 'PRESS PLAY ON TAPE', 'OK', '', 'SEARCHING', 'FOUND BOOT', 'LOADING', 'READY.', '']);
+  });
+
   it('without the tape the loader waits for pulses that never come', () => {
     const res = unpack(prgOf(0x02a7, viaMain()), { roms: null, maxCycles: 20_000_000 });
     expect(res.unpacked).toBe(false);

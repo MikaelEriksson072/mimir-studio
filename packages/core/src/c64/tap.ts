@@ -25,6 +25,9 @@
  *   pilot byte, the sync byte and the bit order; then start, end and the data, with no sum (burnerFiles);
  * - Novaload (Novagen's, Elite's, Encore's, US Gold's Americana …): the lowest bit first, a pilot of 0 bits, a 1 and $aa;
  *   a file its LOAD reads (the name, start, end, blocks with a running sum) or the pages its boot file's loader reads;
+ * - Ocean's own loader (Ocean's and Imagine's tapes of 1985-87: Rambo, Yie Ar Kung-Fu, Arkanoid …): the lowest bit
+ *   first, a long pilot of 0 bits, a 1 (and $aa, on the first kind); then blocks of a flag byte, a page and its 256
+ *   bytes, with no sum, up to a page 0 (oceanFiles);
  * - Wildload (Interceptor Micros' loader, on Activision's, Thalamus' Hits, Electric Dreams', Domark's … tapes): the
  *   lowest bit first, a pilot of $a0, the sync bytes $0a … $01, then a chain of blocks loaded from their last byte down
  *   (wildFiles);
@@ -103,7 +106,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'burner' | 'novaload' | 'wildload' | 'microload' | 'cyberload' | 'firebird' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'burner' | 'novaload' | 'ocean' | 'wildload' | 'microload' | 'cyberload' | 'firebird' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -987,6 +990,109 @@ function novaPages(p: TapPulses, bits: Uint8Array, base: number, k: number): { f
   return { files, end: at };
 }
 
+/* ---- Ocean's loader ---- */
+
+/* Ocean's own loader (TAPClean's "Ocean/Imagine"), on Ocean's and Imagine's tapes of 1985-87 (Rambo, Comic Bakery, Yie
+ * Ar Kung-Fu, Ping Pong, Hyper Sports, Arkanoid, Head over Heels, Green Beret, Highlander …): the boot file loads over the
+ * vectors from $0316 and starts through CHRIN ($0324 → $0363) at the READY prompt. Its loader reads the bits in an
+ * interrupt on the FLAG line: CIA2's timer A, started again from $03e0 at each pulse, has gone below $0200 for a 1 (a
+ * pulse longer than about 480 cycles), the lowest bit first. A pilot of 0 bits (12 382 on Rambo's tape; 4 112 to 4 191
+ * where the loader runs in the zero page, as Arkanoid's does), a 1, and on the first kind the byte $aa; then blocks back
+ * to back, each a flag byte (what the loader shows while it loads, a picture, music; bit 0: the page goes into the I/O,
+ * the colour RAM, not the RAM under it), the page and its 256 bytes, with no sum; a page 0 ends them, and 0 bits follow
+ * to the end of the stretch. Some tapes have no page 0: after the last block the same byte over and over ($02 on Hyper
+ * Sports and Frankie, $77 and $97 on The Neverending Story's sides), read as blocks whose flag, page and bytes are all
+ * that byte; the loader has what it needs by then. Learned from Rambo's boot (Ocean); on both kinds Sindri's run of the
+ * boot stores every byte read here, in that order. */
+
+/** zero bits an Ocean pilot needs (its tapes have 4 112 or more; Novaload's about 2 060, but 4 348 on Racing
+ *  Destruction Set's) */
+const OCEAN_PILOT = 3000;
+/** blocks an Ocean chain needs (its tapes have 104 or more) */
+const OCEAN_BLOCKS = 16;
+
+function oceanFiles(p: TapPulses, bits: Uint8Array, base: number, booted: boolean): TapeFile[] {
+  const out: TapeFile[] = [];
+  let zeros = 0;
+  for (let k = 0; k < bits.length; k++) {
+    if (!bits[k]) { zeros++; continue; }
+    const pilot = zeros;
+    zeros = 0;
+    if (pilot < OCEAN_PILOT) continue;
+    const r = oceanBlocks(p, bits, base, k, pilot, booted);
+    if (!r) continue;
+    out.push(...r.files);
+    k = r.end - 1;
+  }
+  return out;
+}
+
+/** The blocks after the 1 at bit `k` that ends a pilot of `pilot` 0 bits, up to the page 0 or the repeated byte that ends
+ *  them (or the end of the stretch); files are blocks whose pages follow on in memory, into the RAM or into the I/O
+ *  alike. With no sum to tell them from another loader's data after a long leader, they need to be what a program is:
+ *  16 blocks or more, at least half of them going on from the page before (Rambo's 291 of 307, Arkanoid's 264 of 274;
+ *  another format's data read so has pages at random), and after a page 0 only 0 bits (nine in ten at least) to the end
+ *  of the stretch. Novaload's pages, with their sums fitting, are Novaload's. */
+function oceanBlocks(p: TapPulses, bits: Uint8Array, base: number, k: number, pilot: number, booted: boolean): { files: TapeFile[]; end: number } | null {
+  let at = k + 1;
+  if (lsbByte(bits, at) === 0xaa) {
+    if (novaFile(p, bits, base, k) ?? novaPages(p, bits, base, k)) return null;
+    at += 8;
+  }
+  const blocks: { flags: number; page: number; data: Uint8Array; at: number; to: number }[] = [];
+  let ended = false;
+  for (;;) {
+    const flags = lsbByte(bits, at), page = lsbByte(bits, at + 8);
+    if (flags < 0 || page < 0) break;
+    if (!page) {
+      ended = true;
+      at += 16;
+      let zeros = 0;
+      for (let i = at; i < bits.length; i++) if (!bits[i]) zeros++;
+      if (zeros * 10 < (bits.length - at) * 9) return null;
+      break;
+    }
+    const n = Math.min(256, (bits.length - at - 16) >> 3);
+    if (n <= 0) break;
+    const data = new Uint8Array(n);
+    for (let i = 0; i < n; i++) data[i] = lsbByte(bits, at + 16 + 8 * i);
+    // the byte the tape goes on with after the last block
+    if (flags === page && data.every(v => v === page)) { ended = true; break; }
+    blocks.push({ flags, page, data, at, to: at + 16 + 8 * n });
+    at += 16 + 8 * n;
+    if (n < 256) break;
+  }
+  if (blocks.length < OCEAN_BLOCKS) return null;
+  let on = 0;
+  for (let i = 1; i < blocks.length; i++) if (blocks[i].page === blocks[i - 1].page + 1) on++;
+  if (on * 2 < blocks.length - 1) return null;
+  const groups: (typeof blocks)[] = [];
+  for (const b of blocks) {
+    const g = groups[groups.length - 1], last = g?.[g.length - 1];
+    if (last && last.data.length === 256 && last.page + 1 === b.page && (last.flags & 1) === (b.flags & 1)) g.push(b);
+    else groups.push([b]);
+  }
+  // where each goes: its addresses, and whether into the I/O (a flag with bit 0 set: $01 = $05 as the byte is stored)
+  const place = groups.map(g => {
+    const load = g[0].page << 8, end = load + g.reduce((a, b) => a + b.data.length, 0);
+    return { load, end, io: !!(g[0].flags & 1) && load >= 0xd000 && end <= 0xe000 };
+  });
+  const files = groups.map((g, i): TapeFile => {
+    const { load, end, io } = place[i], data = new Uint8Array(end - load);
+    g.reduce((o, b) => (data.set(b.data, o), o + b.data.length), 0);
+    const into = io ? `, into the I/O (${load >= 0xd800 && end <= 0xdc00 ? 'the colour RAM' : '$01 = $05'})` : '';
+    const over = place.slice(i + 1).some(h => h.io === io && h.load < end && load < h.end) ? '; a later file loads over it' : '';
+    const last = i === groups.length - 1;
+    return {
+      format: 'ocean', name: `file_${hex4(load)}`, type: 'PRG', load, end, data,
+      ...fileAt(p, base + (i ? g[0].at : k - pilot)), to: base + (last ? at : g[g.length - 1].to),
+      errors: last && !ended ? ['the data runs past the end of the turbo stretch (no page 0 ends the blocks)'] : [],
+      note: `${booted ? "the boot file's loader" : "the program's own loader (no boot file before it)"} reads it, ${g.length} page${g.length === 1 ? '' : 's'}${into}; no checksum${over}`,
+    };
+  });
+  return { files, end: at };
+}
+
 /* ---- Wildload ---- */
 
 /* Wildload (TAPClean's name), Interceptor Micros' loader: each chain's first block fills the tape buffer with "WILD SAVE
@@ -1643,13 +1749,16 @@ export function readTape(u8: Uint8Array): TapeImage {
       const bl = burnerLoader(boot);
       const burner = bl ? burnerFiles(p, bits, r.from, bl, burnerRead.get(boot!) ?? 0) : [];
       if (burner.length) burnerRead.set(boot!, (burnerRead.get(boot!) ?? 0) + burner.length);
+      // Ocean's blocks, after a pilot longer than any other format's
+      const ocean = oceanFiles(p, bits, r.from, files.some(f => f.format === 'cbm' && f.type !== 'END' && f.to <= r.from)).filter(f => !burner.some(w => w.at < f.to && f.at < w.to));
       // Wildload's chains and Microload's files take their pulses: another format's file inside them is their data
       // holding its pilot, sync and a sum that fits by chance (a Freeload file of 64 bytes in Ronald Rubberduck's $0800);
-      // Burner's files take theirs
-      const notBurner = (f: { at: number; to: number }) => !burner.some(w => w.at < f.to && f.at < w.to);
+      // Burner's files and Ocean's take theirs
+      const taking = [...burner, ...ocean];
+      const notBurner = (f: { at: number; to: number }) => !taking.some(w => w.at < f.to && f.at < w.to);
       const wm = wildAndMicro(p, bits, r.from).filter(notBurner);
       const own = (f: { at: number; to: number }) => notBurner(f) && !wm.some(w => w.at < f.to && f.at < w.to);
-      found.push(...burner, ...[...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from)].filter(own), ...wm, ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2).filter(own));
+      found.push(...taking, ...[...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from)].filter(own), ...wm, ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2).filter(own));
       // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
       if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
       const first = boot && !bl && !firsts.has(boot) && r.from - boot.to < 50000 ? cyberFirst(p, bits, r, boot) : null;

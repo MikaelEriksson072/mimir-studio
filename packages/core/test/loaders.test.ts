@@ -657,6 +657,18 @@ describe("the Action Replay's loaders", () => {
     expect(ids(' lda #$b6\n sta $dd04\n lda #$01\n sta $dd05\n jsr byte\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda #$11\n sta $dd0e\n lda $dd0d\n lsr\n bit $dc0d\n rol $fc\n rts\nbyte: ldx #$09\nb: jsr bit\n inc $d020\n dex\n bne b\n lda $fc\n rts\n')).toEqual(['mastertronic']);
   });
 
+  it("know Ocean's loader by its IRQ's bit reading: CIA2's timer A started again from $03e0, bit 1 of its high byte", () => {
+    // Rambo's (Ocean): the IRQ on the FLAG line, the bit into the byte with ROR; it stores with the RAM all through
+    // unless the block's flag byte says into the I/O
+    const store = 'store: lda $4133\n lsr\n bcs io\n lda #$00\n sta $01\nio: ldy #$00\n lda $412f\n sta ($fd),y\n lda #$05\n sta $01\n rts\n';
+    const [l] = loaders(' sei\n lda #<irq\n sta $fffe\n lda #>irq\n sta $ffff\n cli\nw: jmp w\nirq: pha\n txa\n pha\n tya\n pha\n lda $dd07\n ldy #$11\n sty $dd0f\n eor #$02\n lsr\n lsr\n ror $412f\n bcc out\n jsr store\nout: lda $dc0d\n pla\n tay\n pla\n tax\n pla\n rti\n' + store);
+    expect(l).toMatchObject({ id: 'ocean', name: "Ocean's tape loader" });
+    // Arkanoid's (Imagine), in the zero page: the registers kept there, the bit into $02
+    expect(ids(' sei\n lda #<irq\n sta $fffe\n lda #>irq\n sta $ffff\n cli\nw: jmp w\nirq: sta $07\n stx $08\n sty $09\n ldx $dd07\n ldy #$11\n sty $dd0f\n pla\n sta $0f\n pla\n sta $0d\n pla\n sta $0e\n txa\n eor #$02\n lsr\n lsr\n ror $02\n jmp ($0029)\n')).toEqual(['ocean']);
+    // its store alone: not named
+    expect(ids(' jsr store\n rts\n' + store)).not.toContain('ocean');
+  });
+
   it("know Burner by its boot, which decrypts the loader in the tape header, and by the loader's wait for the pilot", () => {
     // the boot's loop (Star Wars'): the key is the bytes at $0308 and $0317
     const [l] = loaders(' lda #$50\n sta $fb\n lda #$03\n sta $fc\n ldy #$af\nd: lda ($fb),y\n eor $0308\n eor $0317\n sta ($fb),y\n dey\n bne d\n jmp $0351\n');

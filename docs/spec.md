@@ -1212,7 +1212,8 @@ fingeravtryck lärda av arkivets 250 och 3 sparade med en Super Snapshot V5 i VI
 det andra på två sätt) namnger båda i 252 av de 253 och i den sista med `-e 2061`; inget av dem heter Action Replay
 eller tvärtom. En backup sparad som två filer (Super Snapshots *BREAK INTO 2 FILES*, Action Replay 4:s split freeze)
 laddar sin andra fil med namnet den själv laddades med, där BASIC:s LOAD lämnade det. Sindri laddar därför en fil från
-en disk som `LOAD"namn",8,1` gör: namnet ur diskens katalog ligger under `$a000` och `$b7`, `$bb` och `$bc` pekar på
+en disk som `LOAD"namn",8,1` gör (sedan 2026-11-28 skrivs raden in och BASIC kopierar namnet, 13.5f): namnet ur
+diskens katalog ligger under `$a000` och `$b7`, `$bb` och `$bc` pekar på
 det (det sparade programmet får tillbaka det som låg där, om inte programmet laddade en fil med namnet eller själv
 skrev de byten). Med sina disketter packas
 104 av arkivets 106 Action Replay-delningar och 29 av 31 Super Snapshot-delningar upp med båda lagren namngivna (5
@@ -1326,10 +1327,10 @@ därifrån (LINKPRG) och skriver länkpekare i det som ligger på `$0801`, vilke
 gör (över en fil som inte når dit länkar den om ett tomt program och ändrar inget, och får göra det som förut). Ett program
 som Sindri sparat kan ha kod där: Cybernoid II:s spel (`$0208-$ffff`, start `$1400`) körde in i en JAM på `$08e3`
 när Sindri körde det igen, och kommer nu förbi trainermenyn till spelet på `$0476`.
-Av samma skäl står filen i minnet som den är när hoppet kommer: Sindri skriver `LOAD` och `SYS` vid prompten, så BASIC:s
-`READY.` efter laddningen (rad 8, `$0540`) och den inskrivna raden (rad 9, `$0568`, och i inmatnings- och
-tangentbuffertarna) hamnar över ett program som täcker skärmen; Build & Run laddar ett sådant program från VICE:s
-monitor och skriver inget efter det. Precis före hoppet (`JMP ($0014)` på `$e144`) lägger Sindri därför tillbaka de
+Av samma skäl står filen i minnet som den är när hoppet kommer: Sindri skriver `LOAD"namn",8,1` och `SYS` vid prompten, så BASIC:s
+`READY.` efter laddningen (rad 10, `$0590`, efter KERNAL:ns SEARCHING FOR och LOADING, 13.5f) och den inskrivna raden
+(rad 11, `$05b8`, och i inmatnings- och tangentbuffertarna) hamnar över ett program som täcker skärmen; Build & Run
+laddar ett sådant program från VICE:s monitor och skriver inget efter det. Precis före hoppet (`JMP ($0014)` på `$e144`) lägger Sindri därför tillbaka de
 byte i filen som KERNAL och BASIC skrivit över sedan laddningen, och räknar vad programmet gör med dem därifrån
 (`$0014-$0015` står kvar: hoppet läser dem). Deltas spel (`$02a1-$ffff`, start `$1770`, som Sindri sparar ur
 bandets laddare) har sin ljudrutin på `$0403-$059a`: 13 byte av den blev `READY.` och `SYS6000`, spelet körde in i dem
@@ -1665,6 +1666,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Microload | avbrottet i bandhuvudet (`$0351`): bitläsningen `lda #$91 / sta $dd0e / lda $dd0d / lsr / lda $dc0d / ror zp` (CIA2:s timer A startas om vid varje puls; svag) och väntan på ledaren `$a0` och synken `$0a`…`$01` genom grenar den skriver om (`cmp #$a0 / bne / lda # / sta / bne / cmp #$a0 / beq / cmp #$0a / beq`; svag), och lagringen som räknar upp den negativa längden (`sta (zp),y / eor zp / sta zp / inc zp / bne +4 / inc zp / dec zp`). Rainbow Arts, Magic Bytes och Golden Goblins bootfiler har de två svaga (så de heter inte Microload). Interceptor Micros egna spel, Electric Dreams, Epyx, Players. Bandformatet i 13.5e |
 | Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
 | Burner (Mastertronic) | bootfilens dekryptering av laddaren i bandhuvudet (`lda ($fb),y / eor $0308 / eor $0317 / sta ($fb),y / dey / bne`, och samma instruktioner bland byte den hoppar över i det andra slagets boot), och i den dekrypterade laddaren väntan på ledarbyten bit för bit och sedan på hela ledarbyte och synkbyten (`rol`/`ror $bd / lda $bd / cmp # / bne / jsr … / cmp # / beq / cmp # / bne`) och bitläsningen (`lda #$10 / bit $dc0d / beq / lda $dd0d / lsr / lda #$19 / sta $dd0e / rts`, svag). Mastertronic, Mirrorsoft, Domark, PSS, Beyond, Quicksilva (120 av arkivets 121 bootfiler; TAPCleans namn). Bandformatet i 13.5e |
+| Oceans bandladdare | avbrottet på FLAG-linjen som startar om CIA2:s timer A från `$03e0` och läser bit 1 i dess högbyte (`lda $dd07 / ldy #$11 / sty $dd0f / eor #$02 / lsr / lsr / ror`), eller i nollsidan med registren sparade där (`ldx $dd07 / ldy #$11 / sty $dd0f / pla / sta zp / pla / sta zp / pla / sta zp / txa / eor #$02 / lsr / lsr / ror $02`), och lagringen med RAM rakt igenom om inte blockets flaggbyte har bit 0 (`lsr / bcs / lda #$00 / sta $01`, svag). Oceans och Imagines band 1985–87: Rambo, Yie Ar Kung-Fu, Comic Bakery, Ping Pong, Hyper Sports, Arkanoid, Head over Heels, Green Beret, Highlander (alla 41 bootfiler på arkivets 39 Ocean-band med en läsbar bootfil, inget av de andra 2 391 KERNAL-programmen på banden; TAPCleans Ocean/Imagine). Bandformatet i 13.5e |
 | Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag); samma kod i första steget och i den andra laddaren programmet anropar (Bubble Bobbles `$1c00` och `$4900`). Firebird, Silverbird, Rainbird, Psygnosis, Odin, Thor, Activision, Melbourne House. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload. Bandformaten i 13.5e |
 | Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
 | Super Snapshot copiers (LMS) | diskkopieraren tar emot en sektor till `$0500` (`lda $dd00 / bmi / ora #$17 / sta $dd00 / lda $dd00 / bpl / and #$07 / sta $dd00` … `eor $dd00 / eor #$f9 / sta $0500,y`) och skickar den tillbaka (`ldy #0 / lda $0500,y / pha / ldx #$27 / stx $dd00 / bit $dd00 / bvs`); dess drivkod vid `$033f` (544 byte, `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c`) och `$057c` (352 byte); filkopierarens drivkod vid `$0400` (768 byte, märkt `"2A" $9c` först) |
@@ -5421,6 +5423,23 @@ fönstret på en gång. `readTape()` (`packages/core/src/c64/tap.ts`) läser avb
   Formaten lästes ur Paperboys (Elite) bootkod och den LOAD den lägger i `$0330`, körda i Sindri med bandet: alla
   81 356 byte de lagrade är desamma som läsaren ger, i samma ordning. Den äldre Novaload (Turbo Esprit) läser samma
   filer med samma summor. Ett block eller en sida vars summa inte stämmer behålls, med felet.
+- **Oceans laddare** (Oceans och Imagines band 1985–87: Rambo, Comic Bakery, Yie Ar Kung-Fu, Ping Pong, Hyper Sports,
+  Super Bowl XX, Arkanoid, Head over Heels, Green Beret, Highlander, Mikie, Knight Rider …; TAPCleans "Ocean/Imagine"):
+  bootfilen laddas över vektorerna från `$0316` och startar genom CHRIN (`$0324` → `$0363`) vid READY-prompten;
+  Rambos kopierar `$0400–$06ff`, sin laddare, till `$4000` och kör den där, Arkanoids lägger den i nollsidan och
+  stacksidan. Laddaren läser bitarna i ett avbrott på FLAG-linjen: CIA2:s timer A, omstartad från `$03e0` vid varje
+  puls, har hunnit under `$0200` för en 1 (en puls längre än cirka 480 cykler), lägsta biten först. En ledare av 0-bitar
+  (12 382 på Rambos band, 4 112–4 191 på det andra slaget), en 1, och på det första slaget byten `$aa`; sedan block
+  utan mellanrum, vart och ett en flaggbyte (vad laddaren visar medan den laddar: ramen, en bild, musik; bit 0: sidan
+  går till I/O:t, färgminnet, inte RAM:et under), sidan och dess 256 byte, utan kontrollsumma; en sida 0 avslutar, och
+  0-bitar följer till sträckans slut. Några band har ingen sida 0 utan samma byte om och om igen efter sista blocket
+  (`$02` på Hyper Sports och Frankie, `$77` och `$97` på The Neverending Storys sidor), som läses som block där
+  flaggan, sidan och alla byte är den byten. Block vars sidor följer på varandra blir en fil `file_<start>`;
+  Tape-flikens anteckning säger hur många sidor den har, om de går till I/O:t och om en senare fil laddas över den
+  (Rambos musik på `$2000` och laddbild på `$5c00–$7fff` ersätts av spelet). Utan summa måste blocken se ut som ett
+  program: ledaren minst 3 000 0-bitar, minst 16 block, minst hälften av dem fortsätter från sidan före, och efter
+  sidan 0 bara 0-bitar (nio av tio); Novaloads sidor med summor som stämmer är Novaloads (Racing Destruction Set har en
+  ledare på 4 348). Formatet lästes ur Rambos bootfil (Ocean).
 - **Wildload**, Interceptor Micros laddare (TAPClean:s namn; varje kedjas första block fyller bandbufferten med "WILD
   SAVE (C) INTERCEPTOR MICROS 1987 WRITTEN BY ANDREW CHALLIS JANUARY 1987", och analysen, 8.11c, kallar den Wildload
   (Interceptor Micros). Activision, Thalamus Hits, Electric Dreams, Domark, Image Works, Incentive, Mirrorsoft …; Delta,
@@ -5694,7 +5713,15 @@ lagrar laddarna (`sta (zp),y`) byte för byte som läsaren har dem (Star Wars b�
 De andra tio stannar i programmets egen kod före bandets nästa del: Jungle Story, Bionic Granny, Magic Carpet och
 Westworld ("PRESS A KEY TO CONTINUE" före andra spelet på bandet), Skel och Treasure of the Phoenix, Eurekas delspel,
 och Heist, vars bootfil saknar datablock på avbilden (dess laddare säger två filer men bandet har `$0300` två gånger
-före `$1000`–`$7fff`). `test/tap.test.ts`
+före `$1000`–`$7fff`). Oceans laddare (2026-11-27, Rambo, där allt efter bootfilen var grått): 457 filer på 43 band,
+ingen med fel, sträckorna med okänd turbodata 8 566 till 8 521 och band med inget kvar 1 241 till 1 284, utan att någon
+fil i ett annat format ändrades (med den första, enklare regeln för ledaren tog läsaren data på 298 band, bland dem
+Novaloads sidor på Racing Destruction Set och Cyberload-data på Monty Python's Flying Circus). 18 band har det första
+slaget (tre av dem The Neverending Storys sidor B–D, utan bootfil) och 25 det andra; Frankies bootfil saknar huvud på
+avbilden. Sindri körde de 39 banden med en bootfil: på 37 lagrar laddaren varje byte läsaren har, i samma
+ordning (Rambos 78 848 i 17 filer); Highlanders del 2 och 3 har egna bootfiler, och Preservers-avbilden av Comic Bakery
+tappar en bit vid block 183 (C64Tapes-org-avbilden av samma band är hel). Green Beret laddar allt rätt men stannar sedan
+i en JAM i spelet, som förut (13.5f om Sindris ändringar på vägen). `test/tap.test.ts`
 läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
@@ -5748,9 +5775,77 @@ Tiden räcker till resten av bandet och 30 s till. Sindris RAM slås på som VIC
 sig självt med, när det är en och samma byte överallt; med RAM som började som bara `$00` kom Tusker inte längre än
 laddarens första steg. Där inget skrev före lagrets start (eller laddade under det) har det sparade programmet `$00`,
 inte ränderna, som förut. En körning stannar vid 500 lager (`budget`): program har några dussin, men en laddare som
-startar om sig själv gång på gång gör två lager varje gång, vart och ett långsammare än det förra (Ping Pong, vars kod
-READY. skrev över på skärmen: Sindris LOAD från bandet skriver inte KERNAL:ns meddelanden, så READY. hamnar på rad 8 och
-inte rad 14 som i VICE).
+startar om sig själv gång på gång gör två lager varje gång, vart och ett långsammare än det förra (Ping Pong gjorde så
+när READY. hamnade över dess kod på skärmen, se nedan).
+
+Sindri skriver KERNAL:ns meddelanden för LOAD vid prompten från en TAP med KERNAL:ns egna rutiner (`$f12f`, `$f5af`,
+`$f5d2`): PRESS PLAY ON TAPE och OK (PLAY trycks ned efter att LOAD skrivits, som en C64-ägare gör och VICE:s
+autostart), SEARCHING, FOUND och namnet ur bandbufferten, LOADING, var och en på en egen rad, före filens byte. Bandet
+står still medan de skrivs: på en C64 kommer de före filen, och här står bandet redan efter den (rullande startade Space
+Crusades bootfil, Gremlin, 49 pulser senare, och dess laddare läste sitt huvud fel). READY.
+hamnar då där det gör på en C64, på rad 14 efter LOAD på rad 6 som i VICE, inte på rad 8 som förut. BASIC skriver det
+innan programmet startar, så en bootfil som laddas över skärmen har det över sina byte: Oceans bootfiler (13.5e)
+laddas över vektorerna från `$0316` till `$06ff` och startar genom CHRIN, och Rambos kopierar `$0400–$06ff`, sin
+laddare, till `$4000`. På rad 8 skrev READY. över dess huvudslinga (`lda $4132` blev `lda $1232`, som aldrig ser att
+laddningen är klar) och spelet startade aldrig; på rad 14 ligger det över byte laddaren inte använder. Ping Pongs laddare
+startade om sig själv tills 500 lager, och Hyper Sports (Imagine) körde in i en JAM vid `$033f` (READY:s `$12`). Kassettens
+motor går när bit 5 i 6510-porten är låg: utdriven låg, eller en ingång, då den saknar pull-up (porten läser den som 0;
+VICE kör motorn om inte `$00 & $01` har bit 5). Hyper Sports (Imagine) sätter `$00 = $07` och `$01 = $25` och väntade
+förut på ett band som stod still. Mätt 2026-11-28 mot Sindri före de två ändringarna, på första KERNAL-programmet på
+varje band i C64Tapes-org och Preservers (1 778 band med ett): 1 753 går som förut. 14 kommer längre: Rambo (fyra
+avbilder), Ping Pong (tre), The Neverending Story, Hyper Sports (Imagine), Rambo III sida 2 (två) når sina spel, och
+Dominion, Fire Ant och Frogger 64 längre in i sina; fyra stannar inte längre i en JAM eller reset (Simpsons, Yie
+Ar Kung-Fu II, Annihilator, Jet-Boot Jack, den sista utan att något sparas); sju sparar samma program (Barbarian 2 och
+Ikari Warriors byte för byte, med ett lager färre; SDI når tidsgränsen i stället för att vila) eller vilar på ett annat
+ställe efter andra tangenttryck (Super Bowl XX, American Football, Fabulous Wanda, Synthy 64, som sedan vill ladda från
+disk).
+
+Likadant för LOAD vid prompten från disken, och för en fil ensam, som en C64 laddar från en disk: Sindri skriver
+KERNAL:ns SEARCHING FOR och namnet LOAD fick (filens namn på disken, som Sindri lägger överst i strängutrymmet; `*`
+utan ett, som `LOAD"*",8,1`) och LOADING med KERNAL:ns egna rutiner (`$f5af`, `$f5d2`), var och en på en egen rad, före
+filens byte, som KERNAL:ns seriella LOAD skriver dem (bara i direktläge, bit 7 i `$9d`). READY. hamnar då på rad 10 och
+`RUN` eller `SYS` på rad 11, som i VICE efter `LOAD"*",8,1` (autostart av en D64 eller en PRG, eller inskrivet med
+`-keybuf`: LOAD på rad 6, SEARCHING FOR på rad 8, LOADING på rad 9), inte på rad 8 och 9 som förut, så en fil som
+laddas över skärmen har dem över de byte de hamnar över på en C64. Mätt 2026-11-28 mot Sindri före ändringen på 626
+program: de 200 i Onefile-top200, första programmet på 174 diskar i Games/CSDB/Top200 och på 200 i Games/C64com med
+disken, och 52 intron och demon som laddas över rad 8–11. 580 går som förut (416 av dem vilar på en annan instruktion
+i samma väntslinga). Inget packas upp som inte gjorde det förut eller tvärtom, och inget riktigt programs lager ändras.
+29 sparar samma program med skärmens rad 8–11 som en C64 har dem (Color Busters rad 10 och 11 byte för byte som i VICE
+när introt visas; på rad 8 står filens namn där VICE:s autostart har `*`), 12 skiljer i några byte tillstånd som beror
+på tiden (musik, räknare, vad drivenheten hunnit läsa), Gold Quest 6 (ett BASIC-program som startar genom en vektor)
+sparar från `$0314` i stället för `$0546`, strax efter där READY. stod förut, 7 Cities of Gold skiljer i
+`$4000–$5fff` (där både förra och nya Sindri skiljer från VICE lika mycket), och tre datafiler ur källkoden till The
+Other Lines, som laddas från `$0000`, gör annat skräp än förut.
+
+Den LOAD:en lämnar också nollsidan som KERNAL:ns seriella LOAD gör: sekundäradressen i `$b9` är `$60` från `$f4c4`
+(kanalen filen läses på) och sätts aldrig tillbaka, så efter `LOAD"namn",8,1` hittar ett program `$60` där, inte 1.
+Namnet som skickas till drivenheten lämnar flaggorna `$94` och `$a3` skiftade av CIOUT och UNLISTEN (`$40` båda efter
+start) och byten som skickas under ATN i `$95` roterad till `$ff`, och ACPTR lämnar den byte den tog sist i `$a4`:
+laddadressens höga byte, sedan varje byte i filen när den kommer in (också när LOAD anropar STOP-vektorn mellan dem).
+Så har VICE dem vid programmets första instruktion, med äkta drivenhetsemulering och utan (autostart av en D64 och av
+en PRG, `LOAD"namn",8` inskrivet); förut lämnade Sindri 1 i `$b9` och 0 i de andra. Det som då ännu skilde i
+nollsidan vid starten kom från att Sindri skrev bara `LOAD` (nästa stycke), från RETURN som Sindri trycker ner i
+tangentmatrisen (`$c5`, `$cb`, `$f5/$f6`, `$028c`) och från tiden. Mätt 2026-11-28 på samma 626 program: 618 går som förut, byte för byte; de
+åtta andra (Rodents in the Attic, Nine, Subpixel Scroller, Scramble Infinity två gånger, Chameleon, Explorer, Craptastic
+2018) sparar samma program med en kopia av nollsidan som nu har de byten (Rodents kopia vid `$0f00` som i VICE).
+
+Sindri skriver också in raden som VICE gör: `LOAD"namn",8,1` med filens namn på disken (`*` för en fil ensam eller en
+som disken inte har, som VICE:s autostart av en D64 skriver det; `LOAD` för ett band), tio tangenter i taget i
+tangentbufferten när skärmeditorn tagit de förra, som VICE:s `-keybuf` och autostart. BASIC tar raden som på en C64:
+enheten och sekundäradressen ur den (`$ba`, `$b9`, och `$b8` och `$49` när den tolkar dem), namnet kopierat överst i
+strängutrymmet (`$bb/$bc`, `$b7`), resten av raden kvar i inmatningsbufferten efter det tokeniserade LOAD, och raden på
+skärmens rad 6; förut skrev Sindri bara `LOAD` och lade namnet där själv. En byte i namnet som inskrivning inte ger
+tillbaka skrivs som `?`, som drivenheten tar för vilket tecken som helst, så som man skriver ett sådant namn på en C64:
+`$00`, DEL, citattecken, RETURN, shift RUN/STOP, `$60–$7f`, `$de` och `$e0–$fe` (de sista visas som andra koders tecken
+och kommer tillbaka som dem); styrkoder kommer tillbaka, citatläget visar dem omvända. Efter `LOAD"MY PROGRAM",8,1` är
+skärmen och `$0002–$03ff` vid programmets start som i VICE (samma rad med `-keybuf`) utom jiffyklockan, markörens
+blinkning och RETURN i tangentmatrisen. Mätt 2026-11-28 mot Sindri med förra stycket men bara `LOAD` inskrivet, på samma
+626 program: 597 går som förut (404 av dem vilar på en annan instruktion i samma väntslinga, då raden tar längre tid att
+skriva), inget packas upp som inte gjorde det eller tvärtom och inga lager ändras. 29 sparar andra byte: 11 skärmens rad
+6 med den inskrivna raden, 12 en kopia av nollsidan med BASIC:s byte (Rodents kopia som i VICE utom jiffyklockan och
+namnet: VICE:s autostart av en PRG skriver filens namn, Sindri `*`), Bone Made It (två) en kopia av namnets `*`, tre
+byte som ändras med tiden (Forester, Adventure Construction Set, Hit and Run Baseball), och 7 Cities of Gold skiljer i
+`$4000–$5fff` som förut.
 
 Mätt mot Sindri före ändringarna (november 2026) på 1 771 filer ur arkivet: de 161 enfilsdemona i Onefile-top200 är
 oförändrade; av 350 demodiskar ur Year-top20 är 307 oförändrade, 42 har samma omfång med andra byte (räknade ur RAM som

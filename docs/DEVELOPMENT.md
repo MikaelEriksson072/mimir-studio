@@ -118,6 +118,7 @@ Playwright inspector).
 | a Cyberload tape: its four stages read as files in the Explorer and the Tape tab, the fourth stage's file opens | `fixtures/tap/cyberload-demo.tap` (written by `test/helpers/cyberload-tape.ts`) goes in with *5 files (1 KERNAL, 4 Cyberload)*; the *Tape* section lists `"CYBER DEMO" +header PRG`, `"file_0002"`, `"file_c000"`, `"file_e000"` and `"DEMO"` as *Cyberload*, with no turbo data left; the Tape tab has `$0002–$0394`, `$c000–$c257`, `$e000–$e257`, `$0801–$37ff`, the second stage's keys (*XOR $9c, its bytes XOR $7a*), *third stage, 3 blocks; the loader calls $e003 after it* and *fourth stage (LOAD by name), sync $aa, 48 blocks, read with a timer of 510 cycles*; the `DEMO` row opens `DEMO.prg` at `$0801` (the raster demo) |
 | a tape with Firebird's loader: its first stage's chain and a file of the second kind in the Explorer and the Tape tab, a file opens | `fixtures/tap/firebird-demo.tap` (written by `test/helpers/tapetool-tape.ts`) goes in with *5 files (1 KERNAL, 4 Firebird)*; the *Tape* section lists `"FIREBIRD DEMO" +header PRG`, `"file_0200"`, `"file_0801"`, `"file_bf00"` and `"file_c000"` as *Firebird*, with no turbo data left; the Tape tab has `$0200–$023f`, `$0801–$3800`, `$bf00–$bfff`, `$c000–$c1ff` and the notes *first stage, 48 blocks*, *first stage, 1 block; the loader jumps to $bf00 after it*, *pilot $34, 2 blocks; the loader returns after it*; the `file_0801` row opens `file_0801.prg` at `$0801` (the raster demo) |
 | a Burner tape: the files its boot file's loader reads in the Explorer and the Tape tab, a file opens | `fixtures/tap/burner-demo.tap` (written by `test/helpers/tapetool-tape.ts`; the boot's tape header holds only the bytes the reader takes from Burner's loader, no loader code) goes in with *3 files (1 KERNAL, 2 Burner)*; the *Tape* section lists `"BURNER DEMO" +header PRG`, `"file_c000"` and `"file_0801"` as *Burner*, with no turbo data left; the Tape tab has `$c000–$c257` and the notes *the 1st of the 2 files the boot file's loader reads; no checksum* and *the last of the 2 files … then it RUNs the BASIC program; no checksum*; the `file_0801` row opens `file_0801.prg` at `$0801` (the raster demo) |
+| an Ocean tape: the blocks its boot file's loader reads as files in the Explorer and the Tape tab, a file opens | `fixtures/tap/ocean-demo.tap` (written by `test/helpers/tapetool-tape.ts`; the boot file is bytes of our own over the vectors from `$0316`, no loader) goes in with *4 files (1 KERNAL, 3 Ocean)*; the *Tape* section lists `"OCEAN DEMO"`, `"file_c000"`, `"file_d800"` and `"file_0800"` as *Ocean*, with no turbo data left; the Tape tab has `$0316–$06ff`, `$c000–$c1ff`, `$d800–$dbff`, `$0800–$37ff` and the notes *the boot file's loader reads it, 2 pages; no checksum* and *… 4 pages, into the I/O (the colour RAM); no checksum*; the `file_0800` row opens `file_0800.prg` at `$0800` (a byte, then the raster demo) |
 | a Wildload tape: the blocks of its chains in the Explorer and the Tape tab, with what the loader does with each, a file opens | `fixtures/tap/wildload-demo.tap` (written by `test/helpers/tapetool-tape.ts`) goes in with *6 files (1 KERNAL, 5 Wildload)*; the *Tape* section lists `"WILD DEMO" +header`, `"file_033c"`, `"file_d011"`, `"file_d800"`, `"file_0801"` and `"file_c000"` as *Wildload*, with no turbo data left; the Tape tab has `$033c–$03fb`, `$d011–$d011`, `$d800–$d9ff`, `$0801–$37ff`, `$c000–$c1ff` and the notes *stored with the I/O in ($01 = 5) …*, *stored with $01 = 0: into the RAM under the I/O*, *the loader looks for the next pilot after it (flag $ff)*, *the end of the chain: the loader stops after it (flag $fe)*; the `file_0801` row opens `file_0801.prg` at `$0801` (the raster demo) |
 | Unpack on a turbo file its loader starts elsewhere runs the tape from its boot file, as Delta's `file_1000` needs (13.5f) | `fixtures/tap/loader-start-demo.tap` (written by `test/helpers/tapetool-tape.ts`) goes in with *3 files (1 KERNAL, 2 TapeTool)*; the Tape tab has `$02a7–$0303`, `$0800–$390c` and `$4000–$40ff`; the TinyHeader row opens `tinyheader.prg` at `$0800` (a JAM, then the raster demo packed by fakePack, which the boot's loader starts at `$080d`); the packed bar says *A loader on the tape loads it: Sindri ran the tape's boot file "LOADER DEMO", and after its loader had loaded it peels off 2 layers* and *the program starts at $0810*; *Unpack* gives `tinyheader-unpacked.prg, $0800-$37ff, starting at $0810`, with *(alone, from $0800, it stopped: jam)*, and the layer report has *Alone, started at $0800 …* and *layer 1 on started after its loader had loaded the file* |
 | a Microload tape: its files in the Explorer and the Tape tab, a file opens | `fixtures/tap/microload-demo.tap` (written by `test/helpers/tapetool-tape.ts`) goes in with *4 files (1 KERNAL, 3 Microload)*; the *Tape* section lists `"MICRO DEMO" +header`, `"file_e000"`, `"file_0801"` and `"file_c000"` as *Microload*, with no turbo data left; the Tape tab has `$02a7–$0303`, `$e000–$e3ff`, `$0801–$37ff`, `$c000–$c1ff`; the `file_0801` row opens `file_0801.prg` at `$0801` (the raster demo) |
@@ -323,7 +324,7 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   program loaded up to `$a000` or beyond leaves none: `open15,8,15,"i"` stopped there with ?OUT OF MEMORY. See spec 13.5.
 - **Tape images.** *File → Insert tape image (TAP, T64)…* (or drop a `.tap` or `.t64`) puts a tape in the datasette, beside the disk:
   the Explorer's *Tape* section lists its files (`packages/core/src/c64/tap.ts`: KERNAL, Turbo Tape 64, Freeload, US
-  Gold's, Mega-Save, Burner, Novaload's files and the pages its boot loader reads, Cyberload's four stages, Firebird's first
+  Gold's, Mega-Save, Burner, Novaload's files and the pages its boot loader reads, Ocean's blocks, Cyberload's four stages, Firebird's first
   stage and second loader, TapeTool; and where this side is blank, files of the tape's other side read backwards,
   `backwardsFiles`, marked ◂) and the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the
   renderer's `tapeOf` map, as `diskOf` for disks); a KERNAL boot file with code in its header opens with the header as
@@ -432,7 +433,7 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
 - **Loaders.** `findLoaders()` (`packages/core/src/analyze/loaders.ts`) names the loader a program uses: Spindle (2 and
   3), Krill's loader, Bitfire, Sparkle, the Covert Bitops loader and DLoC's loader by their own receive loops and install commands (the
   byte patterns come from their sources), the Action Replay's fastload, Warp*25, tape backups and turbo tape, Novaload,
-  the big tape publishers' loaders (Freeload, US Gold's, Mega-Save, Cyberload, Interceptor Micros', Mastertronic's, Burner, Firebird's,
+  the big tape publishers' loaders (Freeload, US Gold's, Mega-Save, Cyberload, Interceptor Micros', Mastertronic's, Burner, Ocean's, Firebird's,
   Novaload's IRQ version, learned from the code Sindri ran from their tapes), the Super Snapshot's turbo and copiers
   and the split freeze loader by their code (the patterns come from the
   cartridges' ROMs and what they ran and saved in VICE; a `span` sign marks code the ROM keeps for the drive or the stack
@@ -1356,6 +1357,77 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     pilot wait), 120 of 121 boots (Heist's tape has no data block for its boot). Tests in `test/tap.test.ts` and
     `test/loaders.test.ts`, fixture `fixtures/tap/burner-demo.tap` (`burnerDemoTape`: only the bytes the reader takes
     from the loader, encrypted), an e2e test that inserts it.
+67. Ocean's own tape loader (TAPClean's Ocean/Imagine) is read (spec 13.5e). Rambo (Ocean) was a KERNAL boot and the
+    rest of the tape unknown turbo data. The boot loads over the vectors from $0316, starts through CHRIN at READY and
+    copies $0400-$06ff, its loader, to $4000: an IRQ on the FLAG line starts CIA2's timer A again from $03e0 at each pulse
+    and takes bit 1 of its high byte (`eor #$02 / lsr / lsr / ror`), the lowest bit first; a pilot of 0 bits, a 1, $aa,
+    then blocks back to back: a flag byte (border, picture, music; bit 0: into the I/O), the page, 256 bytes, no sum, up
+    to a page 0. The second kind (Arkanoid, Imagine: the loader in the zero page and the stack page) has no $aa; some
+    tapes end with one byte over and over instead of the page 0 (Hyper Sports, Frankie: $02; The Neverending Story: $77,
+    $97). `oceanFiles` makes files of blocks whose pages follow on (`file_<start>`, notes: pages, into the I/O, a later
+    file loads over it). With no sum it needs a pilot of 3 000 zero bits, 16 blocks, half of them going on from the page
+    before and zero bits after the page 0; Novaload's pages at the same 1 win (Racing Destruction Set has a pilot of
+    4 348). On the 1 931 tapes of C64Tapes-org and Preservers: 457 files on 43 tapes, none with an error, unknown
+    stretches 8 566 to 8 521, tapes with none left 1 241 to 1 284, no other format's file changed. Sindri ran the 39
+    with a boot file (each `sta (zp),y` logged): on 37 the loader stores every byte the reader has, in order (Rambo's
+    78 848 in 17 files); Highlander's parts 2-3 have boot files of their own, and the Preservers dump of Comic Bakery
+    slips a bit at block 183 (the C64Tapes-org dump of it is whole). Two Sindri fixes on the way: the KERNAL's tape LOAD
+    messages are printed by the ROM's own routines (`tapeMessages`, `kernalCall`), so READY. lands on row 14 as in VICE,
+    not on row 8 over Rambo's copied main loop (the game never started), Ping Pong's (it restarted its loader up to 500
+    layers) and Hyper Sports' (a JAM at $033f); and the cassette motor runs while bit 5 of the 6510 port is an input
+    (VICE's `$00 & $01` rule: Hyper Sports, Imagine, sets $00 = $07, $01 = $25); the tape stands still while the
+    messages are printed (moving, Space Crusade's boot started 49 pulses later and its loader read its header wrong).
+    Old against new Sindri on the first KERNAL program of each tape (1 778): 1 753 as before, 14 get further (Rambo ×4,
+    Ping Pong ×3, The Neverending Story, Hyper Sports, Rambo III side 2 ×2 reach their games; Dominion, Fire Ant,
+    Frogger 64), four no longer end in a JAM or a reset, seven save the same program or settle elsewhere after other
+    keys (Barbarian 2 and Ikari Warriors byte for byte with a layer fewer; SDI hits the time limit). The analysis names it
+    (`ocean` in loaders.ts: the IRQ's bit reading, both kinds) on all 41 boot files of the 39 tapes and on none of the
+    other 2 391 KERNAL programs. Tests in `test/tap.test.ts`, `test/loaders.test.ts`, Sindri's `test/tape.test.ts` (the
+    screen rows as VICE has them), fixture `fixtures/tap/ocean-demo.tap` (`oceanDemoTape`), an e2e test that inserts it.
+68. Sindri prints the KERNAL's messages for the LOAD at the prompt from a disk too, and for a file alone (spec 13.5f):
+    `diskMessages` in session.ts runs the ROM's `$f5af` (SEARCHING FOR and the name LOAD was given: the file's name on
+    the disk that Sindri puts at the top of string space, `*` without one) and `$f5d2` (LOADING) through `kernalCall`
+    before the file's bytes go in, as the serial LOAD prints them (direct mode only), with the real ROMs only. READY.
+    now lands on row 10 and RUN or SYS on row 11, as VICE has them after `LOAD"*",8,1` (autostart of a D64 or a PRG, and
+    typed with `-keybuf`: LOAD 6, SEARCHING FOR 8, LOADING 9; checked with x64sc's remote monitor, `bsave` of
+    $0400-$07e7 at the program's start), not on rows 8 and 9. `putBack` already restores what READY. and SYS write over
+    for an entry start; its test moved to rows 10 and 11. Old against new Sindri on 626 programs (Onefile-top200, the
+    first program of 174 Games/CSDB/Top200 and 200 Games/C64com D64s with the disk, 52 intros and demos that load over
+    rows 8-11): 580 the same (416 settle on another instruction of the same wait), no unpack gained or lost, no real
+    program's layers changed; 29 save the screen rows as a C64 has them (Color Buster's rows 10-11 byte for byte as in
+    VICE, row 8 with the file's name where VICE's autostart has `*`), 12 differ in a few time-dependent bytes (music,
+    counters, how far the drive got), Gold Quest 6 (BASIC, started through a vector) saves from $0314 instead of
+    $0546, 7 Cities of Gold differs at $4000-$5fff (old and new Sindri both differ from VICE there as much), and three
+    data files from The Other Lines' source that load at $0000 crash differently. Test in Sindri's
+    `test/drive.test.ts` (the rows for a BASIC program and a machine-code file on a disk, and a file alone).
+69. That LOAD also leaves the zero page as the KERNAL's serial LOAD does (spec 13.5f): `serialLoadZp` in session.ts
+    sets `$b9` to $60 (the KERNAL's `$f4c4`, never put back; Sindri left the 1 of `LOAD"name",8,1`), shifts `$94` and
+    `$a3` as sending the name does ($40 both after boot), sets `$95` to $ff and `$a4` to the load address's high byte;
+    `fileBytes(true)` puts each byte in `$a4` before it stores it (ACPTR) and `$95` back to $ff at the end (UNTALK,
+    CLOSE). Checked against x64sc's RAM at the program's start (autostart of a D64 and of a PRG, `LOAD"name",8` typed
+    with `-keybuf`, with `-drive8truedrive +trapdevice8` and without): these bytes match now. Still different then:
+    BASIC's leftovers from a typed `LOAD"name",8,1` (item 70), the RETURN Sindri presses in the matrix (`$c5`, `$cb`,
+    `$f5/$f6`, `$028c`) and timing. Old against new
+    on the same 626 programs: 618 the same byte for byte; 8 save the same program with a copy of the zero page that now
+    has these bytes (Rodents in the Attic's at $0f00 as VICE has it). Tests: `test/drive.test.ts` (the bytes at the
+    start, from a disk and for a file alone), `test/g64.test.ts` (`$a4` when LOAD calls the STOP vector).
+70. Sindri types the LOAD line as VICE does (spec 13.5f): `typeLoad` in session.ts, after `attachDrive` (the name comes
+    from the disk), types `LOAD"name",8,1` with the file's name on the disk (`*` for a file alone or one the disk does
+    not have, as VICE's autostart of a D64; `LOAD` for a tape), ten keys at a time into the keyboard buffer as the
+    screen editor takes them (`feedKeys`, from the READY_WAITS trap; VICE's kbdbuf does the same). BASIC then sets `$ba`,
+    `$b9` (1, made $60 by item 69), `$b8`, `$49`, `$b7`, `$bb/$bc`, copies the name to `$a000-len` and leaves the rest of
+    the line in the input buffer; the `$f4a5` trap no longer plants the name but records what BASIC left (`loadName`),
+    putting back who wrote those bytes when (`nameBefore`), so a saved program gets what was there as before. A name
+    byte that typing does not give back is typed as `?` (`TYPED_BACK`, found by typing all 256 between two letters:
+    `$00`, `$0d`, `$14`, `$22`, `$60-$7f`, `$83`, `$8d`, `$de`, `$e0-$fe`). After `LOAD"MY PROGRAM",8,1` the screen and
+    $0002-$03ff at the program's start are VICE's (`-keybuf`, with true drive emulation and without) but for the jiffy
+    clock, the cursor blink and RETURN in the matrix. `diskMessages` lost its no-name branch. Old (item 69, `LOAD` typed)
+    against new on the same 626 programs: 597 the same (404 settle on another instruction of the same wait), no unpack
+    gained or lost, no layers changed; 29 save other bytes: 11 the typed line on row 6, 12 a zero-page copy with BASIC's
+    bytes (Rodents' as VICE but for the jiffy clock and the name: VICE's PRG autostart types the file's name, Sindri
+    `*`), Bone Made It ×2 a copy of the name's `*`, 3 time-dependent bytes (Forester, Adventure Construction Set, Hit
+    and Run Baseball), 7 Cities of Gold in $4000-$5fff as before. Tests: `test/drive.test.ts` (row 6 for a disk and a
+    file alone, BASIC's bytes and the input buffer as VICE's, a name with a lowercase letter and a DEL typed as `?`).
 
 ## Roadmap
 

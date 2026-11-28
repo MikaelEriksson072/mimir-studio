@@ -936,26 +936,27 @@ loop:  inc $d020
 
     it('leaves a program over the screen as the file has it where READY. and the typed SYS went, when it starts it at an address', () => {
       // as Delta's game, which Sindri saves as $02a1-$ffff from $1770 with its sound routine at $0403-$059a: LOAD
-      // typed at the prompt leaves READY. on row 8 ($0540) and SYS on row 9 ($0568), and the game ran into READY.'s
-      // bytes ($12 is a JAM) at its first sound. Build & Run loads such a program from VICE's monitor, typing nothing
+      // typed at the prompt and the KERNAL's SEARCHING FOR and LOADING leave READY. on row 10 ($0590) and SYS on row
+      // 11 ($05b8), and the game ran into READY.'s bytes ($12 is a JAM) at its first sound. Build & Run loads such a
+      // program from VICE's monitor, typing nothing
       const file = asm(`
 * = $0400
-.fill $140, $20
+.fill $190, $20
        inc $d020
        rts
-* = $0568
+* = $05b8
        inc $d021
        rts
 * = $0700
-loop:  jsr $0540
-       jsr $0568
+loop:  jsr $0590
+       jsr $05b8
        jmp loop
 `);
       const lines: string[] = [];
       const r = unpack(file.prg, { roms: mode === 'ROMs' ? roms : null, entry: 0x0700, trace: l => lines.push(l) });
       expect(r.stop.reason).toBe('settled');
-      expect(r.layers[0].code).toEqual([{ start: 0x0540, end: 0x0543 }, { start: 0x0568, end: 0x056b }, { start: 0x0700, end: 0x0706 }]);
-      if (mode === 'ROMs') expect(lines).toContain(`put back the file's bytes typing wrote over: $0540-$0545 $0568-$056e`);
+      expect(r.layers[0].code).toEqual([{ start: 0x0590, end: 0x0593 }, { start: 0x05b8, end: 0x05bb }, { start: 0x0700, end: 0x0706 }]);
+      if (mode === 'ROMs') expect(lines).toContain(`put back the file's bytes typing wrote over: $0590-$0595 $05b8-$05be`);
     });
 
     it('fingerprints a depacker by the code it ran, also when it wipes that code before the program starts', () => {
