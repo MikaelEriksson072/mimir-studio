@@ -85,7 +85,7 @@ export class CodeLibStore {
     for (const kind of CODE_LIB_KINDS) items.push(...await this.items(kind));
     const there = new Set(items.map(i => keyOf(i.kind, i.file)));
     const exports = Object.fromEntries(Object.entries(this.exports()).filter(([k]) => there.has(k)).map(([k, v]) => [k, { path: v.path, lines: v.lines }]));
-    return { dir: this.rootOf(), folders: { macro: this.folder('macro'), code: this.folder('code') }, items, exports };
+    return { dir: this.rootOf(), folders: Object.fromEntries(CODE_LIB_KINDS.map(k => [k, this.folder(k)])) as Record<CodeLibKind, string>, items, exports };
   }
   private async change(item: { kind: CodeLibKind; file: string }, macro?: string): Promise<CodeLibChange> {
     const listing = await this.read();
@@ -223,7 +223,7 @@ export class CodeLibStore {
     const made = fromSub ? fromSub.created ?? from!.created : from ? from.created : this.now();
     const content = { code, description, ...(req.color ? { color: req.color } : {}) };
     // (a file of one macro: its macro is the file, its description and colour in the file's line)
-    const alone = !!from && CodeLibStore.single(from);
+    const alone = !!from && from.kind === 'macro' && CodeLibStore.single(from);
 
     // a file of its own: the one it is alone in already, else a new one named after it
     if (!req.into || (alone && 'file' in req.into && req.into.file === from!.file)) {

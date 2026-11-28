@@ -1236,7 +1236,7 @@ describe('the macro and code libraries (spec 10.8)', () => {
 
   it('lists nothing before anything is added, and writes nothing then', async () => {
     const dir = join(tmp(), 'Library');
-    expect(await store(dir).list()).toEqual({ dir, folders: { macro: join(dir, 'Macros'), code: join(dir, 'Code') }, items: [], exports: {} });
+    expect(await store(dir).list()).toEqual({ dir, folders: { macro: join(dir, 'Macros'), code: join(dir, 'Code'), reasm: join(dir, 'Re-assembler') }, items: [], exports: {} });
     expect(existsSync(dir)).toBe(false);
   });
 
@@ -1273,6 +1273,34 @@ describe('the macro and code libraries (spec 10.8)', () => {
     // one that is not there any more
     await expect(lib.save({ kind: 'code', name: 'x', code: 'nop', lang: 'kickass', description: '', was: { kind: 'macro', file: 'gone.asm' } })).rejects.toThrow(/not in the Macros library/);
   });
+
+  it('keeps the re-assembler\'s pieces of code apart, and moves one to the user\'s libraries and back', async () => {
+    const dir = join(tmp(), 'Library'), trashed: string[] = [], lib = store(dir, trashed);
+    const made = clock;
+    const code = 'irq:\n        inc $d019\n        jmp $ea31';
+    const from = 'Game · game.prg $0810–$0818';
+    const r = await lib.save({ kind: 'reasm', name: 'irq', code, lang: 'kickass', description: 'The game\'s raster IRQ', from });
+    expect(r.item).toMatchObject({ kind: 'reasm', file: 'irq.asm', code, from, created: made });
+    expect(existsSync(join(dir, 'Re-assembler', 'irq.asm'))).toBe(true);
+    clock += 60_000;
+    // to the code library, and back: when it was made and where it came from kept
+    const c = await lib.save({ kind: 'code', name: 'irq', code, lang: 'kickass', description: 'The game\'s raster IRQ', from, was: { kind: 'reasm', file: 'irq.asm' } });
+    expect(c.item).toMatchObject({ kind: 'code', file: 'irq.asm', created: made, from });
+    expect(c.listing.items.map(i => `${i.kind}/${i.file}`)).toEqual(['code/irq.asm']);
+    const back = await lib.save({ kind: 'reasm', name: 'irq', code, lang: 'kickass', description: '', was: { kind: 'code', file: 'irq.asm' } });
+    expect(back.listing.items.map(i => `${i.kind}/${i.file}`)).toEqual(['reasm/irq.asm']);
+    // made a macro, into a file of the macro library of the same name: the piece of code is not taken for that file
+    await lib.save({ kind: 'macro', name: 'Other', code: '.macro Other() {\n  nop\n}', lang: 'kickass', description: '' });
+    await lib.save({ kind: 'macro', name: 'Irq2', code: '.macro Irq2() {\n  nop\n}', lang: 'kickass', description: '', into: { file: 'Other.asm' } });
+    await lib.save({ kind: 'reasm', name: 'Other', code, lang: 'kickass', description: '' });
+    const m = await lib.save({ kind: 'macro', name: 'GameIrq', code: `.macro GameIrq() {\n${code}\n}`, lang: 'kickass', description: '', was: { kind: 'reasm', file: 'Other.asm' }, into: { file: 'Other.asm' } });
+    expect(m.item).toMatchObject({ kind: 'macro', file: 'Other.asm' });
+    expect(m.item.macros?.map(s => s.name)).toEqual(['Other', 'Irq2', 'GameIrq']);
+    expect(trashed).toEqual([join(dir, 'Re-assembler', 'Other.asm')]);
+    expect(m.listing.items.map(i => `${i.kind}/${i.file}`).sort()).toEqual(['macro/Other.asm', 'reasm/irq.asm']);
+    expect(codelibSaveSchema.safeParse({ kind: 'reasm', name: 'x', code: 'nop', lang: 'kickass', description: '' }).success).toBe(true);
+  });
+
 
   it('lists files put there by hand, keeps their extension, and moves one to the Recycle Bin', async () => {
     const dir = join(tmp(), 'Library'), trashed: string[] = [], lib = store(dir, trashed);

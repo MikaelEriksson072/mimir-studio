@@ -4118,7 +4118,7 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
 
 Makron och bitar av kod man skrivit en gång ska man hitta igen och ta in i nästa program, i vilket Assembler-projekt
 som helst. De ligger därför, som skripten (10.3) och biblioteket (10.6), som filer i bibliotekets mapp: `Macros` för
-makrobiblioteket och `Code` för kodbiblioteket, en fil var, som går att dela, lägga under versionshantering, skriva i
+makrobiblioteket och `Code` för kodbiblioteket (och `Re-assembler` för re-assemblerns eget kodbibliotek, se sist), en fil var, som går att dela, lägga under versionshantering, skriva i
 vilken editor som helst och importera från en källa som de är. Det rena står i `packages/core/src/code-library.ts`;
 mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.ts`), och appen visar dem
 (`store/codelib.ts`, `components/CodeLibView.tsx`, `components/CodeLibDialog.tsx`).
@@ -4146,7 +4146,8 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   koden, beskrivningen och färgen (bokmärkenas, och *ingen*), och säger när den gjordes och varifrån. Ctrl+Enter sparar
   (inte Enter: ett Enter som öppnade dialogen från paletten fick inte spara den). Rader i en fil utanför projektets mapp
   (läses bara, 10.7) går att lägga till som andra.
-- **Vyn** (aktivitetsfältet, *Macros and code*, bara i ett Assembler-projekt; Ctrl+Shift+M söker) har ett bibliotek
+- **Vyn** (aktivitetsfältet, *Macros and code* i ett Assembler-projekt; utanför ett är det re-assemblerns kodbibliotek,
+  se sist; Ctrl+Shift+M söker) har ett bibliotek
   i taget med antalet i var flik, sökrutan (alla ord i namnet, beskrivningen, varifrån den kom eller koden; *found in
   the code* när bara koden har det), färgerna biblioteket har (en klickad: bara de i den färgen) och bokstäverna: listan
   är i bokstavsordning i grupper, en bokstav var (A–Z, Å, Ä, Ö, sist `#` för det som börjar med en siffra eller annat;
@@ -4237,6 +4238,24 @@ mapparna läses och skrivs bara av huvudprocessen (`electron/main/code-library.t
   läggs den till, annars kommer den in som anropad. Makron som projektets källor (eller filer de importerar utifrån) definierar själva
   föreslås inte. Mimirs ändringar i en öppen fil (importraden, makrofilen) läggs in som bara det som ändrats, så
   markören och platserna man skriver i står kvar.
+- **Re-assemblerns kodbibliotek** (kind `reasm`, mappen `Re-assembler` i bibliotekets mapp): bitar av kod tagna ur ett
+  programs listning, ett bibliotek för sig, skilt från användarens egna Macros och Code men med samma filer, vy och
+  dialog (sökning, bokstäver, färger, beskrivning, datum, import, papperskorgen). Markera rader i listningen, högerklicka
+  och välj *Add the N lines to the re-assembler code library…* (eller paletten, eller `+` i vyn); ingen markering:
+  blocket vid markören (*Add the block …*). Raderna är listningens som Ctrl+C kopierar dem (blockets rubrikrad med när
+  hela blocket är markerat), i projektets assembler (11.8); namnet är den första etiketten, och varifrån säger projektet,
+  filen och adresserna (`raster-demo · raster-demo.prg $091e–$0926`). Dialogen har inget val av bibliotek. Utanför ett
+  Assembler-projekt är vyn (aktivitetsfältets *Re-assembler code library*, antalet dess bitar) bara det biblioteket, utan
+  flikar och utan *Insert*: *Go to $091e* (och ett dubbelklick) går till adressen den togs från när det programmet är
+  öppet (en fil med det namnet). I ett Assembler-projekt är det den tredje fliken, *Re-assembler*, bredvid Macros och
+  Code, och dess bitar sätts in i källan som kodbibliotekets. **Flytta**: en bit flyttas (eller kopieras: den står kvar)
+  med sin meny eller bitens *Move…*: *Move to my code library* (filen flyttas till `Code`, när den gjordes, beskrivningen,
+  färgen och varifrån står kvar), *Move to my macro library…* (dialogen gör koden till ett makro med namnet och
+  parametrarna man skriver; i en egen fil eller en fil i makrobiblioteket), *Copy to my code library*; och tillbaka:
+  användarens kodbitar och makron ensamma i sin fil (filen som den är) *Move to the re-assembler code library*, ett
+  makro i en fil med flera kopieras (*Copy … to the re-assembler code library*). En kodbit som flyttas in i en makrofil
+  med samma filnamn tas inte för den filen (huvudprocessens `saveMacro`: bara en makrofil är ett makro ensamt i sin
+  fil).
 
 ## 11. Kick Assembler-generatorn
 
@@ -4910,7 +4929,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `scripts:save` | renderer → main | `{ file, text, was? }` → listan: filen skrivs (ett rent filnamn, `.asm` eller `.js`); `was`, filen den ersätter under ett annat namn, till papperskorgen |
 | `scripts:remove` | renderer → main | `{ file }` → listan: filen till papperskorgen |
 | `scripts:reveal` | renderer → main | mappen `Scripts` visas i filhanteraren (görs om den inte finns) |
-| `codelib:list` | renderer → main | → `{ dir, folders, items, exports }`: makrona och koden i bibliotekets mappar `Macros` och `Code`, en fil var (10.8) |
+| `codelib:list` | renderer → main | → `{ dir, folders, items, exports }`: makrona och koden i bibliotekets mappar `Macros`, `Code` och `Re-assembler` (re-assemblerns), en fil var (10.8) |
 | `codelib:save` | renderer → main | `{ kind, name, code, lang, description, color?, from?, was?, into?, collection? }` → `{ item, listing, macro? }`: en ny fil (unikt namn, gjord nu) eller `was` på sin plats (omdöpt, flyttad till det andra biblioteket; när den gjordes står kvar) |
 | `codelib:remove` | renderer → main | `{ kind, file, macro? }` → listan: filen till papperskorgen; ett makro i en fil ut ur den (till papperskorgen som en egen fil; det sista: filen) |
 | `codelib:reveal` | renderer → main | `{ kind, file? }`: filhanteraren vid filen, eller vid sortens mapp (görs om den inte finns) |

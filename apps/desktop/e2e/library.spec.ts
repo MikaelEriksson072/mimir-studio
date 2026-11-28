@@ -86,7 +86,7 @@ test('blocks go into the library as files named after where they were found; the
   const side = page.getByRole('list', { name: 'The library' });
   const cards = page.locator('.lib-tab .lib-card');
   await test.step('the Library button shows the view and the tab: each with its picture and where it was found', async () => {
-    await page.locator('nav.activity').getByRole('button', { name: 'Library' }).click();
+    await page.locator('nav.activity').getByRole('button', { name: 'Library', exact: true }).click();
     await expect(page.getByRole('tab', { name: 'Library' })).toHaveAttribute('aria-selected', 'true');
     await expect(side.getByRole('listitem')).toHaveCount(3);
     await expect(side.getByRole('listitem').filter({ hasText: 'music_1800' })).toContainText('Mimir Studio · mimir-showcase · $1800-$19cc');
@@ -227,7 +227,7 @@ test('a bitmap goes into the library as a picture in the format Settings picks, 
 
   await test.step('the Library tab shows it as its picture; one put in the folder by hand too', async () => {
     writeFileSync(join(lib, 'Bitmaps', 'my picture.kla'), Buffer.concat([Buffer.from([0x00, 0x60]), Buffer.alloc(10001, 0x05)]));
-    await page.locator('nav.activity').getByRole('button', { name: 'Library' }).click();
+    await page.locator('nav.activity').getByRole('button', { name: 'Library', exact: true }).click();
     await page.getByRole('button', { name: 'Read the library again' }).click();
     const side = page.getByRole('list', { name: 'The library' });
     await expect(side.getByRole('listitem')).toHaveCount(2);

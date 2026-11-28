@@ -390,7 +390,7 @@ const scriptFile = z.string().min(1).max(130).refine(isScriptFileName, 'not a pl
 export const scriptsSaveSchema = z.object({ file: scriptFile, text: z.string().max(SCRIPT_FILE_MAX), was: scriptFile.optional() }).strict();
 export const scriptsFileSchema = z.object({ file: scriptFile }).strict();
 /* ---- the macro and code libraries (spec 10.8): a file by its kind and plain name in that kind's folder ---- */
-const codelibKind = z.enum(['macro', 'code']);
+const codelibKind = z.enum(['macro', 'code', 'reasm']);
 const codelibFile = z.string().min(1).max(130).refine(isCodeLibFileName, 'not a plain file name of the libraries');
 /** a macro's name in a collection */
 const codelibMacro = z.string().min(1).max(CODE_LIB_NAME_MAX).regex(/^[A-Za-z_]\w*$/, 'not a macro\'s name');

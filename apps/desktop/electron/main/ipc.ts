@@ -409,7 +409,7 @@ export function registerIpc(deps: IpcDeps): void {
   const CODELIB_FILTERS = [{ name: 'Assembler sources', extensions: ['asm', 's', 'inc', 'a', 'a65', 'tas', '65s'] }, { name: 'All files', extensions: ['*'] }];
   handle(CHANNELS.codelibImport, codelibImportSchema, async (req, e) => {
     const start = recent.folder('codelib') ?? recent.folder('asm');
-    const paths = await pickPaths(e, { title: req.kind === 'macro' ? 'Put macro files in the macro library' : 'Put files in the code library', properties: ['openFile', 'multiSelections'], filters: CODELIB_FILTERS, ...(start ? { defaultPath: start } : {}) });
+    const paths = await pickPaths(e, { title: req.kind === 'macro' ? 'Put macro files in the macro library' : req.kind === 'reasm' ? 'Put files in the re-assembler code library' : 'Put files in the code library', properties: ['openFile', 'multiSelections'], filters: CODELIB_FILTERS, ...(start ? { defaultPath: start } : {}) });
     if (!paths.length) return null;
     chose(dirname(paths[0]), 'codelib');
     return codelib.importFiles(req.kind, paths);

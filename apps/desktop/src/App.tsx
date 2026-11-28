@@ -160,8 +160,13 @@ const ASM_TABS: readonly EditorTab[] = ['asm', 'gfx', 'mem', 'scripts', 'git', '
 /** the side panel's views an Assembler project has not (none now: its bookmarks are on lines of the sources, moving with
  *  them, and the Pack view packs what the Assembler builds) */
 const ASM_HIDDEN_VIEWS: readonly Activity[] = [];
-/** the views only an Assembler project has: the macro and code libraries (spec 10.8) */
-const ASM_ONLY_VIEWS: readonly Activity[] = ['codelib'];
+/** the views only an Assembler project has (none now: the libraries' view shows the re-assembler's code library outside
+ *  one, spec 10.8) */
+const ASM_ONLY_VIEWS: readonly Activity[] = [];
+/** the libraries the view shows: an Assembler project's Macros, Code and the re-assembler's; the re-assembler its own */
+const ASM_CODE_LIBS: readonly CodeLibKind[] = ['macro', 'code', 'reasm'];
+const REASM_CODE_LIBS: readonly CodeLibKind[] = ['reasm'];
+const REASM_LABELS: Partial<Record<Activity, string>> = { codelib: 'Re-assembler code library (Ctrl+Shift+M)' };
 const NO_ASM_BOOKMARKS: Record<string, AsmBookmark> = {};
 /** every byte loaded: the memory of a program being debugged is all there is (Memory and Graphics show any of it) */
 const ALL_LOADED = new Int16Array(0x10000);
@@ -2403,10 +2408,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const codeLibEditing = useCodeLib(s => s.editing);
   const codeLibExporting = useCodeLib(s => s.exporting);
   // (every macro counts: each of a file's)
-  const codeLibCount = useCodeLib(s => s.listing?.items.reduce((n, i) => n + (i.kind === 'macro' ? i.macros?.length || 1 : 1), 0) ?? 0);
+  const codeLibCount = useCodeLib(s => s.listing?.items.reduce((n, i) => n + (!asmMode && i.kind !== 'reasm' ? 0 : i.kind === 'macro' ? i.macros?.length || 1 : 1), 0) ?? 0);
   // (a dialog of its own each time one opens)
   const codeLibKey = useMemo(() => uid(), [codeLibEditing]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (asmMode) void useCodeLib.getState().load(); }, [asmMode]);
+  useEffect(() => { void useCodeLib.getState().load(); }, [asmMode]);
   /** the libraries' view in the side panel (`search`: its search field focused) */
   const showCodeLib = (search = false) => { setUi({ activity: 'codelib', sidePanel: true }); if (narrow) setDrawer('side'); if (search) focusCodeLibSearch(); };
   /** an item put in the source where the Assembler's caret is (`call`: a macro's call, its parameters to type in; a
@@ -4300,13 +4305,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    * The lines of the selection as the source writes them, in order: its instructions and data, the labels and
    * comment lines inside it, and the header of a block it holds whole. A folded block in it comes along whole.
    */
-  const selectedLines = (): string[] => {
-    if (!sel || !sel.multi || sel.end <= sel.start) return [];
-    const inside = (a: Addr) => a >= sel.start && a < sel.end;
+  const selectedLines = (): string[] => (!sel || !sel.multi || sel.end <= sel.start ? [] : linesIn(sel.start, sel.end));
+  /** the listing's lines of the addresses start to end (exclusive) as source, as Ctrl+C copies them */
+  const linesIn = (start: Addr, end: Addr): string[] => {
+    const inside = (a: Addr) => a >= start && a < end;
     const out: string[] = [];
     for (const l of R.lines) {
       if (l.k === 'file' || !inside(l.a)) continue;
-      if (l.k === 'hdr') { const b = A.blocks[l.blk]; if (!b || b.start < sel.start || b.end > sel.end) continue; }
+      if (l.k === 'hdr') { const b = A.blocks[l.blk]; if (!b || b.start < start || b.end > end) continue; }
       // the file head's lines (a .label and the note on it) stand at the load address, not in the program
       else if ((l.k === 'dir' && !l.n) || (l.k === 'cmt' && l.zp != null)) continue;
       out.push(lineText(l, S));
@@ -4314,6 +4320,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     while (out.length && !out[0].trim()) out.shift();
     while (out.length && !out[out.length - 1].trim()) out.pop();
     return out;
+  };
+  /** the re-assembler's code library (spec 10.8): the lines selected in the listing (none: the block at the cursor)
+   *  made a piece of code in the dialog, as the listing writes them, with the program and the addresses they are from */
+  const codeLibFromListing = () => {
+    const blkAt = cursor != null ? findBlock(A.blocks, cursor) : null;
+    const r = sel && sel.multi && sel.end > sel.start ? { start: sel.start, end: sel.end } : blkAt ? { start: blkAt.start, end: blkAt.end } : null;
+    const lines = r ? linesIn(r.start, r.end) : [];
+    if (!r || !lines.length) { toast('Nothing to take: select the lines in the listing (or put the cursor in a block)', 'info'); return; }
+    const fi = A.files.findIndex((f, i) => { const at = fileAddr(i); return r.start >= at && r.start < at + f.bytes.length; });
+    const proj = home?.name ?? project.name, span = `$${h4(spaceAddr(r.start))}–$${h4(spaceAddr(r.end - 1))}`;
+    useCodeLib.getState().set({ editing: { kind: 'reasm', lang: codeLang, code: lines.join('\n'), from: `${proj} · ${fi >= 0 ? `${A.files[fi].name} ` : ''}${span}` } });
+  };
+  /** where a piece of the re-assembler's code library was taken from, when that program is open: its first address */
+  const codeLibGo = (e: CodeLibEntry): { label: string; run: () => void } | null => {
+    const m = e.from ? /· (.+) \$([0-9A-Fa-f]{4})(?:–\$[0-9A-Fa-f]{4})?$/.exec(e.from) : null;
+    const fi = m ? A.files.findIndex(f => f.name === m[1]) : -1;
+    if (!m || fi < 0) return null;
+    const a = (A.spaces?.find(x => x.files.includes(fi))?.space ?? 0) * SPACE + parseInt(m[2], 16);
+    return { label: `Go to $${m[2].toLowerCase()}`, run: () => { navigate(a, { center: true, listing: true }); setDrawer(null); } };
   };
   /** Ctrl+C in the listing: the selected lines, else the line at the cursor */
   const copyLines = () => {
@@ -4475,6 +4500,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'xrefs', label: 'Show cross-references', key: 'X', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
     { id: 'relocs', label: 'Show the relocated blocks and the copy loops found (Relocated tab)', run: () => setUi({ bottom: 'relocs', panelOpen: true }) },
     { id: 'copy-lines', label: 'Copy the selected lines (or the line at the cursor) as source', key: 'Ctrl+C', run: copyLines },
+    { id: 'codelib-reasm', label: 'Add the selected lines to the re-assembler code library… (none selected: the block at the cursor)', run: codeLibFromListing },
+    { id: 'codelib', label: 'Show the re-assembler code library (pieces of code taken from listings, apart from your own Macros and Code)', run: () => showCodeLib() },
+    { id: 'codelib-search', label: 'Search the re-assembler code library', key: 'Ctrl+Shift+M', run: () => showCodeLib(true) },
     { id: 'side-panel', label: 'Toggle side panel (Explorer, Blocks, Symbols, Bookmarks, Pack)', key: 'Ctrl+Shift+B', run: () => toggleSide() },
     ...(inspector === 'auto' ? [{ id: 'inspector-show', label: 'Show the inspector (the memory map, the block at the cursor, its preview)', run: () => setDrawer('insp') }] : []),
     { id: 'inspector-mode', label: inspector === 'auto' ? 'Keep the inspector open beside the editor' : 'Fold in the inspector (a strip at the right edge opens it when you need it)', run: () => setInspector(inspector === 'auto' ? 'open' : 'auto') },
@@ -4638,7 +4666,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (e.key === 'F1') { e.preventDefault(); setModal('palette'); return; }
       // an Assembler project's Assembler tab has keys of its own (the code, Run, Build, Debug): only Settings and the
       // bottom panel are the window's there
-      if (k.asm && ctrl && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') { run('codelib-search'); return; }
+      if (ctrl && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') { run('codelib-search'); return; }
       if (k.asm && k.tab === 'asm') { if (ctrl && !e.shiftKey && !e.altKey && (e.key === ',' || /^[jb]$/i.test(e.key))) run(e.key === ',' ? 'settings' : e.key.toLowerCase() === 'j' ? 'panel' : 'bookmarks'); return; }
       // Ctrl+F finds in the listing, and in the source and drive code tabs with Monaco's find (in the editor Monaco takes it itself)
       if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source' || k.tab === 'drive') run('find'); return; }
@@ -4994,6 +5022,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         { sep: true },
         { label: 'Show cross-references', key: 'X', icon: 'target', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
         ...(nLines > 1 ? [{ label: `Copy ${nLines} selected lines`, key: 'Ctrl+C', icon: 'copy', run: copyLines }] satisfies MenuItem[] : []),
+        { label: nLines > 0 ? `Add ${nLines > 1 ? `the ${nLines} lines` : 'the line'} to the re-assembler code library…` : 'Add the block to the re-assembler code library…', icon: 'codelib', run: codeLibFromListing },
         // Ctrl+C copies the line at the cursor (the line right-clicked) when no more than it is selected
         nLines > 1 ? { label: 'Copy line', run: () => void copyText(lineText(l, S).trim()) } : { label: 'Copy line', key: 'Ctrl+C', icon: 'copy', run: () => void copyText(lineText(l, S).trim()) },
         { label: `Copy address $${h4(l.a ?? cursor ?? 0)}`, run: () => void copyText('$' + h4(l.a ?? cursor ?? 0)) },
@@ -5162,7 +5191,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onOverview={() => setModal('overview')} canOverview={project.files.length > 0 || !!project.cart}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : ASM_ONLY_VIEWS} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: asmMode ? Object.keys(asmBms).length : Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0, codelib: codeLibCount }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
+      <ActivityBar hide={asmMode ? ASM_HIDDEN_VIEWS : ASM_ONLY_VIEWS} labels={asmMode ? undefined : REASM_LABELS} activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: asmMode ? Object.keys(asmBms).length : Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0, codelib: codeLibCount }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
           // the view shown: its button collapses the side panel; collapsed, any view's button brings it back. The
           // Library's button shows the Library tab too (10.6)
           if (a === 'library' && !(sidePanel && a === activity && !narrow)) { setLibTabSeen(true); setUi({ tab: 'library' }); }
@@ -5192,10 +5221,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           onDiskFileMenu={(f, x, y) => fileScriptMenu(`dir/${f.track}/${f.sector}`, f.name, x, y)} onTapeFileMenu={(f, x, y) => fileScriptMenu(`tape/${tape?.img.files.indexOf(f)}`, f.name, x, y)}
           asmBm={asmMode ? { bookmarks: asmBms, selected: asmBmSel, onSelect: setAsmBmSel, onGo: id => asmAsk2('bmGo', { id }), onAdd: () => asmAsk2('bmAdd'), onEdit: editAsmBookmark, onDelete: deleteAsmBookmark,
             editing: asmBmEdit ? { ...asmBmEdit, onSave: saveAsmBookmark, onCancel: () => setAsmBmEdit(null), onPreview: (file, line, end) => asmAsk2('line', { at: file, line, end }) } : null } : null}
-          codelib={asmMode ? { desktop: !!kr, lang: stored.asm?.lang ?? 'kickass', onInsert: insertCodeLib, onNew: (kind, into) => asmAsk2('codeLib', { libKind: kind, ...(into ? { libInto: into } : {}) }), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast,
+          codelib={!asmMode ? { desktop: !!kr, libs: REASM_CODE_LIBS, lang: null, onGo: codeLibGo, onInsert: () => undefined, onNew: () => codeLibFromListing(), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast }
+            : { desktop: !!kr, libs: ASM_CODE_LIBS, lang: stored.asm?.lang ?? 'kickass', onInsert: insertCodeLib, onNew: (kind, into) => asmAsk2('codeLib', { libKind: kind, ...(into ? { libInto: into } : {}) }), onMenu: (x, y, items) => setMenu({ x, y, items }), onCopy: (t, what) => void copyText(t, what), toast,
             // the project's macro file (spec 10.8): kept in the project (undo takes a change back), a new one beside the main source
             project: { macros: stored.asm?.macros ?? null, defaultFile: `${asmMain?.includes('/') ? asmMain.slice(0, asmMain.lastIndexOf('/') + 1) : ''}macros.asm`,
-              onChange: (label, m) => update(label, d => { if (d.asm) d.asm.macros = m; }), onOpen: file => asmAsk2('line', { at: file, line: 1 }), onDropImport: key => asmAsk2('dropImport', { at: key }) } } : undefined}
+              onChange: (label, m) => update(label, d => { if (d.asm) d.asm.macros = m; }), onOpen: file => asmAsk2('line', { at: file, line: 1 }), onDropImport: key => asmAsk2('dropImport', { at: key }) } }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),

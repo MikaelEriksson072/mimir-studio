@@ -16,15 +16,19 @@
  * `.function` too), 64tass's `Name .macro a, b` … `.endm` (`.segment` … `.endsegment`, `.function` … `.endf`,
  * `.sfunction`). Code taken from a source becomes a macro wrapped in one (codeLibWrap). A file with several macros is a
  * collection (irq_lib.asm): each of its macros listed as one of its own, described by the comments above it.
+ *
+ * The re-assembler has a code library of its own (Re-assembler): pieces of code taken from a program's listing, the
+ * same files as the code library's, apart from the user's own Macros and Code; an item moves from one to the other.
  * ===================================================================== */
 import type { ScriptLang } from './types';
 import { isBookmarkColor } from './types';
 import { langIs } from './code-lang';
 
-export type CodeLibKind = 'macro' | 'code';
-export const CODE_LIB_KINDS: readonly CodeLibKind[] = ['macro', 'code'];
+/** the user's macros, the user's pieces of code, and the re-assembler's pieces of code (taken from listings) */
+export type CodeLibKind = 'macro' | 'code' | 'reasm';
+export const CODE_LIB_KINDS: readonly CodeLibKind[] = ['macro', 'code', 'reasm'];
 /** each kind's folder in the library's folder */
-export const CODE_LIB_FOLDERS: Readonly<Record<CodeLibKind, string>> = { macro: 'Macros', code: 'Code' };
+export const CODE_LIB_FOLDERS: Readonly<Record<CodeLibKind, string>> = { macro: 'Macros', code: 'Code', reasm: 'Re-assembler' };
 /** the most a file of them may be */
 export const CODE_LIB_FILE_MAX = 1024 * 1024;
 /** the longest a name (the file's, without .asm) and a description may be */

@@ -11,10 +11,18 @@
  * opens it, and in it what can be done with the file (use it in the project, add to it, export it, …) and its macros
  * A–Ö. A macro alone in its file is a line of its own, its file beside it when the file is not named after it. A search
  * opens the folders it finds something in. Files from anywhere are put in a library (the import button), and macros
- * exported to a file or to a file of the library (the export dialog). */
+ * exported to a file or to a file of the library (the export dialog).
+ *
+ * The re-assembler has a code library of its own, apart from the user's: lines selected in a program's listing (else
+ * the block at the cursor) become a piece of code of it, as the listing writes them, with where they were taken from.
+ * It looks and works as the code library; in the re-assembler's window it is the view's only library (a double-click
+ * goes to where an item was taken from, when that program is open), in an Assembler project's the third beside Macros
+ * and Code (its pieces put in the source as the code library's). An item moves (or is copied) from the one to the
+ * other: the re-assembler's to the user's code library, or to the macro library made a macro; the user's pieces of code
+ * and macros alone in their files to the re-assembler's. */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
-  CODE_LIB_LETTERS, codeLibGroups, codeLibHit, codeLibMacroEntries, codeLibMacros, codeLibMatches, codeLibNeeds, codeLibOrder, codeLibSignature, isBookmarkColor, LANG_TITLE,
+  CODE_LIB_FOLDERS, CODE_LIB_LETTERS, codeLibGroups, codeLibHit, codeLibIsMacro, codeLibMacroEntries, codeLibMacros, codeLibMatches, codeLibNeeds, codeLibOrder, codeLibPlain, codeLibSignature, isBookmarkColor, LANG_TITLE,
   type AsmMacroFile, type CodeLibBuilt, type CodeLibEntry, type CodeLibWhy, type CodeLibItem, type CodeLibKind, type CodeLibMacro, type ScriptLang,
 } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
@@ -32,10 +40,13 @@ export function codeLibTime(ms: number, day = false): string {
   const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   return day ? date : `${date} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-/** the libraries' names, one and many */
-export const CODE_LIB_TITLE: Record<CodeLibKind, { one: string; many: string; lib: string }> = {
-  macro: { one: 'macro', many: 'macros', lib: 'macro library' }, code: { one: 'piece of code', many: 'pieces of code', lib: 'code library' },
+/** the libraries' names, one and many, and on their tabs */
+export const CODE_LIB_TITLE: Record<CodeLibKind, { one: string; many: string; lib: string; tab: string }> = {
+  macro: { one: 'macro', many: 'macros', lib: 'macro library', tab: 'Macros' }, code: { one: 'piece of code', many: 'pieces of code', lib: 'code library', tab: 'Code' },
+  reasm: { one: 'piece of code', many: 'pieces of code', lib: 're-assembler code library', tab: 'Re-assembler' },
 };
+/** what the user's own libraries are called beside the re-assembler's */
+const MY_LIB: Record<CodeLibKind, string> = { macro: 'my macro library', code: 'my code library', reasm: 'the re-assembler code library' };
 /** the macro an item of the macro library defines (its first) */
 export const itemMacro = (i: Pick<CodeLibItem, 'kind' | 'code' | 'lang'>): CodeLibMacro | null => (i.kind === 'macro' ? codeLibMacros(i.code, i.lang)[0] ?? null : null);
 const clVar = (c?: string) => (c && isBookmarkColor(c) ? ({ '--cl': bookmarkCss(c) }) as CSSProperties : undefined);
@@ -49,11 +60,16 @@ export type CodeLibInsert = 'code' | 'call' | 'import';
 
 export interface CodeLibViewProps {
   desktop: boolean;
+  /** the libraries the view shows (an Assembler project: Macros, Code and the re-assembler's; the re-assembler: its own) */
+  libs: readonly CodeLibKind[];
+  /** where an item was taken from, in the program open (the re-assembler's): its address gone to; null: not there */
+  onGo?: (item: CodeLibEntry) => { label: string; run: () => void } | null;
   /** the Assembler project's assembler (null: no Assembler project: nothing to put the code in) */
   lang: ScriptLang | null;
   /** an item put in the source where the Assembler's caret is (each macro of a file an entry of its own) */
   onInsert: (item: CodeLibEntry, how: CodeLibInsert) => void;
-  /** a new item, of the lines selected in the Assembler (the dialog); `into`: the file it goes in */
+  /** a new item, of the lines selected in the Assembler (in the re-assembler: in the listing) (the dialog); `into`:
+   *  the file it goes in */
   onNew: (kind: CodeLibKind, into?: string) => void;
   onMenu: (x: number, y: number, items: MenuItem[]) => void;
   onCopy: (text: string, what: string) => void;
@@ -73,15 +89,20 @@ interface FileMark { file: string; lib: string; count: number; added: boolean; w
  *  macros A–Ö: those the search finds) */
 interface ListRow { name: string; file: string; entry?: CodeLibEntry; folder?: { item: CodeLibItem; macros: CodeLibEntry[] } }
 
-export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, toast, project }: CodeLibViewProps) {
-  const { listing, loading, error, kind, q, color, open, unfolded, set, load, remove, importFiles, exportMacros } = useCodeLib();
+export function CodeLibView({ desktop, libs, onGo, lang, onInsert, onNew, onMenu, onCopy, toast, project }: CodeLibViewProps) {
+  const { listing, loading, error, kind: picked, q, color, open, unfolded, set, load, save, remove, importFiles, exportMacros } = useCodeLib();
+  // (the library picked last, when this view shows it)
+  const kind = libs.includes(picked) ? picked : libs[0];
+  /** where the lines of a new item come from */
+  const source = lang ? 'the Assembler' : 'the listing';
   const defined = useAsmLink(s => s.macroDefined);
   // (read when the view is shown: the folders may have changed outside Mimir)
   useEffect(() => { void load(); }, [load]);
   const all = useMemo(() => listing?.items ?? [], [listing]);
   const ofKind = useMemo(() => all.filter(i => i.kind === kind), [all, kind]);
-  // every macro on a line of its own (each file's, one or several), a piece of code its file
-  const entries = useMemo(() => [...codeLibMacroEntries(all), ...all.filter(i => i.kind === 'code')], [all]);
+  // every macro on a line of its own (each file's, one or several), a piece of code its file (the code library's and
+  // the re-assembler's)
+  const entries = useMemo(() => [...codeLibMacroEntries(all), ...all.filter(i => i.kind !== 'macro')], [all]);
   // the macro library's files of several macros: a folder each in the list
   const folders = useMemo(() => all.filter(codeLibFolder), [all]);
   const filtering = !!q.trim() || !!color;
@@ -147,6 +168,35 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
       e => toast(`Could not move it to the Recycle Bin: ${errorText(e)}`, 'err'));
   };
   const trashFile = (f: CodeLibItem) => remove({ kind: f.kind, file: f.file }).then(() => toast(`${f.file} is in the Recycle Bin`, 'ok'), e => toast(`Could not move it to the Recycle Bin: ${errorText(e)}`, 'err'));
+  /** an item moved (or copied: it stays where it is) to another library: a piece of code (a macro alone in its file:
+   *  its file, as it is) as it is; to the macro library made a macro in the dialog (its name, its parameters) */
+  const moveTo = (i: CodeLibEntry, to: CodeLibKind, copy: boolean) => {
+    const f = fileOf(i), whole = !!f && (f.macros?.length ?? 0) <= 1;
+    const name = whole ? f!.name : i.name, code = whole ? codeLibPlain(f!.code) : i.code;
+    const was: CodeLibRef = { kind: i.kind, file: i.file };
+    const keep = { ...(i.color ? { color: i.color } : {}), ...(i.from ? { from: i.from } : {}) };
+    if (to === 'macro' && !codeLibIsMacro(code, i.lang)) {
+      set({ editing: { kind: 'macro', lang: i.lang, code, name, description: i.description, ...keep, ...(copy ? {} : { was }), wrap: true } });
+      return;
+    }
+    save({ kind: to, name, code, lang: i.lang, description: i.description, ...keep, ...(copy ? {} : { was }) }).then(
+      r => toast(`${i.name} is ${copy ? 'copied' : 'moved'} to ${MY_LIB[to]} (${CODE_LIB_FOLDERS[to]}\\${r.item.file})`, 'ok'),
+      e => toast(`It was not ${copy ? 'copied' : 'moved'}: ${errorText(e)}`, 'err'));
+  };
+  /** where an item can go: the re-assembler's to the user's libraries; the user's (a piece of code, a macro alone in
+   *  its file; one of a file of several copied only) to the re-assembler's */
+  const moveMenu = (i: CodeLibEntry): MenuItem[] => {
+    if (i.kind === 'reasm') return [
+      { label: 'Move to my code library', icon: 'upload', run: () => moveTo(i, 'code', false) },
+      { label: 'Move to my macro library… (made a macro)', run: () => moveTo(i, 'macro', false) },
+      { label: 'Copy to my code library', icon: 'copy', run: () => moveTo(i, 'code', true) },
+    ];
+    const f = fileOf(i), alone = !i.macro || (f?.macros?.length ?? 0) <= 1;
+    return [
+      ...(alone ? [{ label: 'Move to the re-assembler code library', icon: 'upload' as const, run: () => moveTo(i, 'reasm', false) }] : []),
+      { label: alone ? 'Copy to the re-assembler code library' : `Copy ${i.name} to the re-assembler code library`, icon: 'copy', run: () => moveTo(i, 'reasm', true) },
+    ];
+  };
   /** its library file imported by the source as it is, in place of the project's macro file */
   const importDirectly = (f: CodeLibItem): MenuItem[] => (lang === f.lang ? [{ label: `Import ${f.file} directly (${lang === '64tass' ? '.include' : '#import'} its library file)`, icon: 'play' as const, run: () => onInsert(f, 'import') }] : []);
   const exportAgain = (c: CodeLibItem, force = false) => {
@@ -157,6 +207,7 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
     }, e => toast(`It was not exported: ${errorText(e)}`, 'err'));
   };
   const insertMenu = (i: CodeLibEntry): MenuItem[] => {
+    if (!lang) { const g = onGo?.(i); return g ? [{ label: g.label, icon: 'target' as const, run: g.run }] : []; }
     const m = itemMacro(i);
     if (!m) return [{ label: 'Insert in the source', icon: 'play' as const, run: () => onInsert(i, 'code') }];
     return [{ label: `Insert the call: ${codeLibSignature(m, i.lang)}`, icon: 'play' as const, run: () => onInsert(i, 'call') }, { label: 'Insert its definition', run: () => onInsert(i, 'code') }];
@@ -172,6 +223,8 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
       ...(i.kind === 'macro' ? [{ label: 'Export…', icon: 'upload' as const, run: () => set({ exporting: [refOf(i)] }) }] : []),
       ...(f ? importDirectly(f) : []),
       { label: 'Show it in the folder', icon: 'folder', run: () => reveal({ kind: i.kind, file: i.file }) },
+      { sep: true },
+      ...moveMenu(i),
       { sep: true },
       { label: many ? `Take it out of ${i.file} (to the Recycle Bin)` : 'Move to the Recycle Bin', icon: 'trash', run: () => void trash(i) },
     ]);
@@ -233,7 +286,8 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
     const needs = f && e.macro ? codeLibNeeds(f.macros ?? [], e.macro, e.lang) : [];
     // (its file beside it when the file is not named after it; in its folder not)
     const showIn = !inFolder && !!e.macro && e.in !== e.name;
-    return <EntryRow key={`${e.file}/${e.macro ?? ''}`} entry={e} showIn={showIn} on={on} q={q} lang={lang} macro={m} needs={needs} primary={primary(e)}
+    return <EntryRow key={`${e.file}/${e.macro ?? ''}`} entry={e} showIn={showIn} on={on} q={q} lang={lang} macro={m} needs={needs} primary={primary(e)} go={lang ? null : onGo?.(e) ?? null}
+      onMove={(x, y) => onMenu(x, y, [{ header: `Move ${e.name}` }, ...moveMenu(e)])}
       mark={pm ? markOf(e) : undefined} body={markOf(e)}
       rowRef={on ? openRef : undefined} onToggle={() => set({ open: on ? null : ref })} onInsert={how => onInsert(e, how)} onCopy={() => onCopy(e.code, `Copied ${e.name}`)}
       onEdit={() => edit(e)} onMenu={(x, y) => menu(e, x, y)} />;
@@ -278,20 +332,23 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
   };
   return (
     <div className="side-inner cl-side">
-      <div className="side-title lib-title">Macros and code
+      <div className="side-title lib-title">{libs.length === 1 ? (libs[0] === 'reasm' ? 'Re-assembler' : T.tab) : 'Macros and code'}
         <span className="grow" />
-        <button className="icon-btn" title={`A new ${T.one} for the ${T.lib}, of the lines selected in the Assembler`} aria-label={`New ${T.one}`} disabled={!desktop} onClick={() => onNew(kind)}><Icon name="plus" size={14} /></button>
-        <button className="icon-btn" title={kind === 'macro' ? 'Put files of macros in the library, from anywhere (irq_lib.asm: a file and its macros)' : 'Put files in the code library, from anywhere'} aria-label={`Put files in the ${T.lib}`} disabled={!desktop} onClick={doImport}><Icon name="download" size={14} /></button>
+        <button className="icon-btn" title={`A new ${T.one} for the ${T.lib}, of the lines selected in ${source}${lang ? '' : ' (none: the block at the cursor)'}`} aria-label={`New ${T.one}`} disabled={!desktop} onClick={() => onNew(kind)}><Icon name="plus" size={14} /></button>
+        <button className="icon-btn" title={kind === 'macro' ? 'Put files of macros in the library, from anywhere (irq_lib.asm: a file and its macros)' : `Put files in the ${T.lib}, from anywhere`} aria-label={`Put files in the ${T.lib}`} disabled={!desktop} onClick={doImport}><Icon name="download" size={14} /></button>
         {kind === 'macro' && <button className="icon-btn" title="Export macros: to a file a source imports, or to a file of the library" aria-label="Export macros" disabled={!desktop || !ofKind.length} onClick={() => set({ exporting: open && open.kind === 'macro' ? [open] : [] })}><Icon name="upload" size={14} /></button>}
         <button className="icon-btn" title="Read the folders again" aria-label="Read the libraries again" disabled={!desktop || loading} onClick={() => void load()}><Icon name="refresh" size={14} /></button>
         <button className="icon-btn" title={listing ? `Open the folder: ${listing.folders[kind]}` : 'Open the folder'} aria-label={`Open the ${T.lib}'s folder`} disabled={!desktop} onClick={() => reveal()}><Icon name="folder" size={14} /></button>
       </div>
-      <div className="seg wide lib-kinds" role="tablist" aria-label="Libraries">
-        {(['macro', 'code'] as const).map(k => (
-          <button key={k} role="tab" aria-selected={kind === k} className={cx(kind === k && 'on')} onClick={() => set({ kind: k, color: '' })} title={`The ${CODE_LIB_TITLE[k].lib}`}>
-            {k === 'macro' ? 'Macros' : 'Code'} <span className="lib-n">{count(k)}</span></button>
+      {/* (the re-assembler's own library alone: what it is, under its name) */}
+      {libs.length === 1 && kind === 'reasm' && <p className="cl-sub small muted">Code taken from listings, apart from your own Macros and Code</p>}
+      {libs.length > 1 && <div className="seg wide lib-kinds" role="tablist" aria-label="Libraries">
+        {libs.map(k => (
+          <button key={k} role="tab" aria-selected={kind === k} className={cx(kind === k && 'on')} onClick={() => set({ kind: k, color: '' })}
+            title={k === 'reasm' ? 'The re-assembler code library: pieces of code taken from programs\' listings, apart from yours' : `The ${CODE_LIB_TITLE[k].lib}`}>
+            {CODE_LIB_TITLE[k].tab} <span className="lib-n">{count(k)}</span></button>
         ))}
-      </div>
+      </div>}
       <div className="side-search"><Icon name="search" size={14} /><label htmlFor="cl-q" className="sr-only">Search the libraries</label>
         <input id="cl-q" ref={search} value={q} spellCheck={false} onChange={e => set({ q: e.target.value })} placeholder="Search names, descriptions, code"
           onKeyDown={e => { if (e.key === 'Escape' && q) { e.stopPropagation(); set({ q: '' }); } }} />
@@ -311,7 +368,7 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
       </div>}
       {error && <p className="side-hint err-text" role="alert">{error}</p>}
       {project && kind === 'macro' && lang && <ProjectMacros project={project} built={built} lang={lang} fileName={fileName} onTakeOut={(names, colls) => fileChange(names, colls, false)} />}
-      <div className="cl-list" ref={listRef} role="list" aria-label={kind === 'macro' ? 'The macro library' : 'The code library'}>
+      <div className="cl-list" ref={listRef} role="list" aria-label={`The ${T.lib}`}>
         {groups.map(g => (
           <div key={g.letter} className="cl-group" role="group" aria-label={g.letter} ref={el => { groupRef.current[g.letter] = el; }}>
             <div className="cl-letter" aria-hidden>{g.letter}<span className="lib-n">{g.items.length}</span></div>
@@ -321,11 +378,14 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
         {!desktop ? <p className="side-hint">The libraries are folders on your computer: they need the desktop app.</p>
           : listing && !ofKind.length ? <div className="side-hint lib-empty">
             <p><b>No {T.many} yet.</b></p>
-            <p>Select the lines in the Assembler, right-click them and choose <b>Add to the {T.lib}…</b> (or <b>+</b> here). {kind === 'macro' ? 'Code that is not a macro yet is made one; a click on a macro\'s first line takes the whole macro.' : 'The code is kept as it is.'}</p>
+            {kind === 'reasm' && !lang
+              ? <p>Select the lines in the listing, right-click them and choose <b>Add to the re-assembler code library…</b> (or <b>+</b> here; nothing selected: the block at the cursor). The lines are kept as the listing writes them, with where they were taken from. This library is apart from your own Macros and Code: an item moves there (or is copied) with its menu.</p>
+              : kind === 'reasm' ? <p>Pieces of code taken from programs' listings in the re-assembler (select the lines, right-click them, <b>Add to the re-assembler code library…</b>), apart from your own Macros and Code. A piece of yours goes here with its menu: <b>Move to the re-assembler code library</b>.</p>
+              : <p>Select the lines in the Assembler, right-click them and choose <b>Add to the {T.lib}…</b> (or <b>+</b> here). {kind === 'macro' ? 'Code that is not a macro yet is made one; a click on a macro\'s first line takes the whole macro.' : 'The code is kept as it is.'}</p>}
             {kind === 'macro' && <p>Files of macros you have (irq_lib.asm) go in with <button type="button" className="linkish" onClick={doImport}>Put files in…</button>: each file and all its macros.</p>}
             <p>Each is a file in <button type="button" className="linkish" onClick={() => reveal()}>{listing.folders[kind]}</button>, which a source can import too.</p>
           </div>
-            : ofKind.length > 0 && !rows.length ? <p className="side-hint">No {T.one === 'macro' ? 'macro' : 'code'} matches{q.trim() ? ` “${q.trim()}”` : ''}{color ? ' in that colour' : ''}.{count(kind === 'macro' ? 'code' : 'macro') ? ` ${count(kind === 'macro' ? 'code' : 'macro')} in ${kind === 'macro' ? 'Code' : 'Macros'}.` : ''}</p> : null}
+            : ofKind.length > 0 && !rows.length ? <p className="side-hint">No {T.one === 'macro' ? 'macro' : 'code'} matches{q.trim() ? ` “${q.trim()}”` : ''}{color ? ' in that colour' : ''}.{libs.filter(k => k !== kind && count(k)).map(k => ` ${count(k)} in ${CODE_LIB_TITLE[k].tab}.`).join('')}</p> : null}
       </div>
       {listing && <button type="button" className="linkish small lib-dir mono" title="Open the folder (Settings → General → Library folder moves it)" onClick={() => reveal()}>{listing.folders[kind]}</button>}
     </div>
@@ -333,8 +393,12 @@ export function CodeLibView({ desktop, lang, onInsert, onNew, onMenu, onCopy, to
 }
 
 /** a row of the list: a macro (`showIn`: its file's name beside it) or a piece of code, opened on a click */
-function EntryRow({ entry: i, showIn, on, q, lang, macro: m, needs, primary, mark, body, rowRef, onToggle, onInsert, onCopy, onEdit, onMenu }: {
+function EntryRow({ entry: i, showIn, on, q, lang, macro: m, needs, primary, go, mark, body, rowRef, onToggle, onInsert, onCopy, onEdit, onMenu, onMove }: {
   entry: CodeLibEntry; showIn: boolean; on: boolean; q: string; lang: ScriptLang | null; macro: CodeLibMacro | null; needs: string[]; primary: 'code' | 'call';
+  /** with no source to put it in (the re-assembler): where it was taken from gone to, when that program is open */
+  go: { label: string; run: () => void } | null;
+  /** the menu that moves it to another library */
+  onMove: (x: number, y: number) => void;
   /** the project's macro file has it (the row says so); `body`: what its body offers for the file */
   mark?: FileMark; body?: FileMark;
   rowRef?: React.Ref<HTMLDivElement>; onToggle: () => void; onInsert: (how: 'code' | 'call') => void; onCopy: () => void; onEdit: () => void; onMenu: (x: number, y: number) => void;
@@ -343,8 +407,8 @@ function EntryRow({ entry: i, showIn, on, q, lang, macro: m, needs, primary, mar
   const other = lang && i.lang !== lang;
   return (
     <div role="listitem" className={cx('cl-item', on && 'open', i.color && 'tinted')} style={clVar(i.color)} ref={rowRef}>
-      <button className="cl-row" aria-expanded={on} title={`${i.name}${showIn ? ` (in ${i.file})` : ''}${first ? ` · ${first}` : ''}\nMade ${codeLibTime(i.created)}${i.from ? ` · from ${i.from}` : ''}\nClick to see it, double-click to put ${primary === 'call' ? 'its call' : 'it'} in the source`}
-        onClick={e => { if (e.detail < 2) onToggle(); }} onDoubleClick={() => { if (lang) onInsert(primary); }}
+      <button className="cl-row" aria-expanded={on} title={`${i.name}${showIn ? ` (in ${i.file})` : ''}${first ? ` · ${first}` : ''}\nMade ${codeLibTime(i.created)}${i.from ? ` · from ${i.from}` : ''}\nClick to see it${lang ? `, double-click to put ${primary === 'call' ? 'its call' : 'it'} in the source` : go ? `, double-click: ${go.label} (where it was taken from)` : ''}`}
+        onClick={e => { if (e.detail < 2) onToggle(); }} onDoubleClick={() => { if (lang) onInsert(primary); else go?.run(); }}
         onContextMenu={e => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
         <span className="cl-name-row"><span className="cl-name">{i.name}</span>{showIn && <span className="cl-in" title={`In the file ${i.file}`}>{i.in}</span>}{other && <span className="cl-lang" title={`Written for ${LANG_TITLE[i.lang]}: the project is ${LANG_TITLE[lang!]}`}>{i.lang === '64tass' ? '64tass' : 'Kick'}</span>}
           {mark?.inIt && <span className={cx('cl-infile', mark.added && 'added')} title={`In ${mark.file} with its file ${mark.lib}: ${mark.added ? 'the file is used in the project' : mark.why === 'called' ? 'the code calls one of its macros' : 'a file in it uses one of its macros'}`}><Icon name="check" size={10} />{mark.file}</span>}
@@ -353,13 +417,14 @@ function EntryRow({ entry: i, showIn, on, q, lang, macro: m, needs, primary, mar
         {first ? <span className="cl-desc">{first}</span> : !sig || sig === i.name ? <span className="cl-desc muted">{i.code.split('\n').find(l => l.trim())?.trim() ?? ''}</span> : null}
         {hit === 'code' && <span className="cl-hit small">found in the code</span>}
       </button>
-      {on && <ItemBody item={i} lang={lang} macro={m} needs={needs} primary={primary} mark={body} onInsert={onInsert} onCopy={onCopy} onEdit={onEdit} onMore={onMenu} />}
+      {on && <ItemBody item={i} lang={lang} macro={m} needs={needs} primary={primary} go={go} mark={body} onInsert={onInsert} onCopy={onCopy} onEdit={onEdit} onMore={onMenu} onMove={onMove} />}
     </div>);
 }
 
 /** an item opened in the list: its description, its code, when it was made and where it came from, and what to do */
-function ItemBody({ item: i, lang, macro, needs, primary, mark, onInsert, onCopy, onEdit, onMore }: { item: CodeLibEntry; lang: ScriptLang | null; macro: CodeLibMacro | null; needs: string[]; primary: 'code' | 'call'; mark?: FileMark;
-  onInsert: (how: 'code' | 'call') => void; onCopy: () => void; onEdit: () => void; onMore: (x: number, y: number) => void }) {
+function ItemBody({ item: i, lang, macro, needs, primary, go, mark, onInsert, onCopy, onEdit, onMore, onMove }: { item: CodeLibEntry; lang: ScriptLang | null; macro: CodeLibMacro | null; needs: string[]; primary: 'code' | 'call';
+  go: { label: string; run: () => void } | null; mark?: FileMark;
+  onInsert: (how: 'code' | 'call') => void; onCopy: () => void; onEdit: () => void; onMore: (x: number, y: number) => void; onMove: (x: number, y: number) => void }) {
   const [all, setAll] = useState(false);
   const lines = i.code.split('\n'), long = lines.length > 14 && !all;
   const no = lang ? '' : 'Open an Assembler project to put it in a source';
@@ -375,7 +440,9 @@ function ItemBody({ item: i, lang, macro, needs, primary, mark, onInsert, onCopy
         {i.from && <span title="Where it was taken from">From {i.from}</span>}
       </div>
       <div className="bm-actions">
-        {macro ? <>
+        {/* (with no source to put it in: where it was taken from, in the program open) */}
+        {!lang ? go && <button className="btn small primary" title={`${go.label}: where it was taken from (${i.from})`} onClick={go.run}><Icon name="target" size={12} />{go.label}</button>
+        : macro ? <>
           <button className={cx('btn small', primary === 'call' && 'primary')} disabled={!lang} title={no || `Put ${codeLibSignature(macro, i.lang)} where the caret is (Tab goes from parameter to parameter)`} onClick={() => onInsert('call')}><Icon name="play" size={12} />Insert call</button>
           <button className={cx('btn small', primary === 'code' && 'primary')} disabled={!lang} title={no || `Put the macro's definition in the source, at the caret's line${needs.length ? `, with ${needs.join(', ')} it uses` : ''}`} onClick={() => onInsert('code')}>Insert definition</button>
         </> : <button className="btn small primary" disabled={!lang} title={no || 'Put the code in the source, at the caret\'s line'} onClick={() => onInsert('code')}><Icon name="play" size={12} />Insert</button>}
@@ -388,6 +455,8 @@ function ItemBody({ item: i, lang, macro, needs, primary, mark, onInsert, onCopy
               : <button className="btn small" title={`Use ${mark.lib} in the project: all its ${mark.count} macro${mark.count === 1 ? '' : 's'} go in ${mark.file}, which the main source imports once`} onClick={mark.onUse}><Icon name="plus" size={12} />Use {mark.count > 1 ? `${mark.lib} (${mark.count})` : 'in project'}</button>)}
         <button className="btn small" onClick={onCopy} title="Copy the code"><Icon name="copy" size={12} />Copy</button>
         <button className="btn small" onClick={onEdit}><Icon name="pencil" size={12} />Edit</button>
+        {/* (the re-assembler's pieces: to the user's own libraries) */}
+        {i.kind === 'reasm' && <button className="btn small" title="Move it (or copy it) to your own code library, or to the macro library made a macro" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); onMove(r.left, r.bottom + 2); }}><Icon name="upload" size={12} />Move…</button>}
         <button className="icon-btn" aria-label={`More for ${i.name}`} title="More" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); onMore(r.left, r.bottom + 2); }}><Icon name="more" size={14} /></button>
       </div>
     </div>

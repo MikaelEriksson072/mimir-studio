@@ -3,7 +3,9 @@
  * (wrapped in `.macro Name(…) { … }`, 64tass's `Name .macro … .endm`; the name and the parameters typed are the
  * macro's), until the code is changed by hand. A macro is in a file: a file of its own (named after it), any file of the
  * library (one with one macro takes a second), or a new file; its name is its macro's. A file itself (Edit the file…):
- * its name, its description, its colour and its whole code. When it was made is shown, and where the code came from. */
+ * its name, its description, its colour and its whole code. When it was made is shown, and where the code came from.
+ * The re-assembler's code library takes lines of a listing as they are; a piece of code moved from it to the macro
+ * library is made a macro here (moved: `was` in the other library). */
 import { useMemo, useState, type KeyboardEvent } from 'react';
 import { CODE_LIB_DESCRIPTION_MAX, CODE_LIB_FOLDERS, CODE_LIB_NAME_MAX, codeLibFileName, codeLibIsMacro, codeLibMacros, codeLibOrder, codeLibSignature, codeLibStem, codeLibWrap, guessAsmLang, LANG_TITLE, macroName, splitLabel, type CodeLibKind, type ScriptLang } from '@mimir/core';
 import { Icon } from '../lib/icons';
@@ -35,7 +37,7 @@ export function CodeLibDialog({ editing, toast, onSaved, onClose }: {
   const was = codeLibItemOf(items, editing.was ?? null);
   // a macro of the library edited, or a file of the macro library itself (Edit the file…)
   const macroEdit = !!editing.was?.macro;
-  const fileEdit = !!editing.was && !macroEdit && editing.kind === 'macro';
+  const fileEdit = !!editing.was && !macroEdit && editing.kind === 'macro' && editing.was.kind === 'macro';
   const files = useMemo(() => codeLibOrder((items ?? []).filter(i => i.kind === 'macro')), [items]);
   const fileOfWas = macroEdit ? files.find(f => f.file === editing.was!.file) ?? null : null;
   // (a macro alone in its file: that file is its own)
@@ -45,10 +47,10 @@ export function CodeLibDialog({ editing, toast, onSaved, onClose }: {
   // the code as it was given or typed, and whether it is wrapped in a macro (lines taken that are not one, for the
   // macro library)
   const [text, setText] = useState(editing.code);
-  const [wrap, setWrap] = useState(!editing.was && editing.kind === 'macro' && !!editing.code.trim() && !codeLibIsMacro(editing.code, editing.lang));
+  const [wrap, setWrap] = useState(editing.wrap ?? (!editing.was && editing.kind === 'macro' && !!editing.code.trim() && !codeLibIsMacro(editing.code, editing.lang)));
   const [name, setName] = useState(editing.name ?? firstName(editing.code, editing.lang, editing.kind));
   const [params, setParams] = useState('');
-  const [description, setDescription] = useState(was?.description ?? '');
+  const [description, setDescription] = useState(editing.description ?? was?.description ?? '');
   const [color, setColor] = useState(editing.color ?? was?.color ?? '');
   // the file it goes in, and a new file's name
   const [into, setInto] = useState(editing.into ? ('file' in editing.into ? (alone && editing.into.file === fileOfWas?.file ? OWN : editing.into.file) : NEW) : OWN);
@@ -83,7 +85,9 @@ export function CodeLibDialog({ editing, toast, onSaved, onClose }: {
             : target && target.lang !== lang ? `${target.file} is written for ${LANG_TITLE[target.lang]}.`
               : twice ? `${target!.file} has a macro named ${macroNamed} already.` : null;
   const T = CODE_LIB_TITLE[kind];
-  const heading = fileEdit ? `Edit the file ${was?.file ?? ''}` : was ? `Edit ${was.name}` : target ? `Add a macro to ${target.file}` : `Add to the ${T.lib}`;
+  // (an item of another library: moved here)
+  const moving = !!was && !!editing.was && editing.was.kind !== kind;
+  const heading = fileEdit ? `Edit the file ${was?.file ?? ''}` : moving ? `Move ${was!.name} to the ${target ? target.file : T.lib}` : was ? `Edit ${was.name}` : target ? `Add a macro to ${target.file}` : `Add to the ${T.lib}`;
   const saveIt = async () => {
     if (problem || busy) return;
     setBusy(true);
@@ -94,7 +98,7 @@ export function CodeLibDialog({ editing, toast, onSaved, onClose }: {
         kind, name: (inFile || macroEdit ? macroNamed : name).trim(), code, lang, description: description.replace(/^(\s*\n)+/, '').trimEnd(), ...(color ? { color } : {}), ...(editing.from ? { from: editing.from } : {}), ...(editing.was ? { was: editing.was } : {}),
         ...where,
       });
-      toast(r.macro ? (was ? `${r.macro} is saved (${r.item.file})` : `${r.macro} is in ${r.item.file}`) : was ? `${r.item.file} is saved` : `${r.item.name} is in the ${T.lib} (${r.item.file})`, 'ok');
+      toast(moving ? `${was!.name} is moved to the ${T.lib} (${CODE_LIB_FOLDERS[kind]}\\${r.item.file})` : r.macro ? (was ? `${r.macro} is saved (${r.item.file})` : `${r.macro} is in ${r.item.file}`) : was ? `${r.item.file} is saved` : `${r.item.name} is in the ${T.lib} (${r.item.file})`, 'ok');
       onSaved(); onClose();
     } catch (e) { toast(`It was not saved: ${errorText(e)}`, 'err'); setBusy(false); }
   };
@@ -109,7 +113,7 @@ export function CodeLibDialog({ editing, toast, onSaved, onClose }: {
       {/* (no form: an Enter that opened the dialog from the palette must not save it; Ctrl+Enter saves) */}
       <div className="modal-body" onKeyDown={ctrlEnter}>
         <div className="cl-dlg-row">
-          {!fileEdit && !macroEdit && <div className="field"><span>Library</span>
+          {!fileEdit && !macroEdit && kind !== 'reasm' && <div className="field"><span>Library</span>
             <div className="seg" role="radiogroup" aria-label="Library">
               {(['macro', 'code'] as const).map(k => <button key={k} type="button" role="radio" aria-checked={kind === k} className={cx(kind === k && 'on')}
                 onClick={() => { setKind(k); if (k === 'code') setWrap(false); else if (!was && text.trim() && !codeLibIsMacro(text, lang)) setWrap(true); }}>{k === 'macro' ? 'Macros' : 'Code'}</button>)}
@@ -155,11 +159,11 @@ export function CodeLibDialog({ editing, toast, onSaved, onClose }: {
         </p>
       </div>
       <div className="modal-foot">
-        {was && <button type="button" className="btn ghost" onClick={trash}><Icon name="trash" size={13} />{macroEdit && !alone ? `Take it out of ${was.file}` : fileEdit ? 'Move the file to the Recycle Bin' : 'Move to the Recycle Bin'}</button>}
+        {was && !moving && <button type="button" className="btn ghost" onClick={trash}><Icon name="trash" size={13} />{macroEdit && !alone ? `Take it out of ${was.file}` : fileEdit ? 'Move the file to the Recycle Bin' : 'Move to the Recycle Bin'}</button>}
         <span className="grow" />
         {problem ? <span className="small muted">{problem}</span> : <span className="small muted">Ctrl+Enter saves</span>}
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
-        <button type="button" className="btn primary" disabled={!!problem || busy} onClick={() => void saveIt()}>{was ? 'Save' : inFile ? `Add to ${target ? target.file : newFile.trim() ? `${codeLibStem(newFile)}.asm` : 'the new file'}` : `Add to ${kind === 'macro' ? 'Macros' : 'Code'}`}</button>
+        <button type="button" className="btn primary" disabled={!!problem || busy} onClick={() => void saveIt()}>{moving ? 'Move' : was ? 'Save' : inFile ? `Add to ${target ? target.file : newFile.trim() ? `${codeLibStem(newFile)}.asm` : 'the new file'}` : kind === 'reasm' ? 'Add to the library' : `Add to ${CODE_LIB_TITLE[kind].tab}`}</button>
       </div>
     </Modal>
   );

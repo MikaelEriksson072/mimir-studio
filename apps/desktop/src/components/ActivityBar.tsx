@@ -6,9 +6,11 @@ const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer']
 /** what a view at work is doing, in its button's tip */
 const BUSY: Partial<Record<Activity, string>> = { pack: 'packing', scripts: 'a script is running' };
 
-export function ActivityBar({ activity, specOpen, counts = {}, busy = {}, hide, onActivity, onSpec, onPalette }: {
+export function ActivityBar({ activity, specOpen, counts = {}, busy = {}, hide, labels, onActivity, onSpec, onPalette }: {
   /** views the project has not (an Assembler project's, spec 10.7) */
   hide?: readonly Activity[];
+  /** views named otherwise in this kind of project (the re-assembler's code library) */
+  labels?: Partial<Record<Activity, string>>;
   /** the view the side panel shows; null: the side panel is collapsed */
   activity: Activity | null; specOpen: boolean;
   /** a number shown on a view's button (the bookmarks, the scripts, the ranges to pack, what is in the library) */
@@ -19,7 +21,7 @@ export function ActivityBar({ activity, specOpen, counts = {}, busy = {}, hide, 
 }) {
   return (
     <nav className="activity" aria-label="Views">
-      {ITEMS.filter(([k]) => !hide?.includes(k)).map(([k, ic, l]) => (
+      {ITEMS.filter(([k]) => !hide?.includes(k)).map(([k, ic, own]) => [k, ic, labels?.[k] ?? own] as const).map(([k, ic, l]) => (
         <button key={k} className={cx(activity === k && 'on', busy[k] && 'busy')} title={busy[k] ? `${l}: ${BUSY[k] ?? 'working'}…` : activity === k ? `${l}: a click collapses the side panel (Ctrl+Shift+B)` : l} aria-label={l.replace(/ \(.*\)$/, '')} aria-pressed={activity === k} aria-busy={busy[k] || undefined} onClick={() => onActivity(k)}>
           <Icon name={ic} size={20} />{busy[k] ? <span className="act-busy spinner" aria-hidden /> : counts[k] ? <span className="act-count">{counts[k]}</span> : null}
         </button>

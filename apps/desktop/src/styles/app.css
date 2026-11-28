@@ -2063,6 +2063,7 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 /* (the list scrolls under the title, the libraries, the search and the letters, which stay) */
 .cl-side { height: 100%; min-height: 0; }
 .cl-side .lib-title .icon-btn { width: 24px; height: 24px; align-self: center; }
+.cl-side .cl-sub { margin: -4px 14px 6px; }
 .cl-clear { width: 18px; height: 18px; margin-right: -4px; }
 .cl-colors { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 14px 6px; }
 .cl-colors .bm-sw { width: 14px; height: 14px; }

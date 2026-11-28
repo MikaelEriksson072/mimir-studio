@@ -1,5 +1,5 @@
-/* The macro and code libraries (spec 10.8) as the window has them: what the main process read from the folders Macros and
- * Code, the item open in the list (a collection's macro too), the library shown, the search and the colour picked out,
+/* The macro and code libraries (spec 10.8) as the window has them: what the main process read from the folders Macros,
+ * Code and Re-assembler (the re-assembler's pieces of code, taken from listings), the item open in the list (a collection's macro too), the library shown, the search and the colour picked out,
  * the collections opened, whether every macro is listed by its own letter, and the dialogs that add an item or change
  * one and that export macros. The files are the main process's; this asks it again after each change. */
 import { create } from 'zustand';
@@ -26,6 +26,9 @@ export interface CodeLibEditing {
   into?: { file: string } | { name: string };
   /** its colour at first (a collection's macro its own; missing: the item's) */
   color?: string;
+  /** the code made a macro at first (a piece of code moved or copied to the macro library), and its description */
+  wrap?: boolean;
+  description?: string;
 }
 
 interface CodeLibState {
