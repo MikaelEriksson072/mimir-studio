@@ -1691,3 +1691,100 @@ test('Export in an Assembler project: the program as one source with its imports
   expect(lines).toContain('* = $2000\nsprite:\n    .byte $00, $05, $0a');
   await closeProject(page, 'exp');
 });
+
+test('the editor split in an Assembler project: a second editor on the same file, what is typed in one in the other, F12 and another file in the split, a breakpoint in both, beside or under, Ctrl+\\, kept for the folder', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'split');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\n#import "irq.asm"\nstart:\n  jsr setup\n  lda #1\n  sta $d020\n  rts\n');
+  writeFileSync(join(dir, 'irq.asm'), 'setup:\n  sei\n  cli\n  rts\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  const first = page.locator('.scr-editor');
+  await first.locator('.view-lines').waitFor();
+  await expect.poll(() => editorText(page)).toContain('jsr setup');
+
+  // Split: a second editor beside the first, on its file
+  const splitBtn = page.getByRole('button', { name: 'Split', exact: true });
+  await splitBtn.click();
+  await expect(splitBtn).toHaveAttribute('aria-pressed', 'true');
+  const split = page.getByRole('group', { name: 'The split' });
+  const file = split.getByLabel('The split\'s file');
+  await expect(file).toHaveValue('main.asm');
+  const second = split.locator('.asm-side-editor');
+  const sideText = () => second.locator('.view-lines').evaluate(el => [...el.querySelectorAll<HTMLElement>('.view-line')].sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top)).map(l => (l.textContent ?? '').replace(/ /g, ' ')).join('\n'));
+  await expect.poll(sideText).toContain('jsr setup');
+  await expect(page.locator('.asm-panes.split.right')).toHaveCount(1);
+  await shot(page, 'split-1-beside');
+
+  // typed in the split: in the first editor at once, and written to the file; typed in the first: in the split
+  await second.locator('.view-lines').click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('\n// from the split');
+  await expect.poll(() => editorText(page)).toContain('// from the split');
+  await expect.poll(() => readFileSync(join(dir, 'main.asm'), 'utf8')).toContain('// from the split');
+  await first.locator('.view-lines').click();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('End');
+  await page.keyboard.insertText(' // from the first');
+  await expect.poll(sideText).toContain('BasicUpstart2(start) // from the first');
+  // (one undo for both: Ctrl+Z in the split takes back what was typed in the first)
+  await second.locator('.view-lines').click();
+  await page.keyboard.press('Control+z');
+  await expect.poll(() => editorText(page)).not.toContain('// from the first');
+
+  // a breakpoint set in the split's gutter is on the line in the first editor too
+  const box = await second.locator('.line-numbers', { hasText: /^5$/ }).boundingBox();
+  const glyph = await second.locator('.glyph-margin').boundingBox();
+  await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);
+  await expect(second.locator('.scr-bp')).toHaveCount(1);
+  await expect(first.locator('.scr-bp')).toHaveCount(1);
+
+  // F12 in the split: the definition in another file shown in the split, the first editor keeps its file
+  await second.locator('.view-line', { hasText: 'jsr setup' }).getByText('setup').click();
+  await page.keyboard.press('F12');
+  await expect(file).toHaveValue('irq.asm');
+  await expect.poll(sideText).toContain('sei');
+  await expect(page.getByLabel('File name')).toHaveValue('main.asm');
+  // Ctrl+Tab in the split goes to the next file of the tabs (main.asm, the only tab)
+  await page.keyboard.press('Control+Tab');
+  await expect(file).toHaveValue('main.asm');
+  // the split's file chosen from its list: the folder's sources
+  await file.selectOption('irq.asm');
+  await expect.poll(sideText).toContain('setup:');
+
+  // under the editor, then closed with its ×; Ctrl+\ in the first opens it again, on the first's file
+  await split.getByRole('button', { name: 'Put the split under the editor' }).click();
+  await expect(page.locator('.asm-panes.split.down')).toHaveCount(1);
+  await shot(page, 'split-2-under');
+  await split.getByRole('button', { name: 'Close the split' }).click();
+  await expect(split).toHaveCount(0);
+  await expect(splitBtn).toHaveAttribute('aria-pressed', 'false');
+  await first.locator('.view-lines').click();
+  await page.keyboard.press('Control+Backslash');
+  await expect(split).toBeVisible();
+  await expect(file).toHaveValue('main.asm');
+  await expect(page.locator('.asm-panes.split.down')).toHaveCount(1);
+  // Ctrl+F4 in the split closes it
+  await second.locator('.view-lines').click();
+  await page.keyboard.press('Control+F4');
+  await expect(split).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'main.asm' })).toHaveCount(1);
+
+  // a file's menu in the list (and a tab's) opens it in the split; Alt+click in the list too
+  await tree(page).getByRole('treeitem', { name: 'irq.asm' }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: /^Open in the split/ }).click();
+  await expect(file).toHaveValue('irq.asm');
+  await split.getByRole('button', { name: 'Close the split' }).click();
+  await tree(page).getByRole('treeitem', { name: 'irq.asm' }).click({ modifiers: ['Alt'] });
+  await expect(file).toHaveValue('irq.asm');
+  await expect(page.getByLabel('File name')).toHaveValue('main.asm');
+
+  // kept for the folder: back to the start screen and in again, the split is there with its file
+  await closeProject(page, 'split');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await page.getByRole('region', { name: 'Folders opened before' }).getByRole('button', { name: /^split / }).click();
+  await expect(file).toHaveValue('irq.asm');
+  await expect.poll(sideText).toContain('setup:');
+  await closeProject(page, 'split');
+});

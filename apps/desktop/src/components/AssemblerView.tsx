@@ -9,7 +9,6 @@
  * and the C64 screen; under the code the problems, the last build and the last run. The start screen's Assembler page
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmBlockMark, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmArgLibdirs, asmDropPath, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, splitArgs, splitLabel, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
@@ -18,7 +17,7 @@ import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx, errorText, fmtBytes } from '../lib/util';
-import { NO_TABS, useAssembler, type AsmMachineKind, type AsmTabs } from '../store/assembler';
+import { NO_TABS, useAssembler, type AsmMachineKind, type AsmSplit, type AsmTabs } from '../store/assembler';
 import { useAsmLink, type AsmBuilt, type AsmDropped, type AsmInsert } from '../store/asmlink';
 import { runScreenSize, useScripts } from '../store/scripts';
 import { useUi } from '../store/ui';
@@ -33,14 +32,12 @@ import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
 import { codeLibAllMacros, codeLibCall, codeLibMacroAt, codeLibMacros, codeLibProjectFile, codeLibSignature, codeLibTake, definesMacro, isBookmarkColor, kickToTass, type AsmBlockKind, type AsmBookmark, type CodeLibKind } from '@mimir/core';
 import { useCodeLib } from '../store/codelib';
-import { AsmMacroPanel, AsmMacroZone, macroZoneRows } from './AsmMacroList';
+import { AsmMacroPanel } from './AsmMacroList';
 import type { AsmLibMacro } from '../monaco/providers';
 import type { AsmMacroDefined } from '../store/asmlink';
 import { asmBookmarkSpan } from './AsmBookmarks';
 import { asmLineBytes, linesSelCount, selCountText } from '../lib/selcount';
-import { gfxColsFor, vicMc } from '../lib/gfxlines';
-import { asmHiddenRanges, asmPictureHeight, asmPictures, type AsmPicture } from '../lib/asmgfx';
-import { AsmPictureZone } from './AsmPictures';
+import { useMacroZones, usePictureZones } from './AsmEditorZones';
 
 const kr = window.kr;
 type MonacoNs = typeof Monaco;
@@ -62,9 +59,23 @@ const DEBUG_SLICE = 400_000;
 const WRITE_MS = 500;
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
-/** what Monaco's hidden areas of the pictures' lines are kept under (its folding has its own) */
-const PICTURE_LINES = 'mimir.pictures';
-const NO_SPRITES: readonly { addr: Addr; n: number }[] = [];
+/** the editors' options (the first and the split's are alike) */
+const editorOptions = (): Monaco.editor.IStandaloneEditorConstructionOptions => ({
+  model: null, theme: 'mimir', automaticLayout: true, fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
+  fontSize: 13, lineHeight: 20, minimap: { enabled: false }, scrollBeyondLastLine: false, renderLineHighlight: 'all',
+  smoothScrolling: true, padding: { top: 8 }, guides: { indentation: false }, stickyScroll: { enabled: false }, mouseWheelZoom: true,
+  tabSize: 8, insertSpaces: true, quickSuggestions: { other: true, comments: false, strings: false }, wordBasedSuggestions: 'off', acceptSuggestionOnEnter: 'off', tabCompletion: 'off', suggestOnTriggerCharacters: true,
+  glyphMargin: true,
+});
+/** Ctrl+\ splits the editor: the key Windows calls VK_OEM_5, as Monaco and VS Code take it (on a Swedish keyboard that is
+ *  §, top left; the key right of Ä is Monaco's Ctrl+/, a line commented) */
+const isSplitKey = (e: KeyboardEvent) => (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.keyCode === 220;
+/** the key's name as the keyboard has it, read once (§ on a Nordic keyboard) */
+let splitKeyName = 'Ctrl+\\';
+void (navigator as unknown as { keyboard?: { getLayoutMap?: () => Promise<Map<string, string>> } }).keyboard?.getLayoutMap?.()
+  .then(m => { if (m.get('Backquote') === '§') splitKeyName = 'Ctrl+§'; }, () => null);
+/** the split's share of the room, as it may be dragged */
+const splitSize = (v: number) => Math.max(0.15, Math.min(0.85, v));
 /** a file's name in a path of the computer's (\ or /), as baseName is of a path in the folder */
 const fileName = (path: string) => path.replace(/^.*[\\/]/, '');
 /** `fn` on each of `items`, `n` at a time */
@@ -327,6 +338,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     for (const p of t.open) { const q = at(p); if (q && !open.includes(q)) { open.push(q); if (p === t.preview) preview = q; } }
     if (open.length !== t.open.length || open.some((p, i) => p !== t.open[i]) || preview !== t.preview) setTabs({ open, preview });
     if (s && !now.has(s)) { const q = at(s); setShown(q ?? open[Math.min(Math.max(0, t.open.indexOf(s)), open.length - 1)] ?? null); }
+    // (the split's file renamed: it follows it; gone: the split is closed)
+    const sp = splitRef.current;
+    if (sp && !now.has(sp.path)) { const q = at(sp.path); if (q) setSplit({ ...sp, path: q }); else closeSplit(); }
   };
 
   /* ---- the files: read when the folder opens, written as they are typed, read again when they change outside ---- */
@@ -503,17 +517,132 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const views = useRef<Record<string, Monaco.editor.ICodeEditorViewState | null>>({});
   const [state, setState] = useState<'loading' | 'ready' | 'fallback'>('loading');
   const applying = useRef(false);
-  /** the byte count beside a selection: the check it counts by (the debugged one while debugging), each line's bytes in
-   *  the file shown (from that check), and what places it (the editor's, once it is made) */
+  /** the byte count beside a selection: the check it counts by (the debugged one while debugging), and what places it
+   *  in each editor (once it is made) */
   const selCheck = useRef<AsmCheck | null>(null);
-  const selBytes = useRef<{ c: AsmCheck; p: string; m: Map<number, number> } | null>(null);
-  const placeCountRef = useRef<() => void>(() => { });
+  const placeCounts = useRef<{ main: () => void; side: () => void }>({ main: () => { }, side: () => { } });
   /** a line to show once its file is in the editor */
   /** (`soft`: the debugger's line, scrolled to only when it is out of view, the focus left where it is) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
-  const keys = useRef({ debugger: () => { }, block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { },
-    bookmark: () => { }, bmJump: (_dir: 1 | -1) => { }, bmClick: (_line: number) => { }, bmSync: () => { }, bmFlush: () => { }, codeLib: (_kind: CodeLibKind) => { } });
+  const keys = useRef({ debugger: () => { }, block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_p: string, _line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { },
+    bookmark: () => { }, bmJump: (_dir: 1 | -1) => { }, bmClick: (_p: string, _line: number) => { }, bmSync: () => { }, bmFlush: () => { }, codeLib: (_kind: CodeLibKind) => { },
+    split: () => { }, side: (_p: string, _o?: OpenAt) => { } });
+
+  /* ---- the split: a second editor beside the first (or under it), on the same file or another, to write in two places
+     at once. The files' models are the two editors' own: what is typed in one is in the other at once (its undo too),
+     and the problems, the breakpoints and the bookmarks are on the lines in both ---- */
+  const split = ui.splits[dir] ?? null;
+  const splitRef = useRef(split); splitRef.current = split;
+  const setSplit = (sp: AsmSplit | null) => useAssembler.getState().setSplit(dir, sp);
+  const host2 = useRef<HTMLDivElement>(null);
+  const panes = useRef<HTMLDivElement>(null);
+  const ed2 = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const views2 = useRef<Record<string, Monaco.editor.ICodeEditorViewState | null>>({});
+  const reveal2 = useRef<{ path: string; line?: number; col?: number; soft?: boolean; focus?: boolean } | null>(null);
+  /** the split's editors made (each a new one when the split opens: what is drawn in it is drawn again) */
+  const [ed2Gen, setEd2Gen] = useState(0);
+  /** the editor typed in last (the split's or the first): its keys, its menu, Insert block and the libraries act there,
+   *  and a line asked for in the file the split shows goes there */
+  const pane = useRef<'main' | 'side'>('main');
+  const [paneOn, setPaneOn] = useState<'main' | 'side'>('main');
+  const toPane = (w: 'main' | 'side') => { pane.current = w; setPaneOn(w); };
+  /** the editor acted in and its file: the split's when it was used last, else the first (and the file it shows) */
+  const act = (): { e: Monaco.editor.IStandaloneCodeEditor | null; path: string | null; side: boolean } => {
+    const e2 = ed2.current, m2 = e2?.getModel();
+    if (pane.current === 'side' && e2 && m2) return { e: e2, path: pathOfUri(m2.uri), side: true };
+    return { e: ed.current, path: shownRef.current, side: false };
+  };
+  /** the file the split shows, when it is one the editor opens (a text of the folder, a source read from outside it) */
+  const side = split && state !== 'fallback' && (split.path in texts || typeof outside[split.path] === 'string') ? split.path : null;
+
+  /** what both editors have: the keys, the menu's items, the gutter's clicks, the lines chosen (which Cycles counts and
+   *  the bookmarks take) and the byte count beside them; returns what places that count */
+  const setUpEditor = (monaco: MonacoNs, editor: Monaco.editor.IStandaloneCodeEditor, which: 'main' | 'side') => {
+    // Ctrl+Enter runs (debugging: goes on), Ctrl+Shift+B builds, Ctrl+S writes now; F8 steps (and starts debugging),
+    // F6 steps over a JSR, Shift+F6 out of one (Monaco's key commands are the window's, the last editor's run: each acts
+    // in the editor used last)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { act().e?.trigger('run', 'hideSuggestWidget', null); if (dbgRef.current) keys.current.cont(); else keys.current.run(); });
+    editor.addCommand(monaco.KeyCode.F5, () => keys.current.run());
+    editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F5, () => keys.current.debugger());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyB, () => keys.current.build());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => keys.current.write());
+    editor.addCommand(monaco.KeyCode.F8, () => keys.current.step());
+    editor.addCommand(monaco.KeyCode.F6, () => keys.current.over());
+    editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F6, () => keys.current.out());
+    // the tabs: Ctrl+Tab and Ctrl+PageDown the next, with Shift and Ctrl+PageUp the one before, Ctrl+F4 closes it (in
+    // the split: the next open file in it, Ctrl+F4 closes the split)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Tab, () => keys.current.tab(1));
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Tab, () => keys.current.tab(-1));
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageDown, () => keys.current.tab(1));
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => keys.current.tab(-1));
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F4, () => keys.current.closeTab());
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F2, () => keys.current.bmJump(1));
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.F2, () => keys.current.bmJump(-1));
+    // Ctrl+\ (Ctrl+§ on a Swedish keyboard) splits the editor or closes the split
+    editor.onKeyDown(ev => { if (isSplitKey(ev.browserEvent)) { ev.preventDefault(); ev.stopPropagation(); toPane(which); keys.current.split(); } });
+    // the lines chosen in the editor used last (Cycles counts them; the caret's line and the lines selected: the
+    // bookmark editor can take them)
+    const tellSel = () => {
+      const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null, s = editor.getSelection();
+      if (!s) return;
+      const sel = p ? { file: p, from: s.startLineNumber, to: s.endColumn === 1 && s.endLineNumber > s.startLineNumber ? s.endLineNumber - 1 : s.endLineNumber } : null;
+      setSelLines(sel);
+      useAsmLink.getState().set({ caret: p ? { file: p, line: s.positionLineNumber } : null, selection: sel });
+    };
+    editor.onDidChangeCursorSelection(() => { if (pane.current === which) tellSel(); });
+    editor.onDidFocusEditorText(() => { if (pane.current !== which) { toPane(which); tellSel(); } });
+    // how many bytes the lines selected write, in the right margin beside them, as in the re-assembler's source tab
+    // (lib/selcount.ts): at the first line selected, kept in view while part of the selection is (by the check: a
+    // macro's call has the bytes the macro writes)
+    const countNode = document.createElement('div');
+    countNode.className = 'sel-count mon-sel-count'; countNode.dataset.testid = which === 'main' ? 'asm-sel-count' : 'asm-sel-count-split'; countNode.style.display = 'none';
+    editor.addOverlayWidget({ getId: () => 'mimir.sel-count', getDomNode: () => countNode, getPosition: () => null });
+    let counted: { c: AsmCheck; p: string; m: Map<number, number> } | null = null;
+    const placeCount = () => {
+      const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null, sels = editor.getSelections(), ck = selCheck.current;
+      let bytes: Map<number, number> | null = null;
+      if (p && ck) {
+        bytes = counted && counted.c === ck && counted.p === p ? counted.m : asmLineBytes(ck, p);
+        counted = { c: ck, p, m: bytes };
+      }
+      const c = bytes?.size && sels ? linesSelCount(n => bytes!.get(n) ?? 0, sels) : null;
+      const li = editor.getLayoutInfo(), st = editor.getScrollTop(), lh = editor.getOption(monaco.editor.EditorOption.lineHeight);
+      const y0 = c ? editor.getTopForLineNumber(c.first) - st : 0, y1 = c ? editor.getTopForLineNumber(c.last) + lh - st : 0;
+      if (!c || y1 <= 0 || y0 >= li.height) { countNode.style.display = 'none'; return; }
+      countNode.textContent = selCountText(c.bytes);
+      countNode.style.display = '';
+      countNode.style.top = `${Math.min(Math.max(y0 + 1, 4), y1 - lh + 1)}px`;
+      countNode.style.right = `${li.width - li.contentLeft - li.contentWidth + 12}px`;
+    };
+    editor.onDidChangeCursorSelection(placeCount);
+    editor.onDidScrollChange(placeCount);
+    editor.onDidLayoutChange(placeCount);
+    editor.onDidChangeModel(placeCount);
+    // the editor's menu (each item acts in this editor): a block of sprites, a charset, a bitmap, music … put in where
+    // the caret is
+    const here = (f: () => void) => () => { toPane(which); f(); };
+    editor.addAction({ id: 'mimir.insertBlock', label: 'Insert block…', contextMenuGroupId: '1_modification', contextMenuOrder: 0, run: here(() => keys.current.block()) });
+    // bookmarks, as the re-assembler's on its lines: Ctrl+F2 adds or edits the one on the caret's line (a selection: an
+    // area), Alt+F2 / Alt+Shift+F2 go to the next / previous one (F2 renames here)
+    editor.addAction({ id: 'mimir.bookmark', label: 'Bookmark this line…', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2], contextMenuGroupId: '1_modification', contextMenuOrder: 0.5, run: here(() => keys.current.bookmark()) });
+    // the macro and code libraries (10.8): the lines selected (none: the macro the caret is in) made an item of one
+    editor.addAction({ id: 'mimir.codeLibMacro', label: 'Add to the macro library…', contextMenuGroupId: '1_modification', contextMenuOrder: 0.6, run: here(() => keys.current.codeLib('macro')) });
+    editor.addAction({ id: 'mimir.codeLibCode', label: 'Add to the code library…', contextMenuGroupId: '1_modification', contextMenuOrder: 0.7, run: here(() => keys.current.codeLib('code')) });
+    // the split: this file in it (beside the first editor), or the split closed
+    editor.addAction(which === 'main'
+      ? { id: 'mimir.split', label: 'Open in the split', contextMenuGroupId: 'navigation', contextMenuOrder: 100, run: () => { const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null; if (p) keys.current.side(p); } }
+      : { id: 'mimir.split', label: 'Close the split', contextMenuGroupId: 'navigation', contextMenuOrder: 100, run: () => { if (splitRef.current) keys.current.split(); } });
+    // a click in the gutter left of the line numbers sets or clears a breakpoint
+    editor.onMouseDown(ev => {
+      const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null;
+      if (!p || !ev.target.position) return;
+      if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) keys.current.toggleBp(p, ev.target.position.lineNumber);
+      // (a bookmark's mark, right of the line numbers: its note in the list)
+      else if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS) keys.current.bmClick(p, ev.target.position.lineNumber);
+    });
+    return placeCount;
+  };
 
   useEffect(() => {
     if (!loaded) return;
@@ -523,100 +652,16 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       const { applyMonacoTheme } = await import('../monaco/theme');
       monacoRef.current = monaco;
       applyMonacoTheme(monaco, document.documentElement.dataset.theme !== 'light');
-      const editor = monaco.editor.create(host.current, {
-        model: null, theme: 'mimir', automaticLayout: true, fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
-        fontSize: 13, lineHeight: 20, minimap: { enabled: false }, scrollBeyondLastLine: false, renderLineHighlight: 'all',
-        smoothScrolling: true, padding: { top: 8 }, guides: { indentation: false }, stickyScroll: { enabled: false }, mouseWheelZoom: true,
-        tabSize: 8, insertSpaces: true, quickSuggestions: { other: true, comments: false, strings: false }, wordBasedSuggestions: 'off', acceptSuggestionOnEnter: 'off', tabCompletion: 'off', suggestOnTriggerCharacters: true,
-        glyphMargin: true,
-      });
+      const editor = monaco.editor.create(host.current, editorOptions());
       ed.current = editor;
-      editor.onDidChangeModelContent(() => {
-        const m = editor.getModel(), path = m ? pathOfUri(m.uri) : null;
-        // (a file from outside the folder is read only: nothing of it is written)
-        if (applying.current || !m || !path || m.uri.scheme === 'asmx') return;
-        const text = m.getValue();
-        setTexts(t => ({ ...t, [path]: text }));
-        schedule(path);
-        keys.current.bmSync();
-        // a preview typed in is kept open
-        const t = tabsNow();
-        if (t.preview === path) setTabs({ ...t, preview: null });
-      });
-      // Ctrl+Enter runs (debugging: goes on), Ctrl+Shift+B builds, Ctrl+S writes now; F8 steps (and starts debugging),
-      // F6 steps over a JSR, Shift+F6 out of one
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { editor.trigger('run', 'hideSuggestWidget', null); if (dbgRef.current) keys.current.cont(); else keys.current.run(); });
-      editor.addCommand(monaco.KeyCode.F5, () => keys.current.run());
-      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F5, () => keys.current.debugger());
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyB, () => keys.current.build());
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => keys.current.write());
-      editor.addCommand(monaco.KeyCode.F8, () => keys.current.step());
-      editor.addCommand(monaco.KeyCode.F6, () => keys.current.over());
-      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F6, () => keys.current.out());
-      // the tabs: Ctrl+Tab and Ctrl+PageDown the next, with Shift and Ctrl+PageUp the one before, Ctrl+F4 closes it
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Tab, () => keys.current.tab(1));
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Tab, () => keys.current.tab(-1));
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageDown, () => keys.current.tab(1));
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => keys.current.tab(-1));
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F4, () => keys.current.closeTab());
-      // the lines chosen (Cycles counts them)
-      editor.onDidChangeCursorSelection(ev => {
-        const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null;
-        const sel = p ? { file: p, from: ev.selection.startLineNumber, to: ev.selection.endColumn === 1 && ev.selection.endLineNumber > ev.selection.startLineNumber ? ev.selection.endLineNumber - 1 : ev.selection.endLineNumber } : null;
-        setSelLines(sel);
-        // (the caret's line and the lines selected: the bookmark editor can take them)
-        useAsmLink.getState().set({ caret: p ? { file: p, line: ev.selection.positionLineNumber } : null, selection: sel });
-      });
-      // how many bytes the lines selected write, in the right margin beside them, as in the re-assembler's source tab
-      // (lib/selcount.ts): at the first line selected, kept in view while part of the selection is (by the check: a
-      // macro's call has the bytes the macro writes)
-      const countNode = document.createElement('div');
-      countNode.className = 'sel-count mon-sel-count'; countNode.dataset.testid = 'asm-sel-count'; countNode.style.display = 'none';
-      editor.addOverlayWidget({ getId: () => 'mimir.sel-count', getDomNode: () => countNode, getPosition: () => null });
-      const placeCount = () => {
-        const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null, sels = editor.getSelections(), ck = selCheck.current;
-        let bytes: Map<number, number> | null = null;
-        if (p && ck) {
-          const k = selBytes.current;
-          bytes = k && k.c === ck && k.p === p ? k.m : asmLineBytes(ck, p);
-          selBytes.current = { c: ck, p, m: bytes };
-        }
-        const c = bytes?.size && sels ? linesSelCount(n => bytes!.get(n) ?? 0, sels) : null;
-        const li = editor.getLayoutInfo(), st = editor.getScrollTop(), lh = editor.getOption(monaco.editor.EditorOption.lineHeight);
-        const y0 = c ? editor.getTopForLineNumber(c.first) - st : 0, y1 = c ? editor.getTopForLineNumber(c.last) + lh - st : 0;
-        if (!c || y1 <= 0 || y0 >= li.height) { countNode.style.display = 'none'; return; }
-        countNode.textContent = selCountText(c.bytes);
-        countNode.style.display = '';
-        countNode.style.top = `${Math.min(Math.max(y0 + 1, 4), y1 - lh + 1)}px`;
-        countNode.style.right = `${li.width - li.contentLeft - li.contentWidth + 12}px`;
-      };
-      placeCountRef.current = placeCount;
-      editor.onDidChangeCursorSelection(placeCount);
-      editor.onDidScrollChange(placeCount);
-      editor.onDidLayoutChange(placeCount);
-      editor.onDidChangeModel(placeCount);
-      // the editor's menu: a block of sprites, a charset, a bitmap, music … put in where the caret is
-      editor.addAction({ id: 'mimir.insertBlock', label: 'Insert block…', contextMenuGroupId: '1_modification', contextMenuOrder: 0, run: () => keys.current.block() });
-      // bookmarks, as the re-assembler's on its lines: Ctrl+F2 adds or edits the one on the caret's line (a selection: an
-      // area), Alt+F2 / Alt+Shift+F2 go to the next / previous one (F2 renames here)
-      editor.addAction({ id: 'mimir.bookmark', label: 'Bookmark this line…', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2], contextMenuGroupId: '1_modification', contextMenuOrder: 0.5, run: () => keys.current.bookmark() });
-      // the macro and code libraries (10.8): the lines selected (none: the macro the caret is in) made an item of one
-      editor.addAction({ id: 'mimir.codeLibMacro', label: 'Add to the macro library…', contextMenuGroupId: '1_modification', contextMenuOrder: 0.6, run: () => keys.current.codeLib('macro') });
-      editor.addAction({ id: 'mimir.codeLibCode', label: 'Add to the code library…', contextMenuGroupId: '1_modification', contextMenuOrder: 0.7, run: () => keys.current.codeLib('code') });
-      editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F2, () => keys.current.bmJump(1));
-      editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.F2, () => keys.current.bmJump(-1));
-      // a click in the gutter left of the line numbers sets or clears a breakpoint
-      editor.onMouseDown(ev => {
-        if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber);
-        // (a bookmark's mark, right of the line numbers: its note in the list)
-        else if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS && ev.target.position) keys.current.bmClick(ev.target.position.lineNumber);
-      });
-      // a definition in another of the folder's files (F12, Ctrl+click): that file in the editor, at it
+      placeCounts.current.main = setUpEditor(monaco, editor, 'main');
+      // a definition in another of the folder's files (F12, Ctrl+click): that file in the editor asked from, at it
       opener = monaco.editor.registerEditorOpener({
-        openCodeEditor(_from, resource, at) {
+        openCodeEditor(from, resource, at) {
           const p = pathOfUri(resource); if (!p) return false;
           const pos = at && 'startLineNumber' in at ? { line: at.startLineNumber, col: at.startColumn } : at ? { line: at.lineNumber, col: at.column } : { line: 1, col: 1 };
-          keys.current.open(p, { line: pos.line, col: pos.col });
+          if (ed2.current && from === ed2.current) keys.current.side(p, { line: pos.line, col: pos.col });
+          else keys.current.open(p, { line: pos.line, col: pos.col });
           return true;
         },
       });
@@ -628,7 +673,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       void writeAll();
       keys.current.bmFlush();
       for (const [p, m] of Object.entries(models.current)) if (!m.isDisposed()) useAssembler.getState().setBps(dir, p, bpLines(p));
-      placeCountRef.current = () => { };
+      placeCounts.current.main = () => { };
       ed.current?.dispose(); ed.current = null; pcDeco.current = null;
       Object.values(models.current).forEach(m => m.dispose()); models.current = {};
     };
@@ -640,8 +685,17 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (state !== 'ready' || !monaco) return;
     for (const [p, text] of Object.entries(texts)) if (!models.current[p]) {
       const m = models.current[p] = monaco.editor.createModel(text, editorLang(p, lang), uriOf(monaco, p));
-      // a change in a file the editor does not show (a rename, F2, in all the files): written as typing is
-      m.onDidChangeContent(() => { if (applying.current || m.isDisposed() || ed.current?.getModel() === m) return; setTexts(t => ({ ...t, [p]: m.getValue() })); schedule(p); keys.current.bmSync(); });
+      // what is typed in either editor, and a change in a file neither shows (a rename, F2, in all the files): written
+      // a moment after the last key
+      m.onDidChangeContent(() => {
+        if (applying.current || m.isDisposed()) return;
+        setTexts(t => ({ ...t, [p]: m.getValue() }));
+        schedule(p);
+        keys.current.bmSync();
+        // a preview typed in is kept open
+        const t = tabsNow();
+        if (t.preview === p && (ed.current?.getModel() === m || ed2.current?.getModel() === m)) setTabs({ ...t, preview: null });
+      });
       bpIds.current[p] = []; setBps(p, useAssembler.getState().bps[`${dir}|${p}`] ?? [], m);
     }
     // the sources imported from outside the folder: read only (`asmx:`), their texts as read again
@@ -667,6 +721,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const p = shown && paths.has(shown) ? shown : open[0] ?? first();
     setTabs({ open: p && !open.includes(p) ? [...open, p] : open, preview: t.preview && open.includes(t.preview) ? t.preview : null });
     if (p) openFile(p, { keep: true }); else setShown(null);
+    // (the split kept for the folder, while its file is there)
+    const sp = splitRef.current;
+    if (sp && !paths.has(sp.path) && !isOutsidePath(sp.path)) setSplit(null);
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
   const opened = useRef(false);
   // the shown file's model in the editor (where it was in it kept for each file), and a line asked for shown
@@ -688,12 +745,92 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       requestAnimationFrame(() => { if (r.soft) { e.revealLineInCenterIfOutsideViewport(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); return; } e.revealLineInCenter(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); e.focus(); });
     }
   });
+  // the split's editor, made when the split opens (the same options, keys and menu as the first) and gone when it closes
+  // (where it was in its file kept)
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (state !== 'ready' || !monaco || !split || !host2.current) return;
+    const editor = monaco.editor.create(host2.current, editorOptions());
+    ed2.current = editor;
+    placeCounts.current.side = setUpEditor(monaco, editor, 'side');
+    setEd2Gen(g => g + 1);
+    return () => {
+      const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null;
+      if (p && m && !m.isDisposed()) views2.current[p] = editor.saveViewState();
+      placeCounts.current.side = () => { };
+      pcDeco2.current = null;
+      editor.dispose(); ed2.current = null;
+      if (pane.current === 'side') toPane('main');
+    };
+  }, [state, !!split]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the split's file in its editor (where it was in each file kept: its own, the first editor's when it opens), a line
+  // asked for shown
+  useEffect(() => {
+    const e = ed2.current;
+    if (state !== 'ready' || !e) return;
+    const m = side ? models.current[side] ?? null : null, cur = e.getModel();
+    if (cur !== m) {
+      const was = cur ? pathOfUri(cur.uri) : null;
+      if (was && cur && !cur.isDisposed()) views2.current[was] = e.saveViewState();
+      e.setModel(m);
+      if (m && side && views2.current[side]) e.restoreViewState(views2.current[side]);
+    }
+    const r = reveal2.current;
+    if (m && r && r.path === side) {
+      reveal2.current = null;
+      const n = r.line ? Math.min(r.line, m.getLineCount()) : 0;
+      requestAnimationFrame(() => {
+        if (n && r.soft) { e.revealLineInCenterIfOutsideViewport(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); return; }
+        if (n) { e.revealLineInCenter(n); e.setPosition({ lineNumber: n, column: r.col ?? 1 }); }
+        if (r.focus !== false) e.focus();
+      });
+    }
+  });
+  /** a file in the split (the split opened when it is not: beside the first editor, at the place the first shows it
+   *  when it is that file), at a line; the split is the editor used then */
+  const showSide = (path: string, o: OpenAt & { focus?: boolean } = {}) => {
+    if (!(path in textsRef.current) && typeof outsideRef.current[path] !== 'string') { toast(`${baseName(path)} is not a text file the editor opens: the split shows the folder's sources and text files`, 'info'); return; }
+    const sp = splitRef.current;
+    // (the first editor's place in the file: the split starts as a second view of it)
+    if (ed.current && shownRef.current === path && (!sp || !views2.current[path])) views2.current[path] = ed.current.saveViewState();
+    // (a new split beside or under the editor as the last one was)
+    if (!sp || sp.path !== path) setSplit({ side: sp?.side ?? useAssembler.getState().splitSide, size: sp?.size ?? useAssembler.getState().splitSize, path });
+    reveal2.current = { path, line: o.line, col: o.col, soft: o.soft, focus: o.soft ? false : o.focus };
+    toPane('side');
+    setTick(t => t + 1);
+  };
+  /** the split closed: the first editor is the one used */
+  const closeSplit = () => {
+    if (!splitRef.current) return;
+    setSplit(null);
+    toPane('main');
+    requestAnimationFrame(() => ed.current?.focus());
+  };
+  /** Ctrl+\ and the toolbar's Split: the split opened on the file of the editor used (the first's file: a second view of
+   *  it), or closed */
+  const toggleSplit = () => {
+    if (splitRef.current) { closeSplit(); return; }
+    const p = act().path, text = (q: string | null): q is string => !!q && (q in textsRef.current || typeof outsideRef.current[q] === 'string');
+    const to = text(p) ? p : tabsNow().open.find(text) ?? (main && text(main) ? main : null);
+    if (!to) { toast('Open a source first: the split shows it beside the editor, to write in two places at once', 'info'); return; }
+    showSide(to);
+  };
+  /** Ctrl+Tab in the split: the next file of the tabs in it */
+  const stepSide = (step: number) => {
+    const sp = splitRef.current; if (!sp) return;
+    const list = tabsNow().open.filter(q => q in textsRef.current || typeof outsideRef.current[q] === 'string');
+    if (!list.length) return;
+    const i = list.indexOf(sp.path);
+    showSide(list[((i < 0 ? 0 : i + step) % list.length + list.length) % list.length]);
+  };
 
   /** a file opened in the editor (its folders opened in the list), in its tab: one open already, else the preview tab
    *  (a file put in its place) or, `keep`, a new tab after the one shown; at a line (OpenAt) */
   const openFile = (path: string, o: OpenAt = {}) => {
     // (a problem in the arguments: they are in Settings)
     if (path === '<command line>') { onSettings(); return; }
+    // (a line of the file the split shows, while the split is the editor used: shown there)
+    if (o.line && pane.current === 'side' && ed2.current && splitRef.current?.path === path) { showSide(path, o); return; }
     // (a file the sources import from outside the folder: a source is shown read only in a tab of its own; data, or one
     // not read, is said where it is)
     if (!paths.has(path) && (path in outside || isOutsidePath(path))) {
@@ -710,6 +847,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (o.line) reveal.current = { path, line: o.line, col: o.col, soft: o.soft };
     if (path !== shownRef.current) setShown(path);
     else if (o.line) setTick(t => t + 1);
+    // (the first editor is the one used now, but for the debugger's line, which leaves the focus where it is)
+    if (!o.soft) toPane('main');
   };
   /** `path` given a tab (see openFile) */
   const placeTab = (path: string, keep: boolean) => {
@@ -748,6 +887,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       { label: 'Close those to the right', run: () => closeTabs(t.open.slice(i + 1)) },
       { label: 'Close all', run: () => closeTabs(t.open) },
       ...(t.preview === path ? [{ label: 'Keep it open', icon: 'pin' as const, run: () => setTabs({ ...t, preview: null }) }] : []),
+      ...(state !== 'fallback' && (path in textsRef.current || typeof outside[path] === 'string') ? [{ label: 'Open in the split', icon: 'split' as const, run: () => showSide(path) }] : []),
       { sep: true },
       ...(source ? [{ label: 'Main file: Run and Build build it', checked: path === main, run: () => { onInfo('Main file', { main: path }); toast(`${path} is the main file: Run and Build build it`, 'ok'); } }] : []),
       { label: 'Show in the list', icon: 'files', run: () => { openFile(path); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.asm-tree [data-path="${CSS.escape(path)}"]`)?.focus()); } },
@@ -840,7 +980,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const moved = (p: string) => `${to}${p.slice(from.length)}`;
     // (the tabs, the file shown and where it was shown follow the files: fixTabs asks where each went)
     moves.current = p => (under(p) ? moved(p) : null);
-    for (const p of Object.keys(views.current)) if (under(p)) views.current[moved(p)] = views.current[p];
+    for (const v of [views.current, views2.current]) for (const p of Object.keys(v)) if (under(p)) v[moved(p)] = v[p];
     try { if (!await change({ dir, op: 'rename', path: from, to }, `${from} is ${to} now`)) return; } finally { moves.current = null; }
     if (chosen && under(chosen)) onInfo('Main file', { main: moved(chosen) });
     if (Object.values(bookmarks).some(b => under(b.file))) onBookmarksRenamed(from, to);
@@ -858,6 +998,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const full = e ? joinDir(dir, e.path) : dir;
     const items: MenuItem[] = [
       ...(e && !e.dir ? [{ label: 'Open', icon: 'doc' as const, run: () => openFile(e.path, { keep: true }) }] : []),
+      ...(e && !e.dir && state !== 'fallback' && e.path in textsRef.current ? [{ label: 'Open in the split', key: 'Alt+click', icon: 'split' as const, run: () => showSide(e.path) }] : []),
       ...(source ? [{ label: 'Main file: Run and Build build it', checked: e!.path === main, run: () => { onInfo('Main file', { main: e!.path }); toast(`${e!.path} is the main file: Run and Build build it`, 'ok'); } }] : []),
       ...(e ? [{ sep: true } as const] : []),
       { label: 'New file…', icon: 'plus', run: () => newIn(folderOf(e), 'file') },
@@ -978,8 +1119,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     })));
     useAssembler.getState().setBps(dir, p, at);
   }
-  const toggleBp = (line: number) => {
-    const p = shownRef.current; if (!p) return;
+  const toggleBp = (p: string, line: number) => {
     const now = bpLines(p);
     setBps(p, now.includes(line) ? now.filter(l => l !== line) : [...now, line]);
     setTick(t => t + 1);
@@ -1048,7 +1188,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const bookmarkOn = (file: string, line: number): string | null => Object.keys(bmRef.current).find(id => { const p = bmPlace(id); return p?.file === file && p.line === line; }) ?? null;
   /** Ctrl+F2: the editor for the bookmark on the caret's line, else a new one there (a selection of lines: on them) */
   const bookmarkHere = () => {
-    const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
+    const e = act().e, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
     if (!e || !p || !s) { toast('Open a source to bookmark a line in it', 'warn'); return; }
     if (typeof outside[p] === 'string') { toast(`${baseName(p)} is outside the project's folder: bookmarks are on the project's own files`, 'info'); return; }
     const from = s.startLineNumber, to = s.endColumn === 1 && s.endLineNumber > from ? s.endLineNumber - 1 : s.endLineNumber;
@@ -1066,17 +1206,17 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const all = Object.keys(bmRef.current).map(id => ({ id, p: bmPlace(id)! })).filter(x => x.p && paths.has(x.p.file))
       .sort((a, b) => a.p.file.localeCompare(b.p.file) || a.p.line - b.p.line);
     if (!all.length) { toast('No bookmarks yet: Ctrl+F2 on a line adds one', 'info'); return; }
-    const e = ed.current, m = e?.getModel(), here = m ? pathOfUri(m.uri) : null, line = e?.getPosition()?.lineNumber ?? 0;
+    const a = act(), e = a.e, m = e?.getModel(), here = m ? pathOfUri(m.uri) : null, line = e?.getPosition()?.lineNumber ?? 0;
     const cmp = (x: { file: string; line: number }) => (here == null ? 1 : x.file.localeCompare(here) || x.line - line);
     const next = dir > 0 ? all.find(x => cmp(x.p) > 0) ?? all[0] : [...all].reverse().find(x => cmp(x.p) < 0) ?? all[all.length - 1];
-    openFile(next.p.file, { line: next.p.line, keep: true });
+    // (in the editor used: the split goes to it in its own view)
+    if (a.side) showSide(next.p.file, { line: next.p.line }); else openFile(next.p.file, { line: next.p.line, keep: true });
     // (in the file shown, the caret there at once: the next Alt+F2 goes on from it, also before the editor has shown it)
     if (e && m && here === next.p.file) e.setPosition({ lineNumber: Math.min(next.p.line, m.getLineCount()), column: 1 });
     toast(`Bookmark ${asmBookmarkSpan(next.p)}: ${bmRef.current[next.id].title}`, 'info');
   };
   /** a click on a bookmark's mark: its note in the list */
-  const bookmarkClicked = (line: number) => {
-    const p = shownRef.current; if (!p) return;
+  const bookmarkClicked = (p: string, line: number) => {
     const id = Object.keys(bmRef.current).find(k => { const q = bmPlace(k); return q?.file === p && q.line <= line && line <= (q.end ?? q.line); });
     if (id) onBookmarkSelect(id);
   };
@@ -1221,7 +1361,11 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
   };
   const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
-  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); }, codeLib: (k: CodeLibKind, into?: string) => codeLibAdd(k, into) };
+  keys.current = { ...keys.current, debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp,
+    // (Ctrl+S writes the file of the editor used; in the split Ctrl+Tab is its next file and Ctrl+F4 closes it)
+    write: () => { const p = act().path; if (p) void write(p); }, open: openFile, tab: step => { if (act().side) stepSide(step); else stepTab(step); },
+    closeTab: () => { if (act().side) closeSplit(); else if (shownRef.current) closeTabs([shownRef.current]); }, codeLib: (k: CodeLibKind, into?: string) => codeLibAdd(k, into),
+    split: toggleSplit, side: (p: string, o?: OpenAt) => showSide(p, o ?? {}) };
   // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
   // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
   const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
@@ -1249,7 +1393,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (ask.what === 'line') {
       if (!ask.at || !ask.line || !paths.has(ask.at)) return;
       openFile(ask.at, { line: ask.line, soft: true });
-      const e = ed.current, monaco = monacoRef.current, end = ask.end;
+      // (in the split, when the line went there)
+      const e = pane.current === 'side' && splitRef.current?.path === ask.at ? ed2.current : ed.current, monaco = monacoRef.current, end = ask.end;
       // (after the line is shown, which puts the caret on it)
       if (end && e && monaco) requestAnimationFrame(() => requestAnimationFrame(() => { const m = e.getModel(); if (m && pathOfUri(m.uri) === ask.at) e.setSelection(new monaco.Range(ask.line!, 1, Math.min(end, m.getLineCount()), m.getLineMaxColumn(Math.min(end, m.getLineCount())))); }));
       return;
@@ -1320,8 +1465,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const cycCheck = dbg?.c ?? check;
   // (the selection's byte count goes by the same check: placed again when it or the file shown changes)
   selCheck.current = cycCheck;
-  useEffect(() => { placeCountRef.current(); }, [cycCheck, shown, state]);
-  const lineCyc =useMemo(() => (cycOn && cycCheck && shown ? asmLineCycles(cycCheck, shown) : null), [cycOn, cycCheck, shown]);
+  useEffect(() => { placeCounts.current.main(); placeCounts.current.side(); }, [cycCheck, shown, side, state, ed2Gen]);
+  const lineCyc = useMemo(() => (cycOn && cycCheck && shown ? asmLineCycles(cycCheck, shown) : null), [cycOn, cycCheck, shown]);
+  const lineCyc2 = useMemo(() => (cycOn && cycCheck && side ? asmLineCycles(cycCheck, side) : null), [cycOn, cycCheck, side]);
   const cycCode = useMemo(() => (cycOn && cycCheck ? asmCode(cycCheck) : null), [cycOn, cycCheck]);
   const cycPath = useMemo(() => {
     if (!cycOn || !cycCheck || !cycCode || !selLines || selLines.to <= selLines.from) return null;
@@ -1330,12 +1476,15 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   }, [cycOn, cycCheck, cycCode, selLines, taken]);
   // the line numbers with the cycles after them (Monaco draws only what the option's function gives: a new one each time)
   useEffect(() => {
-    const e = ed.current;
-    if (state !== 'ready' || !e) return;
-    if (!lineCyc) { e.updateOptions({ lineNumbers: 'on', lineNumbersMinChars: 5 }); return; }
+    if (state !== 'ready') return;
     const pad = (t: string) => t + '\u00a0'.repeat(Math.max(0, 5 - t.length));
-    e.updateOptions({ lineNumbersMinChars: 10, lineNumbers: n => { const x = lineCyc.get(n); return `${n}\u00a0${pad(x ? `${cycleText(x.cycles)}${x.cycles.taken != null && taken.has(x.addr) ? '✓' : ''}` : '')}`; } });
-  }, [lineCyc, taken, state]);
+    const put = (e: Monaco.editor.IStandaloneCodeEditor | null, lc: typeof lineCyc) => {
+      if (!e) return;
+      if (!lc) { e.updateOptions({ lineNumbers: 'on', lineNumbersMinChars: 5 }); return; }
+      e.updateOptions({ lineNumbersMinChars: 10, lineNumbers: n => { const x = lc.get(n); return `${n}\u00a0${pad(x ? `${cycleText(x.cycles)}${x.cycles.taken != null && taken.has(x.addr) ? '✓' : ''}` : '')}`; } });
+    };
+    put(ed.current, lineCyc); put(ed2.current, lineCyc2);
+  }, [lineCyc, lineCyc2, taken, state, ed2Gen]);
   const toggleCycles = () => { const on = !cycOn; ui.set({ cycles: on, ...(on ? { outTab: 'cycles' as const, outFolded: false } : useAssembler.getState().outTab === 'cycles' ? { outTab: 'problems' as const } : {}) }); };
   const cycles: AsmCycles | null = cycOn ? {
     path: cycPath,
@@ -1388,15 +1537,16 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   };
 
   /* ---- Insert block: sprites, a charset, a bitmap, a screen, music or data, in the source where the caret is ---- */
-  const [blockAsk, setBlockAsk] = useState<{ kind?: AsmBlockKind; lib?: LibraryRef | null } | null>(null);
+  /** (`path`, `side`: the source and the editor it goes in, the one used when it was asked for) */
+  const [blockAsk, setBlockAsk] = useState<{ kind?: AsmBlockKind; lib?: LibraryRef | null; path: string; side: boolean } | null>(null);
   const askBlock = (kind?: AsmBlockKind, lib?: LibraryRef) => {
-    const p = shownRef.current;
+    const a = act(), p = a.path;
     if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
     if (!p || !(p in textsRef.current) || !ASM_SOURCE.test(p)) { toast('Open a source to put the block in: it goes where the caret is', 'warn'); return; }
-    setBlockAsk({ kind, lib: lib ?? null });
+    setBlockAsk({ kind, lib: lib ?? null, path: p, side: a.side });
   };
-  const insertBlock = async (b: AsmBlockInsert) => {
-    const p = shownRef.current, e = ed.current, monaco = monacoRef.current, m = p ? models.current[p] : null;
+  const insertBlock = async (b: AsmBlockInsert, into: { path: string; side: boolean }) => {
+    const p = into.path, e = into.side ? ed2.current : ed.current, monaco = monacoRef.current, m = p ? models.current[p] : null;
     if (!p || !e || !monaco || !m || e.getModel() !== m) { toast('The source is not open any more', 'warn'); return; }
     setBlockAsk(null);
     // its file first (the check reads it), then the lines
@@ -1420,7 +1570,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** the dialog for a new item of `kind`'s library: the lines selected (a selection ending at a line's start leaves
    *  that line out), none: the macro (…) the caret is in, else nothing to start with */
   const codeLibAdd = (kind: CodeLibKind, collection?: string) => {
-    const e = ed.current, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
+    const e = act().e, m = e?.getModel(), p = m ? pathOfUri(m.uri) : null, s = e?.getSelection();
     // (`collection`: the macro goes in that file of the macro library)
     const into = kind === 'macro' && collection ? { into: { file: collection } } : {};
     if (!e || !m || !p || !s) { useCodeLib.getState().set({ editing: { kind, lang, code: '', ...into } }); return; }
@@ -1439,7 +1589,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
    *  end, else before it), indented as the code there when it has no layout of its own, selected. Code written for Kick
    *  Assembler is made 64tass for a 64tass project where it can be. */
   const insertLib = (ins: AsmInsert) => {
-    const p = shownRef.current, e = ed.current, monaco = monacoRef.current, m = p ? models.current[p] : null;
+    const a = act(), p = a.path, e = a.e, monaco = monacoRef.current, m = p ? models.current[p] : null;
     if (dbgRef.current) { toast('Stop debugging first: the code cannot change while it is debugged', 'warn'); return; }
     if (!p || !e || !monaco || !m || e.getModel() !== m || !(p in textsRef.current) || !ASM_SOURCE.test(p)) { toast(`Open a source of the project to put ${ins.name} in: it goes where the caret is`, 'warn'); return; }
     let text = ins.text.replace(/\r\n/g, '\n'), note = '', warn = '';
@@ -1629,185 +1779,23 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   const [macroCode, setMacroCode] = useState(false);
   const macroList = shownMacros && !macroCode && !!macroBuilt;
   const [zoneOpen, setZoneOpen] = useState<Record<string, boolean>>({});
-  // (a view zone keeps the lines free; the list itself is an overlay widget over it, which takes the pointer: the
-  // editor's lines lie over a view zone's own nodes)
-  const zones = useRef<{ key: string; ids: string[]; roots: Root[]; widgets: Monaco.editor.IOverlayWidget[]; subs: Monaco.IDisposable[] }>({ key: '', ids: [], roots: [], widgets: [], subs: [] });
-  const clearZones = () => {
-    const z = zones.current, e = ed.current;
-    if (z.ids.length) e?.changeViewZones(a => { for (const id of z.ids) a.removeZone(id); });
-    for (const w of z.widgets) e?.removeOverlayWidget(w);
-    for (const s of z.subs) s.dispose();
-    // (unmounted after this render: a root is not unmounted while React renders)
-    const roots = z.roots;
-    if (roots.length) setTimeout(() => { for (const r of roots) r.unmount(); }, 0);
-    zones.current = { key: '', ids: [], roots: [], widgets: [], subs: [] };
-  };
-  useEffect(() => {
-    const e = ed.current, monaco = monacoRef.current, m = e?.getModel();
-    const p = shown;
-    if (!e || !monaco || !m || !mf || !macroBuilt || state !== 'ready' || !p || p === mf.file || !ASM_SOURCE.test(p) || pathOfUri(m.uri) !== p) { clearZones(); return; }
-    // the lines that import the file, by its path from this source's folder
-    const from = p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
-    const at: number[] = [];
-    m.getLinesContent().forEach((l, i) => {
-      const x = /^\s*(?:#import(?:once)?|\.include)\s+"([^"]+)"/.exec(l);
-      if (!x) return;
-      const parts: string[] = [];
-      for (const s of `${from}${x[1].replace(/\\/g, '/')}`.split('/')) { if (s === '..') parts.pop(); else if (s && s !== '.') parts.push(s); }
-      if (parts.join('/') === mf.file) at.push(i + 1);
-    });
-    const open = !!zoneOpen[p], lh = e.getOption(monaco.editor.EditorOption.lineHeight);
-    const key = `${p}\n${at.join(',')}\n${open}\n${lh}\n${macroBuilt.text}`;
-    if (key === zones.current.key) return;
-    clearZones();
-    if (!at.length) return;
-    const ids: string[] = [], roots: Root[] = [], widgets: Monaco.editor.IOverlayWidget[] = [], subs: Monaco.IDisposable[] = [];
-    e.changeViewZones(a => {
-      at.forEach((line, i) => {
-        const dom = document.createElement('div');
-        dom.className = 'am-zone-host';
-        const place = () => { const li = e.getLayoutInfo(); dom.style.left = `${li.contentLeft}px`; dom.style.width = `${Math.max(0, li.contentWidth - li.verticalScrollbarWidth)}px`; };
-        place();
-        const widget: Monaco.editor.IOverlayWidget = { getId: () => `mimir.macros.${i}`, getDomNode: () => dom, getPosition: () => null };
-        e.addOverlayWidget(widget);
-        widgets.push(widget);
-        subs.push(e.onDidLayoutChange(place));
-        const root = createRoot(dom);
-        root.render(<AsmMacroZone built={macroBuilt} file={mf.file} open={open} lineHeight={lh} onToggle={() => setZoneOpen(z => ({ ...z, [p]: !open }))} onOpenFile={() => openFile(mf.file)} />);
-        roots.push(root);
-        ids.push(a.addZone({
-          afterLineNumber: line, heightInPx: macroZoneRows(macroBuilt, open) * lh, domNode: document.createElement('div'),
-          onDomNodeTop: top => { dom.style.top = `${top}px`; }, onComputedHeight: h => { dom.style.height = `${h}px`; },
-        }));
-      });
-    });
-    zones.current = { key, ids, roots, widgets, subs };
-  }, [macroBuilt, mf, shown, state, zoneOpen, quiet]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => clearZones(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // (in each editor: the first's file, and the split's; components/AsmEditorZones.tsx)
+  const zoneAt = { monaco: monacoRef.current, ready: state === 'ready', file: mf?.file ?? null, built: macroBuilt };
+  useMacroZones({ ...zoneAt, ed, gen: 0, path: shown, text: shown ? quiet[shown] : undefined, open: !!shown && !!zoneOpen[shown],
+    onToggle: () => { if (shown) setZoneOpen(z => ({ ...z, [shown]: !z[shown] })); }, onOpenFile: () => { if (mf) openFile(mf.file); } });
+  useMacroZones({ ...zoneAt, ed: ed2, gen: ed2Gen, path: side, text: side ? quiet[side] : undefined, open: !!side && !!zoneOpen[side],
+    onToggle: () => { if (side) setZoneOpen(z => ({ ...z, [side]: !z[side] })); }, onOpenFile: () => { if (mf) showSide(mf.file); } });
 
   /* ---- pictures: the .byte lines of a block of sprites, a charset or a bitmap drawn as they look (lib/asmgfx.ts), as
      the re-assembler's listing draws them when Settings → General → Show graphics as pictures is on. A picture is a
-     view zone above the lines it stands for, which are hidden while the caret is not on one of them ---- */
+     view zone above the lines it stands for, which are hidden while the caret is not on one of them (in each editor) ---- */
   const gfxOn = useUi(s => s.gfxPictures);
   const analysis = useAsmLink(s => s.analysis);
-  /** the room a picture has (the editor's width, in steps): how many characters and sprites a row */
-  const [picRoom, setPicRoom] = useState(0);
-  const picCols = gfxColsFor(picRoom || 1e9);
-  const pictures = useMemo(() => {
-    const text = shown ? quiet[shown] : undefined;
-    if (!gfxOn || !cycCheck || !shown || !ASM_SOURCE.test(shown) || typeof text !== 'string') return [];
-    // (multicolour as the mark says, else as the analysis's VIC evidence says: as the listing draws the block)
-    const mc = (m: AsmBlockMark, s: Addr, e: Addr) => m.props.mc ?? (analysis ? vicMc(analysis, m.kind, s, e) : false);
-    return asmPictures(cycCheck, shown, text, blocks.marks, lang, { mc, cols: { chars: picCols.chars, sprite: picCols.sprite } });
-  }, [gfxOn, cycCheck, shown, quiet, blocks, lang, analysis, picCols.chars, picCols.sprite]);
-  const picZones = useRef<{ key: string; ids: string[]; roots: Root[]; widgets: Monaco.editor.IOverlayWidget[]; subs: Monaco.IDisposable[] }>({ key: '', ids: [], roots: [], widgets: [], subs: [] });
-  /** the pictures in the editor, the model and its version they were made for (typed since: Monaco moves what it hides
-   *  and the zones with the text, the pictures' line numbers wait for the check of it), the lines hidden */
-  const picState = useRef<{ list: AsmPicture[]; model: Monaco.editor.ITextModel | null; version: number; hidden: string }>({ list: [], model: null, version: -1, hidden: '' });
-  const clearPicZones = () => {
-    const z = picZones.current, e = ed.current;
-    if (z.ids.length) e?.changeViewZones(a => { for (const id of z.ids) a.removeZone(id); });
-    for (const w of z.widgets) e?.removeOverlayWidget(w);
-    for (const s of z.subs) s.dispose();
-    const roots = z.roots;
-    if (roots.length) setTimeout(() => { for (const r of roots) r.unmount(); }, 0);
-    picZones.current = { key: '', ids: [], roots: [], widgets: [], subs: [] };
-  };
-  /** the lines of the pictures the caret is not on, hidden (Monaco's own hidden areas, as its folding has them) */
-  const hidePictureLines = () => {
-    const e = ed.current, m = e?.getModel(), s = picState.current;
-    if (!e || !m) return;
-    if (s.model === m && m.getVersionId() !== s.version) return;
-    const carets = (e.getSelections() ?? []).map(x => x.positionLineNumber);
-    const ranges = s.model === m ? asmHiddenRanges(s.list, carets) : [];
-    const key = JSON.stringify(ranges);
-    if (key === s.hidden) return;
-    const opened = s.list.some(p => p.from <= p.to && carets.some(n => n >= p.from && n <= p.to));
-    s.hidden = key;
-    (e as unknown as { setHiddenAreas(r: Monaco.IRange[], source?: unknown): void }).setHiddenAreas(ranges, PICTURE_LINES);
-    // (the caret put on a picture's line: that line in view, with the picture above it when both fit, so what is
-    // typed is seen drawn)
-    const at = e.getPosition(), p = at && opened ? s.list.find(x => x.from <= x.to && at.lineNumber >= x.from && at.lineNumber <= x.to) : null;
-    if (!at || !p) return;
-    const lh = monacoRef.current ? e.getOption(monacoRef.current.editor.EditorOption.lineHeight) : 20, view = e.getLayoutInfo().height, st = e.getScrollTop();
-    const top = e.getTopForLineNumber(at.lineNumber), zone = e.getTopForLineNumber(p.from) - asmPictureHeight(p);
-    if (top >= st && top + lh <= st + view && zone >= st) return;
-    if (top + lh - zone + lh <= view) e.setScrollTop(Math.max(0, zone - lh)); else e.revealPositionInCenter(at);
-  };
-  const hideRef = useRef(hidePictureLines); hideRef.current = hidePictureLines;
-  const pickRef = useRef(onPick); pickRef.current = onPick;
   // (what is drawn in a picture goes to the lines that write it, as what is drawn in the inspector or Graphics does)
-  const writeRef = useRef(writeBytes); writeRef.current = writeBytes;
-  useEffect(() => {
-    const e = ed.current, monaco = monacoRef.current;
-    if (state !== 'ready' || !e || !monaco) return;
-    const room = () => { const li = e.getLayoutInfo(); setPicRoom(Math.max(0, Math.floor((li.contentWidth - li.verticalScrollbarWidth - 90) / 16) * 16)); };
-    room();
-    const subs = [
-      e.onDidChangeCursorSelection(() => hideRef.current()),
-      // (another file: its view starts with nothing hidden and no zones)
-      e.onDidChangeModel(() => { picState.current = { list: [], model: null, version: -1, hidden: '' }; picZones.current.key = ''; }),
-      e.onDidLayoutChange(room),
-    ];
-    return () => subs.forEach(s => s.dispose());
-  }, [state]);
-  useEffect(() => {
-    const e = ed.current, monaco = monacoRef.current, m = e?.getModel();
-    if (!e || !monaco || !m || state !== 'ready' || !shown || pathOfUri(m.uri) !== shown || !pictures.length) {
-      clearPicZones();
-      picState.current = { ...picState.current, list: [], model: m ?? null, version: m?.getVersionId() ?? -1 };
-      hideRef.current();
-      return;
-    }
-    // (made for the text the check had: typed since, they wait for the check of it; Monaco makes a file's line ends one kind)
-    if (m.getValue(monaco.editor.EndOfLinePreference.LF) !== (quiet[shown] ?? '').replace(/\r\n?/g, '\n')) return;
-    picState.current = { ...picState.current, list: pictures, model: m, version: m.getVersionId() };
-    const mem = cycCheck?.asm.mem ?? new Uint8Array(0x10000), sprites = analysis?.vic.sprites ?? NO_SPRITES;
-    const ch = e.getOption(monaco.editor.EditorOption.fontInfo).typicalHalfwidthCharacterWidth;
-    /** where a picture starts: under the text of its lines (their indent) */
-    const indent = (p: AsmPicture) => {
-      const t = m.getLineContent(Math.min(m.getLineCount(), Math.max(1, p.from <= p.to ? p.from : p.after)));
-      let col = 0;
-      for (const c of t) { if (c === ' ') col++; else if (c === '\t') col += 8 - (col % 8); else break; }
-      return Math.round(col * ch);
-    };
-    const zone = (p: AsmPicture) => <AsmPictureZone p={p} mem={mem} sprites={sprites} onPick={(c, extend) => pickRef.current(c, extend)}
-      onOpen={line => { e.setPosition({ lineNumber: line, column: m.getLineFirstNonWhitespaceColumn(line) || 1 }); e.focus(); }}
-      onDraw={changes => void writeRef.current(changes)} />;
-    const key = `${shown}\n${pictures.map(p => `${p.after}:${asmPictureHeight(p)}:${indent(p)}`).join(',')}`;
-    const z = picZones.current;
-    if (key === z.key) { pictures.forEach((p, i) => z.roots[i]?.render(zone(p))); hideRef.current(); return; }
-    clearPicZones();
-    const ids: string[] = [], roots: Root[] = [], widgets: Monaco.editor.IOverlayWidget[] = [], subs: Monaco.IDisposable[] = [];
-    e.changeViewZones(a => {
-      pictures.forEach((p, i) => {
-        const dom = document.createElement('div'), left = indent(p);
-        dom.className = 'asm-pic-host';
-        const place = () => { const li = e.getLayoutInfo(); dom.style.left = `${li.contentLeft + left}px`; dom.style.width = `${Math.max(0, li.contentWidth - li.verticalScrollbarWidth - left)}px`; };
-        place();
-        // (the editor's lines lie over a view zone's own nodes: the picture is an overlay widget over it, which takes the pointer)
-        const widget: Monaco.editor.IOverlayWidget = { getId: () => `mimir.picture.${i}`, getDomNode: () => dom, getPosition: () => null };
-        e.addOverlayWidget(widget);
-        widgets.push(widget);
-        subs.push(e.onDidLayoutChange(place));
-        const root = createRoot(dom);
-        root.render(zone(p));
-        roots.push(root);
-        // the block's bar beside it, as beside its lines
-        const margin = document.createElement('div');
-        margin.className = 'asm-pic-margin';
-        margin.style.setProperty('--bar-left', `${e.getLayoutInfo().decorationsLeft}px`);
-        // (shown though the line after it is hidden: Monaco hides a zone above hidden lines)
-        ids.push(a.addZone({
-          afterLineNumber: p.after, heightInPx: asmPictureHeight(p), domNode: document.createElement('div'), marginDomNode: margin, showInHiddenAreas: true,
-          onDomNodeTop: top => { dom.style.top = `${top}px`; }, onComputedHeight: h => { dom.style.height = `${h}px`; },
-        }));
-      });
-    });
-    picZones.current = { key, ids, roots, widgets, subs };
-    hideRef.current();
-  }, [pictures, state, shown, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => clearPicZones(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const picAt = { monaco: monacoRef.current, ready: state === 'ready', on: gfxOn, check: cycCheck, marks: blocks.marks, lang, analysis,
+    onPick: onPick, onDraw: (changes: { addr: Addr; value: number }[]) => void writeBytes(changes) };
+  usePictureZones({ ...picAt, ed, gen: 0, path: shown, text: shown ? quiet[shown] : undefined });
+  usePictureZones({ ...picAt, ed: ed2, gen: ed2Gen, path: side, text: side ? quiet[side] : undefined });
 
   // the macro library's macros in the editor's suggestions (those the project's sources define themselves left out);
   // one chosen goes in the macro file: it is made with it when the project has none, added when the calls are off
@@ -1840,34 +1828,49 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => () => { void import('../monaco/providers').then(({ asmContext }) => { asmContext.macros = []; }); }, []);
   // (the library read when the Assembler opens: its macros are suggested)
   useEffect(() => { if (!useCodeLib.getState().listing) void useCodeLib.getState().load(); }, []);
+  // read only while debugging, a file from outside the folder always (it is edited where it is), the macro file Mimir builds
   useEffect(() => {
-    ed.current?.updateOptions({ readOnly: !!dbg || shownOutside || shownMacros, readOnlyMessage: { value: shownOutside ? `${foundOut.current[shown!] ?? shown} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : shownMacros ? `${shown} is built by Mimir from the macro library: change the macros there (Macros and code), or add one to it` : 'The program is being debugged: Stop to edit' } });
-  }, [dbg, state, shownOutside, shownMacros, shown]); // eslint-disable-line react-hooks/exhaustive-deps
-  // the debugger's line, in the file shown; at no line of the sources (the KERNAL's CHROUT, an interrupt, code copied
+    const ro = (e: Monaco.editor.IStandaloneCodeEditor | null, p: string | null) => {
+      if (!e) return;
+      const out = !!p && typeof outside[p] === 'string', macros = !!mf && p === mf.file;
+      e.updateOptions({ readOnly: !!dbg || out || macros, readOnlyMessage: { value: out ? `${foundOut.current[p!] ?? p} is outside the project's folder: Mimir's check and the build read it from there, edit it where it is (or copy it into the folder)` : macros ? `${p} is built by Mimir from the macro library: change the macros there (Macros and code), or add one to it` : 'The program is being debugged: Stop to edit' } });
+    };
+    ro(ed.current, shown); ro(ed2.current, side);
+  }, [dbg, state, shownOutside, shownMacros, shown, side, ed2Gen, mf?.file]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the debugger's line, in each editor's file; at no line of the sources (the KERNAL's CHROUT, an interrupt, code copied
   // elsewhere), the line it is running for: the JSR's, or the line an interrupt came before
   const pcDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const pcDeco2 = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const atBp = dbg && !dbgBusy && bpAddrs(dbg.c).has(dbg.m.cpu.pc) ? lineText(dbg.c, dbg.m.cpu.pc) : null;
   const pcLine = dbg && !dbgBusy ? asmLineAt(dbg.c, dbg.m.cpu.pc) : null;
   const site = dbg && !dbgBusy && !pcLine ? asmCallSite(dbg.c, dbg.m) : null;
   const via = site ? `inside ${site.by === 'jsr' ? 'the JSR on' : 'an interrupt that came before'} ${site.file} line ${site.line}` : null;
   useEffect(() => {
-    const monaco = monacoRef.current, e = ed.current;
-    if (state !== 'ready' || !monaco || !e) return;
-    if (!pcDeco.current) pcDeco.current = e.createDecorationsCollection();
-    if (!pcLine && site && site.file === shown) {
-      const pc = dbg!.m.cpu.pc, at = `${names.get(pc) ?? ''}${names.has(pc) ? ' ' : ''}($${h4(pc)})`;
-      pcDeco.current.set([{ range: new monaco.Range(site.line, 1, site.line, 1), options: { isWholeLine: true, className: 'scr-call-line', glyphMarginClassName: 'scr-call-glyph',
-        glyphMarginHoverMessage: { value: site.by === 'jsr' ? `The debugger is at ${at}, inside this line's JSR: the run comes back after this line once the routine returns (Out, Shift+F6, runs until the routine it is in returns)` : `The debugger is at ${at}, in an interrupt that came before this line ran: its RTI comes back here` } } }]);
-      return;
-    }
-    const l = pcLine;
-    if (!l || l.file !== shown) { pcDeco.current.clear(); return; }
-    pcDeco.current.set([{ range: new monaco.Range(l.line, 1, l.line, 1), options: atBp
-      ? { isWholeLine: true, className: 'scr-pc-line scr-pc-bp', linesDecorationsClassName: 'scr-pc-bp-bar', glyphMarginClassName: 'scr-pc-bp-glyph', overviewRuler: { color: '#ff5a6e', position: monaco.editor.OverviewRulerLane.Full } }
-      : { isWholeLine: true, className: 'scr-pc-line', glyphMarginClassName: 'scr-pc-glyph' } }]);
+    const monaco = monacoRef.current;
+    if (state !== 'ready' || !monaco) return;
+    const paint = (e: Monaco.editor.IStandaloneCodeEditor | null, held: typeof pcDeco, file: string | null) => {
+      if (!e) return;
+      if (!held.current) held.current = e.createDecorationsCollection();
+      const deco = held.current;
+      if (!pcLine && site && site.file === file) {
+        const pc = dbg!.m.cpu.pc, at = `${names.get(pc) ?? ''}${names.has(pc) ? ' ' : ''}($${h4(pc)})`;
+        deco.set([{ range: new monaco.Range(site.line, 1, site.line, 1), options: { isWholeLine: true, className: 'scr-call-line', glyphMarginClassName: 'scr-call-glyph',
+          glyphMarginHoverMessage: { value: site.by === 'jsr' ? `The debugger is at ${at}, inside this line's JSR: the run comes back after this line once the routine returns (Out, Shift+F6, runs until the routine it is in returns)` : `The debugger is at ${at}, in an interrupt that came before this line ran: its RTI comes back here` } } }]);
+        return;
+      }
+      const l = pcLine;
+      if (!l || l.file !== file) { deco.clear(); return; }
+      deco.set([{ range: new monaco.Range(l.line, 1, l.line, 1), options: atBp
+        ? { isWholeLine: true, className: 'scr-pc-line scr-pc-bp', linesDecorationsClassName: 'scr-pc-bp-bar', glyphMarginClassName: 'scr-pc-bp-glyph', overviewRuler: { color: '#ff5a6e', position: monaco.editor.OverviewRulerLane.Full } }
+        : { isWholeLine: true, className: 'scr-pc-line', glyphMarginClassName: 'scr-pc-glyph' } }]);
+    };
+    paint(ed.current, pcDeco, shown); paint(ed2.current, pcDeco2, side);
   });
-  // starting and stopping change the editor's size: laid out again once drawn (or the line numbers stay a line off)
-  useEffect(() => { const e = ed.current; if (!e) return; const id = requestAnimationFrame(() => e.layout()); return () => cancelAnimationFrame(id); }, [!!dbg, state, ui.outFolded, c64.open, active]); // eslint-disable-line react-hooks/exhaustive-deps
+  // starting and stopping change the editors' size: laid out again once drawn (or the line numbers stay a line off)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => { ed.current?.layout(); ed2.current?.layout(); });
+    return () => cancelAnimationFrame(id);
+  }, [!!dbg, state, ui.outFolded, c64.open, active, split?.side, ed2Gen]); // eslint-disable-line react-hooks/exhaustive-deps
   // the keys outside the editor: F5 runs, Ctrl+Shift+B builds, F8 / F6 / Shift+F6 step, Ctrl+S writes; the tabs'
   // Ctrl+Tab (Ctrl+PageDown), Ctrl+Shift+Tab (Ctrl+PageUp) and Ctrl+F4 also in the list and the output
   useEffect(() => {
@@ -1877,6 +1880,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && !e.altKey && (e.key === 'Tab' || e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); keys.current.tab(e.key === 'PageUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1); return; }
       if (ctrl && !e.altKey && !e.shiftKey && e.key === 'F4') { e.preventDefault(); keys.current.closeTab(); return; }
+      // (Ctrl+\, Ctrl+§ on a Swedish keyboard: the split opened or closed)
+      if (isSplitKey(e)) { e.preventDefault(); keys.current.split(); return; }
       if ((e.target as HTMLElement | null)?.closest?.('input, select')) return;
       if (e.key === 'F5' && !e.ctrlKey && !e.altKey) { e.preventDefault(); if (e.shiftKey) keys.current.debugger(); else keys.current.run(); }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); keys.current.build(); }
@@ -1902,6 +1907,21 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const own = (dbg ? dbg.c.check.labels : check?.check.labels) ?? new Map<Addr, string>();
     return dbg?.m instanceof AsmC64 ? new Map<Addr, string>([...[...SYM.exact.values()].map(x => [x.addr, x.name] as [Addr, string]), ...own]) : own;
   }, [dbg, check]);
+  // the files the split can show: the files of the tabs (and the one it shows), then the folder's other sources
+  const sideChoices = useMemo(() => {
+    const text = (q: string) => q in texts || typeof outside[q] === 'string';
+    const open = tabs.open.filter(text), sources = (textKeys ? textKeys.split('\n') : []).filter(q => ASM_SOURCE.test(q) && !open.includes(q));
+    if (split && text(split.path) && !open.includes(split.path) && !sources.includes(split.path)) open.unshift(split.path);
+    return { open, sources };
+  }, [tabs.open, textKeys, outside, split?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sideOutside = !!side && typeof outside[side] === 'string';
+  /** the split's edge dragged: its share of the room the two editors have */
+  const dragSplit = (d: number) => {
+    const sp = splitRef.current, el = panes.current;
+    if (!sp || !el) return;
+    const room = sp.side === 'right' ? el.offsetWidth : el.offsetHeight;
+    if (room > 0) setSplit({ ...sp, size: splitSize(sp.size - d / room) });
+  };
   const listW = ui.listW;
   return (
     <div className={cx('scripts asm-ws', !active && 'asm-hidden')}>
@@ -1924,7 +1944,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           </div>
           {!loaded ? <p className="muted small asm-tree-empty">Reading the files…</p>
             : <AsmTree entries={folder.entries} expanded={expanded} shown={shown} main={main} dirty={dirty} problems={problemsOf} edit={edit}
-              onOpen={(p, keep) => openFile(p, { keep })} onToggle={p => ui.setExpanded(dir, expanded.has(p) ? [...expanded].filter(x => x !== p) : [...expanded, p])}
+              onOpen={(p, keep, inSplit) => { if (inSplit && state !== 'fallback' && p in textsRef.current) showSide(p); else openFile(p, { keep }); }} onToggle={p => ui.setExpanded(dir, expanded.has(p) ? [...expanded].filter(x => x !== p) : [...expanded, p])}
               onMenu={rowMenu} onEdit={n => void named(n)} />}
           {folder.more && <p className="muted small asm-tree-empty">The folder has more files than the list holds.</p>}
         </div>}
@@ -1941,6 +1961,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           {main && shown !== main && <button className="pill asm-main-pill" onClick={() => openFile(main)} title={`The main file, which Run and Build build: ${main}. A click opens it (right-click a source in the list to make it the main file)`}>
             <Icon name="play" size={10} />{baseName(main)}</button>}
           <span className="grow" />
+          <button className={cx('btn asm-split-btn', split && state !== 'fallback' && 'on')} aria-pressed={!!split && state !== 'fallback'} disabled={state === 'fallback'} onClick={toggleSplit}
+            title={split ? `Close the split (${splitKeyName})` : `Split the editor (${splitKeyName}): a second editor beside it, on this file or another, to write in two places at once; what is typed in one is in the other at once. A file's or a tab's menu (or Alt+click in the list) opens it in the split`}>
+            <Icon name="split" size={14} /><span className="lbl">Split</span></button>
           <button className={cx('btn asm-cycles-btn', cycOn && 'on')} aria-pressed={cycOn} onClick={toggleCycles}
             title={cycOn ? 'Hide the cycles' : 'Cycles: each instruction\'s 6510 cycles beside its line number (4+ one more across a page, 2/3 a branch not taken / taken); select lines to count them along one path under Cycles, where a box marks a branch taken'}>
             <Icon name="clock" size={14} /><span className="lbl">Cycles</span></button>
@@ -1984,24 +2007,56 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           ? <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in the whole C64 (Sindri, VICE's ROMs): {dbg.m.typed} was typed at READY and the program stopped at its first instruction. <b>Continue</b> runs it in the C64's own time with the screen live; click the screen and type to use the C64's keyboard. The code cannot be changed until you stop; a click left of a line number sets a breakpoint.</span></p>
           : <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in Mimir's 6510: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. It has no ROMs or I/O: the KERNAL's printing routines are done on the C64 screen.</span></p>)}
         <div className="scr-body">
-          <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf} outside={outsideTabs}
-            onShow={p => setShown(p)} onKeep={p => placeTab(p, true)} onClose={closeTabs} onMove={moveTab} onMenu={tabMenu} />
-          {shownMacros && <div className="am-bar small" role="note">
-            <Icon name="codelib" size={12} /><span>{macroList ? 'The macros Mimir puts in this file' : 'The code Mimir writes in this file, as the assembler reads it (read only)'}</span>
-            <span className="grow" />
-            <button type="button" className="btn small" onClick={() => setMacroCode(!macroList ? false : true)}>{macroList ? 'Show the code' : 'Show the list'}</button>
-          </div>}
           <div className="scr-edit-row" ref={editRow}>
-            <div className="mon-host scr-editor" ref={host} aria-label="Code" style={{ display: state === 'ready' && shownText && !macroList ? 'block' : 'none' }} />
-            {macroList && macroBuilt && <AsmMacroPanel built={macroBuilt} file={mf!.file} />}
-            {state === 'fallback' && shownText && <textarea className="fallback-code scr-fallback" aria-label="Code" value={shownOutside ? String(outside[shown!]) : texts[shown!]} readOnly={!!dbg || shownOutside} onChange={e => { const p = shown!; if (shownOutside) return; setTexts(t => ({ ...t, [p]: e.target.value })); schedule(p); }} />}
-            {shown && !shownText && <div className="asm-binary" role="note">
-              <Icon name={shownEntry?.dir ? 'folder' : fileIcon(shown)} size={28} />
-              <h3>{baseName(shown)}</h3>
-              <p className="muted">{shownEntry ? `${fmtBytes(shownEntry.size)}: not a text file the editor opens.` : 'The file is not there any more.'} A source loads it with <span className="mono">{lang === '64tass' ? '.binary' : '.import binary'}</span>{lang === '64tass' ? '' : ' or LoadSid'}.</p>
-              <button className="btn small" onClick={() => void kr?.assemblerReveal({ dir, path: shown })}><Icon name="folder" size={13} />Show in folder</button>
-            </div>}
-            {!shown && loaded && <div className="asm-binary" role="note"><Icon name="code" size={28} /><h3>No file open</h3><p className="muted">Click a file in the list to open it (a double-click keeps its tab open), or + to make a source.</p></div>}
+            {/* the first editor with its tabs, and the split beside it or under it (each with what it shows at its top) */}
+            <div ref={panes} className={cx('asm-panes', split && state !== 'fallback' && `split ${split.side}`)}>
+              <div className={cx('asm-pane main', paneOn === 'main' && 'on')}>
+                <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf} outside={outsideTabs}
+                  onShow={p => { setShown(p); toPane('main'); }} onKeep={p => placeTab(p, true)} onClose={closeTabs} onMove={moveTab} onMenu={tabMenu} />
+                {shownMacros && <div className="am-bar small" role="note">
+                  <Icon name="codelib" size={12} /><span>{macroList ? 'The macros Mimir puts in this file' : 'The code Mimir writes in this file, as the assembler reads it (read only)'}</span>
+                  <span className="grow" />
+                  <button type="button" className="btn small" onClick={() => setMacroCode(!macroList ? false : true)}>{macroList ? 'Show the code' : 'Show the list'}</button>
+                </div>}
+                <div className="asm-pane-body">
+                  <div className="mon-host scr-editor" ref={host} aria-label="Code" style={{ display: state === 'ready' && shownText && !macroList ? 'block' : 'none' }} />
+                  {macroList && macroBuilt && <AsmMacroPanel built={macroBuilt} file={mf!.file} />}
+                  {state === 'fallback' && shownText && <textarea className="fallback-code scr-fallback" aria-label="Code" value={shownOutside ? String(outside[shown!]) : texts[shown!]} readOnly={!!dbg || shownOutside} onChange={e => { const p = shown!; if (shownOutside) return; setTexts(t => ({ ...t, [p]: e.target.value })); schedule(p); }} />}
+                  {shown && !shownText && <div className="asm-binary" role="note">
+                    <Icon name={shownEntry?.dir ? 'folder' : fileIcon(shown)} size={28} />
+                    <h3>{baseName(shown)}</h3>
+                    <p className="muted">{shownEntry ? `${fmtBytes(shownEntry.size)}: not a text file the editor opens.` : 'The file is not there any more.'} A source loads it with <span className="mono">{lang === '64tass' ? '.binary' : '.import binary'}</span>{lang === '64tass' ? '' : ' or LoadSid'}.</p>
+                    <button className="btn small" onClick={() => void kr?.assemblerReveal({ dir, path: shown })}><Icon name="folder" size={13} />Show in folder</button>
+                  </div>}
+                  {!shown && loaded && <div className="asm-binary" role="note"><Icon name="code" size={28} /><h3>No file open</h3><p className="muted">Click a file in the list to open it (a double-click keeps its tab open), or + to make a source.</p></div>}
+                </div>
+              </div>
+              {split && state !== 'fallback' && <>
+                <Splitter dir={split.side === 'right' ? 'v' : 'h'} className="asm-pane-split" onDrag={dragSplit} onReset={() => setSplit({ ...split, size: 0.5 })}
+                  label="The split's edge" title="Drag to share the room between the two editors (a double-click: half each)" />
+                <div className={cx('asm-pane side', paneOn === 'side' && 'on')} role="group" aria-label="The split" style={{ flexBasis: `${split.size * 100}%` }}>
+                  <div className="tabs small asm-tabs asm-side-head">
+                    <div className="tab asm-tab on asm-side-tab" title={`${sideOutside ? `${foundOut.current[split.path] ?? split.path} · outside the project's folder: read only` : split.path}${split.path === main ? ' · the main file' : ''}${dirty.has(split.path) ? ' · changes not written yet' : ''}`}>
+                      <Icon name={sideOutside ? 'lock' : fileIcon(split.path)} size={12} className={cx('asm-ico', split.path === main && 'main')} />
+                      <select className="asm-side-file" aria-label="The split's file" value={split.path} onChange={e => showSide(e.target.value)}>
+                        {sideChoices.open.length > 0 && <optgroup label="Open in tabs">{sideChoices.open.map(q => <option key={q} value={q}>{typeof outside[q] === 'string' ? `${baseName(q)} (outside the folder)` : q}</option>)}</optgroup>}
+                        {sideChoices.sources.length > 0 && <optgroup label="The folder's sources">{sideChoices.sources.map(q => <option key={q} value={q}>{q}</option>)}</optgroup>}
+                      </select>
+                      {dirty.has(split.path) && <span className="asm-dirty" aria-label="not written yet" />}
+                      {sideOutside && <span className="muted small">read only</span>}
+                    </div>
+                    <span className="grow" />
+                    <button className="icon-btn" aria-label={split.side === 'right' ? 'Put the split under the editor' : 'Put the split beside the editor'} onClick={() => setSplit({ ...split, side: split.side === 'right' ? 'down' : 'right' })}
+                      title={split.side === 'right' ? 'Put the split under the editor: the two one above the other' : 'Put the split beside the editor: the two side by side'}><Icon name={split.side === 'right' ? 'split-down' : 'split'} size={14} /></button>
+                    <button className="icon-btn" aria-label="Close the split" title={`Close the split (${splitKeyName}; Ctrl+F4 in it)`} onClick={closeSplit}><Icon name="x" size={14} /></button>
+                  </div>
+                  <div className="asm-pane-body">
+                    <div className="mon-host asm-side-editor" ref={host2} aria-label="Code in the split" style={{ display: side && state === 'ready' ? 'block' : 'none' }} />
+                    {!side && <div className="asm-binary" role="note"><Icon name="code" size={28} /><h3>{baseName(split.path)}</h3><p className="muted">Reading the file…</p></div>}
+                  </div>
+                </div>
+              </>}
+            </div>
             {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={names} busy={dbgBusy} atBp={atBp} lineOf={a => lineText(dbg.c, a)} via={via} />}
             {c64.open && <>
               <Splitter dir="v" onDrag={d => {
@@ -2028,8 +2083,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       </div>
       {exporting && main && <AsmExportModal check={check} main={main} lang={lang} file={exporting.file} fileBytes={exporting.bytes} vfs={exportVfs} args={args} start={exporting.start}
         onSave={(n, b) => void saveExport(n, b)} onClose={() => setExporting(null)} />}
-      {blockAsk && shown && <AsmBlockDialog lang={lang} dir={dir} source={shown} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}
-        onInsert={b => void insertBlock(b)} onClose={() => { setBlockAsk(null); requestAnimationFrame(() => ed.current?.focus()); }} />}
+      {blockAsk && <AsmBlockDialog lang={lang} dir={dir} source={blockAsk.path} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}
+        onInsert={b => void insertBlock(b, blockAsk)} onClose={() => { const to = blockAsk.side ? ed2 : ed; setBlockAsk(null); requestAnimationFrame(() => to.current?.focus()); }} />}
     </div>
   );
 }

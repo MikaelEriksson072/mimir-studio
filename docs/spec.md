@@ -168,6 +168,7 @@ mimir-studio/
 │     ├─ components/AsmBlockDialog.tsx   Insert block: sprites, charset, bitmap, skärm, musik, data i källan (10.7)
 │     ├─ components/AsmRelease.tsx       Release: bygget som D64, TAP, CRT eller PRG, packat eller inte (10.7)
 │     ├─ components/AsmExport.tsx        Export: programmet, ett adressområde eller en fil som .bin, .prg, .asm, VICE-etiketter, C, BASIC … (10.7)
+│     ├─ components/AsmEditorZones.tsx   bilderna av sprites/tecken och makrolistan i varje editor (den första och den delade) (10.7)
 │     ├─ store/asmlink.ts          Assembler-projektet i projektfönstret: programmet till vyerna, visa en rad, Run (10.7)
 │     ├─ components/{CodeLibView, CodeLibDialog, CodeLibExportDialog}.tsx, store/codelib.ts   makro- och kodbiblioteken: vyn, dialogen och exporten (10.8)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
@@ -4078,6 +4079,21 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   av texten; *Export…* sparar där spardialogen säger (`file:save`). **Prövat** med riktiga KickAss.jar och 64tass
   (`asm-export.integration.test.ts`): en källfil ger samma program som projektet, `.byte`-raderna samma bytes, och
   `.sym`-filen tas av en källa som importerar den.
+- **Delad editor** (2026-11-28). *Split* i verktygsraden (eller Ctrl+\, den tangent Windows kallar VK_OEM_5 som Monaco
+  och VS Code tar den: på ett svenskt tangentbord Ctrl+§, och titlarna säger det; tangenten till höger om Ä är Monacos
+  Ctrl+/, kommentera rad) öppnar en andra editor bredvid den första, på samma fil på samma ställe, så att man skriver på
+  två ställen samtidigt. Båda editorerna har filernas
+  modeller: det som skrivs i den ena står i den andra direkt, ångra gäller båda, och problemen, brytpunkterna,
+  bokmärkena, blockens streck, cyklerna, byteräkningen, debuggerns rad, bilderna av sprites och tecken och listan av
+  makrofilens makron står i båda. Den andra editorn har överst sin fil i en lista (filerna i flikarna, sedan mappens
+  källor), en knapp som lägger den under (eller bredvid) den första och × som stänger den; kanten mellan dem dras (ett
+  dubbelklick: hälften var). En fils och en fliks meny har *Open in the split*, liksom editorns egen meny; Alt+klick (och
+  Ctrl+Enter) i fillistan öppnar filen där. Tangenterna, menyn, Insert block, biblioteken och bokmärkena verkar i
+  editorn som användes sist (dess flik har accentfärgen): Ctrl+S skriver dess fil, F12 visar en definition i en annan
+  fil i samma editor, Ctrl+Tab i den andra går till nästa fil i flikarna och Ctrl+F4 stänger den. En rad som visas
+  någon annanstans ifrån (problemen, bokmärkena, Graphics, debuggern) går till den andra när den användes sist och
+  visar den filen, annars till den första. Den andra editorns fil, sida och storlek sparas för mappen (`kr.asmSplit`,
+  följer en fil som byter namn, stängs när filen tas bort); nästa öppnas som den förra (`splitSide`, `splitSize`).
 - **Debug** (F8) kör programmet i Mimirs 6510 en instruktion i taget (`asmMachine`: skriptens maskin med programmet som
   koden och ett enda minne, så att kod som programmet kopierar någon annanstans och hoppar till ser programmets bytes),
   startat på samma sätt som SYS. Step, Over (F6), Out (Shift+F6), Continue (Ctrl+Enter), Pause och Stop som i

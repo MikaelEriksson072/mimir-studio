@@ -41,8 +41,9 @@ interface AsmTreeProps {
   dirty: ReadonlySet<string>;
   problems: ReadonlyMap<string, number>;
   edit: TreeEdit | null;
-  /** a file opened in the editor: in the preview tab, or (`keep`: a double-click, Enter) in a tab that stays */
-  onOpen: (path: string, keep?: boolean) => void;
+  /** a file opened in the editor: in the preview tab, or (`keep`: a double-click, Enter) in a tab that stays; `side`:
+   *  in the split editor (Alt+click, Ctrl+Enter) */
+  onOpen: (path: string, keep?: boolean, side?: boolean) => void;
   onToggle: (path: string) => void;
   /** the menu of a row (null: of the folder itself, a click below the rows) */
   onMenu: (x: number, y: number, entry: AsmEntry | null) => void;
@@ -84,7 +85,7 @@ export function AsmTree({ entries, expanded, shown, main, dirty, problems, edit,
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); go(i - 1); }
     else if (ev.key === 'ArrowRight' && cur?.dir && !expanded.has(cur.path)) { ev.preventDefault(); onToggle(cur.path); }
     else if (ev.key === 'ArrowLeft' && cur) { ev.preventDefault(); if (cur.dir && expanded.has(cur.path)) onToggle(cur.path); else { const p = parentOf(cur.path); if (p) go(rows.findIndex(r => r.e.path === p)); } }
-    else if (ev.key === 'Enter' && cur) { ev.preventDefault(); if (cur.dir) onToggle(cur.path); else onOpen(cur.path, true); }
+    else if (ev.key === 'Enter' && cur) { ev.preventDefault(); if (cur.dir) onToggle(cur.path); else onOpen(cur.path, true, ev.ctrlKey || ev.metaKey); }
     else if ((ev.key === 'F2' || ev.key === 'Delete' || ev.key === 'ContextMenu') && cur) {
       ev.preventDefault();
       const r = host.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(cur.path)}"]`)?.getBoundingClientRect();
@@ -116,7 +117,7 @@ export function AsmTree({ entries, expanded, shown, main, dirty, problems, edit,
               data-path={e.path} tabIndex={(focus ?? rows[0]?.e.path) === e.path ? 0 : -1}
               className={cx('asm-row', e.dir && 'dir', !e.dir && e.path === shown && 'on', e.path === main && 'main', e.dir && dropOn === e.path && 'drop-into')} style={{ paddingLeft: 6 + depth * 14 }}
               title={e.dir ? e.path : `${e.path} · ${fmtBytes(e.size)}${e.path === main ? ' · the main file: Run and Build build it' : ''}${dirty.has(e.path) ? ' · changes not written yet' : ''}${n ? ` · ${n} problem${n === 1 ? '' : 's'}` : ''}`}
-              onClick={() => { setFocus(e.path); if (e.dir) onToggle(e.path); else onOpen(e.path); }} onDoubleClick={() => { if (!e.dir) onOpen(e.path, true); }} onContextMenu={ev => { setFocus(e.path); menuAt(ev, e); }}>
+              onClick={ev => { setFocus(e.path); if (e.dir) onToggle(e.path); else onOpen(e.path, false, ev.altKey); }} onDoubleClick={ev => { if (!e.dir && !ev.altKey) onOpen(e.path, true); }} onContextMenu={ev => { setFocus(e.path); menuAt(ev, e); }}>
               {e.dir ? <Icon name="chevron" size={11} className={cx('asm-caret', open && 'open')} /> : <span className="asm-caret" />}
               <Icon name={e.dir ? 'folder' : fileIcon(e.path)} size={13} className="asm-ico" />
               <span className="asm-name">{name}</span>
